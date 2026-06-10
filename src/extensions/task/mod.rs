@@ -50,7 +50,7 @@ impl TagExtension for TaskExtension {
     }
 
     fn config_key(&self) -> Option<&str> {
-        Some("tasks")
+        Some("task")
     }
 
     fn init(&mut self, config_value: Option<&serde_yml::Value>) -> Result<(), RagtagError> {

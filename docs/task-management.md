@@ -1,6 +1,6 @@
 # Task Management Guide
 
-ragtag includes a built-in task management system powered by `@task` tags. Tasks are embedded directly in your plain text note files and managed through the `ragtag tasks` subcommand.
+ragtag includes a built-in task management system powered by `@task` tags. Tasks are embedded directly in your plain text note files and managed through the `ragtag task` subcommand.
 
 ## How It Works
 
@@ -91,7 +91,7 @@ tasks:
 
 ## Commands
 
-All task commands are accessed via `ragtag tasks <subcommand>`.
+All task commands are accessed via `ragtag task <subcommand>`.
 
 ### `tasks create`
 
@@ -100,7 +100,7 @@ Generates a new `@task(...)` string and prints it to stdout. The output is meant
 **Non-interactive mode:**
 
 ```bash
-ragtag tasks create \
+ragtag task create \
     --title "Write documentation" \
     --ttc-estimate 4 \
     --time-units hours \
@@ -113,7 +113,7 @@ ragtag tasks create \
 **Interactive mode:**
 
 ```bash
-ragtag tasks create -i
+ragtag task create -i
 ```
 
 In interactive mode, you are prompted for each field:
@@ -150,12 +150,12 @@ Required fields (`title`, `ttc_estimate`) cannot be skipped. Optional fields can
 Lists all tasks found in scanned files.
 
 ```bash
-ragtag tasks list
-ragtag tasks list --path ./notes
-ragtag tasks list --filter status=active
-ragtag tasks list --filter status!=done --sort priority
-ragtag tasks list --show-attributes id,title,status,priority
-ragtag tasks list --sort title --reverse
+ragtag task list
+ragtag task list --path ./notes
+ragtag task list --filter status=active
+ragtag task list --filter status!=done --sort priority
+ragtag task list --show-attributes id,title,status,priority
+ragtag task list --sort title --reverse
 ```
 
 **Default output** shows each task on one line with these attributes: `id`, `status`, `title`, `description`.
@@ -178,16 +178,16 @@ notes/project.md id="a1b2c3d4e5f67890" status="active" title="Write docs" descri
 
 ```bash
 # Only active tasks
-ragtag tasks list --filter status=active
+ragtag task list --filter status=active
 
 # Tasks not done, sorted by priority
-ragtag tasks list --filter status!=done --sort priority
+ragtag task list --filter status!=done --sort priority
 
 # High-priority tasks owned by alice
-ragtag tasks list --filter priority=0 --filter owner=alice
+ragtag task list --filter priority=0 --filter owner=alice
 
 # Tasks with estimate > 4 hours
-ragtag tasks list --filter ttc_estimate>4
+ragtag task list --filter ttc_estimate>4
 ```
 
 ### `tasks summary`
@@ -195,10 +195,10 @@ ragtag tasks list --filter ttc_estimate>4
 Displays a table-like summary of all tasks, grouped by a field and with aligned columns.
 
 ```bash
-ragtag tasks summary
-ragtag tasks summary --group owner
-ragtag tasks summary --group priority --sort title
-ragtag tasks summary --path ./notes
+ragtag task summary
+ragtag task summary --group owner
+ragtag task summary --group priority --sort title
+ragtag task summary --path ./notes
 ```
 
 **Output** shows tasks in grouped tables with headers:
@@ -232,10 +232,10 @@ Updates a task's status in-place in its source file.
 
 ```bash
 # Non-interactive: provide status on the command line
-ragtag tasks set-status --id a1b2c3d4e5f67890 --status done
+ragtag task set-status --id a1b2c3d4e5f67890 --status done
 
 # Interactive: omit --status to be prompted
-ragtag tasks set-status --id a1b2c3d4e5f67890
+ragtag task set-status --id a1b2c3d4e5f67890
 ```
 
 In interactive mode, the current task details are printed first, then you are prompted for the new status.
@@ -266,7 +266,7 @@ After updating, a multi-line detail listing of the task is printed. Optional fie
 Updates a task's `time_spent` value.
 
 ```bash
-ragtag tasks set-time --id a1b2c3d4e5f67890 --time 6.5
+ragtag task set-time --id a1b2c3d4e5f67890 --time 6.5
 ```
 
 **Flags:**
@@ -282,7 +282,7 @@ ragtag tasks set-time --id a1b2c3d4e5f67890 --time 6.5
 Updates a task's owner.
 
 ```bash
-ragtag tasks set-owner --id a1b2c3d4e5f67890 --owner bob
+ragtag task set-owner --id a1b2c3d4e5f67890 --owner bob
 ```
 
 **Flags:**
@@ -298,7 +298,7 @@ ragtag tasks set-owner --id a1b2c3d4e5f67890 --owner bob
 Updates a task's parent ID for hierarchical organization.
 
 ```bash
-ragtag tasks set-parent --id a1b2c3d4e5f67890 --pid f0e1d2c3b4a59687
+ragtag task set-parent --id a1b2c3d4e5f67890 --pid f0e1d2c3b4a59687
 ```
 
 **Flags:**
@@ -314,7 +314,7 @@ ragtag tasks set-parent --id a1b2c3d4e5f67890 --pid f0e1d2c3b4a59687
 1. **Create a task** and paste it into your notes:
 
     ```bash
-    ragtag tasks create --title "Design API" --ttc-estimate 8 --priority 0
+    ragtag task create --title "Design API" --ttc-estimate 8 --priority 0
     ```
 
     Copy the printed `@task(...)` into your note file.
@@ -322,30 +322,30 @@ ragtag tasks set-parent --id a1b2c3d4e5f67890 --pid f0e1d2c3b4a59687
 2. **Start working** — update the status:
 
     ```bash
-    ragtag tasks set-status --id <task-id> --status active
+    ragtag task set-status --id <task-id> --status active
     ```
 
 3. **Track time** as you go:
 
     ```bash
-    ragtag tasks set-time --id <task-id> --time 3.5
+    ragtag task set-time --id <task-id> --time 3.5
     ```
 
 4. **Check progress** across all your notes:
 
     ```bash
-    ragtag tasks list --filter status!=done --sort priority
+    ragtag task list --filter status!=done --sort priority
     ```
 
 5. **View a summary** of all tasks grouped by status:
 
     ```bash
-    ragtag tasks summary
-    ragtag tasks summary --group owner
+    ragtag task summary
+    ragtag task summary --group owner
     ```
 
 6. **Mark complete** when finished:
 
     ```bash
-    ragtag tasks set-status --id <task-id> --status done
+    ragtag task set-status --id <task-id> --status done
     ```

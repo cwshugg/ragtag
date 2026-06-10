@@ -39,7 +39,7 @@ fn hash_to_color(s: &str) -> (u8, u8, u8) {
 }
 
 /// Strips a leading `./` or `.\` from a path string.
-fn strip_dot_slash(s: &str) -> String {
+pub fn strip_dot_slash(s: &str) -> String {
     if s.starts_with("./") || s.starts_with(".\\") {
         s[2..].to_string()
     } else {

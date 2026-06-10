@@ -32,13 +32,13 @@ fn test_help() {
         .stdout(predicate::str::contains("ragtag"))
         .stdout(predicate::str::contains("summary"))
         .stdout(predicate::str::contains("query"))
-        .stdout(predicate::str::contains("tasks"));
+        .stdout(predicate::str::contains("task"));
 }
 
 #[test]
 fn test_tasks_help() {
     ragtag()
-        .args(["tasks", "--help"])
+        .args(["task", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("create"))
@@ -105,7 +105,7 @@ fn test_query_filter() {
 fn test_tasks_create() {
     ragtag()
         .args([
-            "tasks",
+            "task",
             "create",
             "--title",
             "Test Task",
@@ -125,7 +125,7 @@ fn test_tasks_create() {
 fn test_tasks_create_with_all_fields() {
     ragtag()
         .args([
-            "tasks",
+            "task",
             "create",
             "--title",
             "Full Task",
@@ -157,7 +157,7 @@ fn test_tasks_create_with_all_fields() {
 fn test_tasks_list() {
     let path = format!("{}/tasks.md", fixtures_dir());
     ragtag()
-        .args(["--no-color", "tasks", "list", "--path", &path])
+        .args(["--no-color", "task", "list", "--path", &path])
         .assert()
         .success()
         .stdout(predicate::str::contains("Design API"))
@@ -171,7 +171,7 @@ fn test_tasks_list_sort() {
     let output = ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "list",
             "--path",
             &path,
@@ -219,7 +219,7 @@ fn test_tasks_list_filter() {
     ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "list",
             "--path",
             &path,
@@ -245,7 +245,7 @@ fn test_tasks_set_status() {
     ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "set-status",
             "--id",
             "testid1234567890",
@@ -256,7 +256,7 @@ fn test_tasks_set_status() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("status: active"));
+        .stdout(predicate::str::contains("Status: active"));
 
     // Verify file was actually modified
     let content = fs::read_to_string(&file).unwrap();
@@ -275,7 +275,7 @@ fn test_tasks_set_time() {
     ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "set-time",
             "--id",
             "testid1234567890",
@@ -286,7 +286,7 @@ fn test_tasks_set_time() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("time_spent: 2.5"));
+        .stdout(predicate::str::contains("Time Spent: 2.5"));
 }
 
 #[test]
@@ -301,7 +301,7 @@ fn test_tasks_set_owner() {
     ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "set-owner",
             "--id",
             "testid1234567890",
@@ -312,7 +312,7 @@ fn test_tasks_set_owner() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("owner: alice"));
+        .stdout(predicate::str::contains("Owner: alice"));
 }
 
 #[test]
@@ -327,7 +327,7 @@ fn test_tasks_set_parent() {
     ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "set-parent",
             "--id",
             "testid1234567890",
@@ -338,7 +338,54 @@ fn test_tasks_set_parent() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("pid: parent123"));
+        .stdout(predicate::str::contains("Parent ID: parent123"));
+}
+
+// === Tasks Get ===
+
+#[test]
+fn test_tasks_get_by_id() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "get",
+            "a1b2c3d4e5f67890",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Title: Design API"))
+        .stdout(predicate::str::contains("Owner: alice"));
+}
+
+#[test]
+fn test_tasks_get_by_title() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args(["--no-color", "task", "get", "Design", "--path", &path])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Title: Design API"));
+}
+
+#[test]
+fn test_tasks_get_no_match() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "get",
+            "nonexistent_xyz",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No task found for"));
 }
 
 // === Error Cases ===
@@ -361,7 +408,7 @@ fn test_invalid_status() {
 
     ragtag()
         .args([
-            "tasks",
+            "task",
             "set-status",
             "--id",
             "testid1234567890",
@@ -390,7 +437,7 @@ fn test_task_not_found() {
 
     ragtag()
         .args([
-            "tasks",
+            "task",
             "set-status",
             "--id",
             "nonexistent1234567",
@@ -408,7 +455,7 @@ fn test_task_not_found() {
 fn test_no_color_flag() {
     let path = format!("{}/tasks.md", fixtures_dir());
     let output = ragtag()
-        .args(["--no-color", "tasks", "list", "--path", &path])
+        .args(["--no-color", "task", "list", "--path", &path])
         .assert()
         .success()
         .get_output()
@@ -449,7 +496,7 @@ fn test_duplicate_task_ids() {
     let path = format!("{}/duplicate_ids.md", fixtures_dir());
     ragtag()
         .args([
-            "tasks",
+            "task",
             "set-status",
             "--id",
             "dupeid123456789a",
@@ -460,7 +507,7 @@ fn test_duplicate_task_ids() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("multiple tasks found"));
+        .stderr(predicate::str::contains("Multiple tasks match id prefix"));
 }
 
 // === Full workflow ===
@@ -472,7 +519,7 @@ fn test_full_workflow() {
     // Create a task
     let create_output = ragtag()
         .args([
-            "tasks",
+            "task",
             "create",
             "--title",
             "Workflow Test",
@@ -497,7 +544,7 @@ fn test_full_workflow() {
     ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "list",
             "--path",
             file.to_str().unwrap(),
@@ -515,7 +562,7 @@ fn test_full_workflow() {
     ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "set-status",
             "--id",
             task_id,
@@ -526,13 +573,13 @@ fn test_full_workflow() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("status: active"));
+        .stdout(predicate::str::contains("Status: active"));
 
     // Set time
     ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "set-time",
             "--id",
             task_id,
@@ -543,13 +590,13 @@ fn test_full_workflow() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("time_spent: 2.5"));
+        .stdout(predicate::str::contains("Time Spent: 2.5"));
 
     // Set owner
     ragtag()
         .args([
             "--no-color",
-            "tasks",
+            "task",
             "set-owner",
             "--id",
             task_id,
@@ -560,7 +607,7 @@ fn test_full_workflow() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("owner: alice"));
+        .stdout(predicate::str::contains("Owner: alice"));
 
     // Verify final file state
     let final_content = fs::read_to_string(&file).unwrap();

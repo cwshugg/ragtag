@@ -14,19 +14,10 @@ use super::list::sort_tasks;
 use crate::config::ColorMode;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
+use crate::output::format::{colorize_path, strip_dot_slash};
 
 /// Column headers for the summary table.
-const HEADERS: &[&str] = &[
-    "ID",
-    "Title",
-    "Owner",
-    "Status",
-    "Priority",
-    "Time Spent",
-    "TTC Est.",
-    "TTC Act.",
-    "Time Units",
-];
+const HEADERS: &[&str] = &["Path", "Title", "Owner", "Status", "Priority", "Time", "ID"];
 
 /// Runs the summary command.
 pub fn run(
@@ -83,10 +74,9 @@ pub fn run(
         tasks.retain(|t| !excluded.contains(&t.status));
     }
 
-    // Sort within groups
-    if let Some(ref field) = sort_by {
-        sort_tasks(&mut tasks, field, false);
-    }
+    // Sort within groups (default: priority)
+    let effective_sort = sort_by.unwrap_or_else(|| "priority".to_string());
+    sort_tasks(&mut tasks, &effective_sort, false);
 
     // Group tasks
     let groups = group_tasks(&tasks, group_by);
@@ -123,9 +113,8 @@ fn get_group_key(task: &TaskTag, group_by: &str) -> String {
     }
 }
 
-/// Maximum display width for the title column. Titles longer than this are
-/// truncated with a trailing "...".
-const MAX_TITLE_WIDTH: usize = 40;
+/// Maximum display width for the title column in summary tables.
+const MAX_TITLE_WIDTH: usize = 60;
 
 /// Truncates a string to `max_len` characters, appending "..." if truncated.
 fn truncate_title(title: &str, max_len: usize) -> String {
@@ -140,7 +129,7 @@ fn truncate_title(title: &str, max_len: usize) -> String {
 /// Formats the complete summary table output with group headers.
 ///
 /// Column widths are computed globally across all groups so that every
-/// table has the same width.
+/// table has the same alignment.
 fn format_summary_table(
     groups: &BTreeMap<String, Vec<&TaskTag>>,
     group_by: &str,
@@ -155,6 +144,7 @@ fn format_summary_table(
     type RowPair = (Vec<String>, Vec<String>);
 
     // Build rows for all groups and compute column widths globally.
+    // Index 0 is Path — excluded from fixed-width padding.
     let mut all_group_rows: Vec<(&String, Vec<RowPair>)> = Vec::new();
     let mut global_widths: Vec<usize> = HEADERS.iter().map(|h| h.len()).collect();
 
@@ -162,8 +152,8 @@ fn format_summary_table(
         let rows = build_rows(tasks, config, color_mode);
         for (plain, _) in &rows {
             for (i, val) in plain.iter().enumerate() {
-                if i < global_widths.len() && val.len() > global_widths[i] {
-                    global_widths[i] = val.len();
+                if i < global_widths.len() && val.chars().count() > global_widths[i] {
+                    global_widths[i] = val.chars().count();
                 }
             }
         }
@@ -182,20 +172,20 @@ fn format_summary_table(
         // Group header
         output.push_str(&format!("{}: {}\n", capitalize(group_by), key));
 
-        // Header row
-        let header_line = format_row(HEADERS, &global_widths);
+        // Header row — Path header at natural width, rest fixed-width
+        let header_line = format_row_with_path(HEADERS, &global_widths);
         output.push_str(&header_line);
         output.push('\n');
 
         // Separator
         let sep: Vec<String> = global_widths.iter().map(|w| "-".repeat(*w)).collect();
         let sep_strs: Vec<&str> = sep.iter().map(|s| s.as_str()).collect();
-        output.push_str(&format_row(&sep_strs, &global_widths));
+        output.push_str(&format_row_with_path(&sep_strs, &global_widths));
         output.push('\n');
 
         // Data rows
         for (plain_row, color_row) in rows {
-            let line = format_colored_row(plain_row, color_row, &global_widths);
+            let line = format_colored_row_with_path(plain_row, color_row, &global_widths);
             output.push_str(&line);
             output.push('\n');
         }
@@ -217,44 +207,38 @@ fn build_rows(
         .iter()
         .map(|task| {
             let title = truncate_title(&task.title, MAX_TITLE_WIDTH);
+            let time = format_time(task);
+            let path_plain = strip_dot_slash(&task.location.file_path.display().to_string());
+            let path_colored = colorize_path(&task.location.file_path, color_mode);
+
+            let id_str = if task.id.is_empty() {
+                "-".to_string()
+            } else {
+                task.id.clone()
+            };
+
             let plain = vec![
-                task.id.clone(),
+                path_plain,
                 title.clone(),
                 task.owner.clone(),
                 task.status.clone(),
                 task.priority
                     .map(|p| p.to_string())
                     .unwrap_or_else(|| "-".to_string()),
-                task.time_spent
-                    .map(format_float)
-                    .unwrap_or_else(|| "-".to_string()),
-                task.ttc_estimate
-                    .map(format_float)
-                    .unwrap_or_else(|| "-".to_string()),
-                task.ttc_actual
-                    .map(format_float)
-                    .unwrap_or_else(|| "-".to_string()),
-                task.time_units.clone(),
+                time.clone(),
+                id_str.clone(),
             ];
 
             let colored = vec![
-                task.id.clone(),
+                path_colored,
                 title,
                 task.owner.clone(),
                 colorize_status(&task.status, &config.status_keywords, color_mode),
                 task.priority
                     .map(|p| colorize_priority(p, color_mode))
                     .unwrap_or_else(|| "-".to_string()),
-                task.time_spent
-                    .map(format_float)
-                    .unwrap_or_else(|| "-".to_string()),
-                task.ttc_estimate
-                    .map(format_float)
-                    .unwrap_or_else(|| "-".to_string()),
-                task.ttc_actual
-                    .map(format_float)
-                    .unwrap_or_else(|| "-".to_string()),
-                task.time_units.clone(),
+                time,
+                id_str,
             ];
 
             (plain, colored)
@@ -262,8 +246,28 @@ fn build_rows(
         .collect()
 }
 
-/// Formats a row of plain string slices with padding.
-fn format_row(values: &[&str], widths: &[usize]) -> String {
+/// Formats the combined time column.
+///
+/// Format: `TIME_SPENT/TTC_ACTUAL (~TTC_ESTIMATE) TIME_UNIT`
+/// If a value is `None`, shows `-`.
+fn format_time(task: &TaskTag) -> String {
+    let spent = task
+        .time_spent
+        .map(format_float)
+        .unwrap_or_else(|| "-".to_string());
+    let actual = task
+        .ttc_actual
+        .map(format_float)
+        .unwrap_or_else(|| "-".to_string());
+    let estimate = task
+        .ttc_estimate
+        .map(format_float)
+        .unwrap_or_else(|| "-".to_string());
+    format!("{}/{} ({}) {}", spent, actual, estimate, task.time_units)
+}
+
+/// Formats a row with all columns padded to fixed widths.
+fn format_row_with_path(values: &[&str], widths: &[usize]) -> String {
     values
         .iter()
         .zip(widths.iter())
@@ -276,7 +280,7 @@ fn format_row(values: &[&str], widths: &[usize]) -> String {
 ///
 /// Uses `plain` values to determine padding widths, then applies the
 /// padding to `colored` values (which may contain invisible ANSI bytes).
-fn format_colored_row(plain: &[String], colored: &[String], widths: &[usize]) -> String {
+fn format_colored_row_with_path(plain: &[String], colored: &[String], widths: &[usize]) -> String {
     plain
         .iter()
         .zip(colored.iter())
@@ -442,11 +446,13 @@ mod tests {
         assert!(output.contains("Status: active"));
         assert!(output.contains("Status: done"));
         assert!(output.contains("Status: blocked"));
-        assert!(output.contains("ID"));
+        assert!(output.contains("Path"));
         assert!(output.contains("Title"));
         assert!(output.contains("Owner"));
         assert!(output.contains("Status"));
         assert!(output.contains("Priority"));
+        assert!(output.contains("Time"));
+        assert!(output.contains("ID"));
     }
 
     #[test]
@@ -456,11 +462,13 @@ mod tests {
         let config = TaskConfig::default();
         let output = format_summary_table(&groups, "status", &config, &ColorMode::Never);
 
-        assert!(output.contains("aaa1"));
+        assert!(output.contains("test.md"));
         assert!(output.contains("Task A"));
         assert!(output.contains("alice"));
-        assert!(output.contains("bbb2"));
         assert!(output.contains("Task B"));
+        // Check combined time column format
+        assert!(output.contains("2/- (8) hours")); // Task A: spent=2, actual=None, est=8
+        assert!(output.contains("4/5 (4) hours")); // Task B: spent=4, actual=5, est=4
     }
 
     #[test]

@@ -34,35 +34,39 @@ pub fn format_task_line(task: &TaskTag, color_mode: &ColorMode, config: &TaskCon
 pub fn format_task_detail(task: &TaskTag, config: &TaskConfig, color_mode: &ColorMode) -> String {
     let mut lines = Vec::new();
 
-    lines.push(format!("  title: {}", task.title));
+    lines.push(format!("Title: {}", task.title));
     if let Some(ref desc) = task.description {
-        lines.push(format!("  description: {desc}"));
+        lines.push(format!("Description: {desc}"));
     }
-    lines.push(format!("  id: {}", task.id));
-    if let Some(ref pid) = task.pid {
-        lines.push(format!("  pid: {pid}"));
-    }
-    lines.push(format!("  owner: {}", task.owner));
     lines.push(format!(
-        "  status: {}",
+        "Path: {}",
+        crate::output::format::colorize_path(&task.location.file_path, color_mode)
+    ));
+    lines.push(format!("ID: {}", task.id));
+    lines.push(format!("Owner: {}", task.owner));
+    lines.push(format!(
+        "Status: {}",
         colorize_status(&task.status, &config.status_keywords, color_mode)
     ));
     if let Some(priority) = task.priority {
         lines.push(format!(
-            "  priority: {}",
+            "Priority: {}",
             colorize_priority(priority, color_mode)
         ));
     }
     if let Some(ts) = task.time_spent {
-        lines.push(format!("  time_spent: {ts}"));
-    }
-    if let Some(te) = task.ttc_estimate {
-        lines.push(format!("  ttc_estimate: {te}"));
+        lines.push(format!("Time Spent: {ts}"));
     }
     if let Some(ta) = task.ttc_actual {
-        lines.push(format!("  ttc_actual: {ta}"));
+        lines.push(format!("Time-to-Completion Actual: {ta}"));
     }
-    lines.push(format!("  time_units: {}", task.time_units));
+    if let Some(te) = task.ttc_estimate {
+        lines.push(format!("Time-to-Completion Estimate: {te}"));
+    }
+    lines.push(format!("Unit of Time: {}", task.time_units));
+    if let Some(ref pid) = task.pid {
+        lines.push(format!("Parent ID: {pid}"));
+    }
 
     lines.join("\n")
 }
@@ -216,10 +220,10 @@ mod tests {
         let task = make_task();
         let config = TaskConfig::default();
         let detail = format_task_detail(&task, &config, &ColorMode::Never);
-        assert!(detail.contains("title: Test Task"));
-        assert!(detail.contains("id: abc123"));
-        assert!(detail.contains("owner: me"));
-        assert!(detail.contains("status: active"));
+        assert!(detail.contains("Title: Test Task"));
+        assert!(detail.contains("ID: abc123"));
+        assert!(detail.contains("Owner: me"));
+        assert!(detail.contains("Status: active"));
     }
 
     #[test]
@@ -227,11 +231,15 @@ mod tests {
         let task = make_task();
         let config = TaskConfig::default();
         let detail = format_task_detail(&task, &config, &ColorMode::Never);
-        let title_pos = detail.find("title:").unwrap();
-        let id_pos = detail.find("id:").unwrap();
-        let status_pos = detail.find("status:").unwrap();
-        assert!(title_pos < id_pos);
-        assert!(id_pos < status_pos);
+        let title_pos = detail.find("Title:").unwrap();
+        let path_pos = detail.find("Path:").unwrap();
+        let id_pos = detail.find("ID:").unwrap();
+        let owner_pos = detail.find("Owner:").unwrap();
+        let status_pos = detail.find("Status:").unwrap();
+        assert!(title_pos < path_pos);
+        assert!(path_pos < id_pos);
+        assert!(id_pos < owner_pos);
+        assert!(owner_pos < status_pos);
     }
 
     #[test]

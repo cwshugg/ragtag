@@ -6,7 +6,7 @@ use clap::{Arg, Command};
 
 /// Builds the complete `tasks` subcommand tree.
 pub fn build_tasks_command() -> Command {
-    Command::new("tasks")
+    Command::new("task")
         .about("Track and manage tasks embedded in plain text files")
         .subcommand_required(true)
         .subcommand(
@@ -15,7 +15,7 @@ pub fn build_tasks_command() -> Command {
                 .arg(
                     Arg::new("title")
                         .long("title")
-                        .help("Task title (required unless interactive)")
+                        .help("Task title")
                         .value_name("STR"),
                 )
                 .arg(
@@ -45,7 +45,7 @@ pub fn build_tasks_command() -> Command {
                 .arg(
                     Arg::new("ttc-estimate")
                         .long("ttc-estimate")
-                        .help("Estimated time to complete (required unless interactive)")
+                        .help("Estimated time to complete")
                         .value_name("NUM"),
                 )
                 .arg(
@@ -59,13 +59,6 @@ pub fn build_tasks_command() -> Command {
                         .long("pid")
                         .help("Parent task ID")
                         .value_name("STR"),
-                )
-                .arg(
-                    Arg::new("interactive")
-                        .short('i')
-                        .long("interactive")
-                        .help("Launch interactive prompt for all fields")
-                        .action(clap::ArgAction::SetTrue),
                 ),
         )
         .subcommand(
@@ -96,6 +89,30 @@ pub fn build_tasks_command() -> Command {
                         .long("reverse")
                         .help("Reverse sort order")
                         .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .short('a')
+                        .help("Show all tasks, including excluded status categories (done, abandoned)")
+                        .action(clap::ArgAction::SetTrue),
+                ),
+        )
+        .subcommand(
+            Command::new("get")
+                .about("Look up a task by ID or title")
+                .arg(
+                    Arg::new("search")
+                        .help("Task ID or title search string")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory)")
+                        .value_name("PATH")
+                        .default_value("."),
                 )
                 .arg(
                     Arg::new("all")
@@ -148,6 +165,12 @@ pub fn build_tasks_command() -> Command {
             "Update a task's status",
             "status",
             "New status",
+        ))
+        .subcommand(build_set_command(
+            "set-priority",
+            "Update a task's priority",
+            "priority",
+            "New priority (non-negative integer)",
         ))
         .subcommand(build_set_command(
             "set-time",

@@ -112,7 +112,7 @@ Numeric comparisons parse both sides as `f64`. If parsing fails, the comparison 
 Track and manage tasks embedded in plain text files. Requires a subcommand.
 
 ```
-ragtag tasks <SUBCOMMAND>
+ragtag task <SUBCOMMAND>
 ```
 
 #### `tasks create`
@@ -120,7 +120,7 @@ ragtag tasks <SUBCOMMAND>
 Create a new task and print the `@task(...)` string to stdout.
 
 ```
-ragtag tasks create [OPTIONS]
+ragtag task create [OPTIONS]
 ```
 
 **Options:**
@@ -159,7 +159,7 @@ The task ID is a randomly-generated 16-character hex string.
 List tasks found in files.
 
 ```
-ragtag tasks list [OPTIONS]
+ragtag task list [OPTIONS]
 ```
 
 **Options:**
@@ -186,7 +186,7 @@ notes/bugs.md id="f0e1d2c3b4a59687" status="blocked" title="Fix parser bug"
 Display a table-like summary of tasks grouped by field.
 
 ```
-ragtag tasks summary [OPTIONS]
+ragtag task summary [OPTIONS]
 ```
 
 **Options:**
@@ -210,7 +210,7 @@ Status values are color-coded and priority `0` is shown in red.
 Update a task's status.
 
 ```
-ragtag tasks set-status --id <ID> [OPTIONS]
+ragtag task set-status --id <ID> [OPTIONS]
 ```
 
 **Options:**
@@ -233,7 +233,7 @@ ragtag tasks set-status --id <ID> [OPTIONS]
 Update a task's `time_spent`.
 
 ```
-ragtag tasks set-time --id <ID> [OPTIONS]
+ragtag task set-time --id <ID> [OPTIONS]
 ```
 
 **Options:**
@@ -249,7 +249,7 @@ ragtag tasks set-time --id <ID> [OPTIONS]
 Update a task's owner.
 
 ```
-ragtag tasks set-owner --id <ID> [OPTIONS]
+ragtag task set-owner --id <ID> [OPTIONS]
 ```
 
 **Options:**
@@ -265,7 +265,7 @@ ragtag tasks set-owner --id <ID> [OPTIONS]
 Update a task's parent ID.
 
 ```
-ragtag tasks set-parent --id <ID> [OPTIONS]
+ragtag task set-parent --id <ID> [OPTIONS]
 ```
 
 **Options:**

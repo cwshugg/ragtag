@@ -76,10 +76,6 @@ pub fn run(
     config: &TaskConfig,
     ctx: &mut ExtensionContext,
 ) -> Result<(), RagtagError> {
-    if matches.get_flag("interactive") {
-        return run_interactive(config, ctx);
-    }
-
     let id = generate_task_id()?;
 
     let mut builder = TaskTagBuilder::new();
@@ -97,6 +93,11 @@ pub fn run(
     builder.time_units = matches.get_one::<String>("time-units").cloned();
     builder.pid = matches.get_one::<String>("pid").cloned();
 
+    // If title is missing, fall back to interactive mode for remaining fields
+    if builder.title.is_none() {
+        return run_interactive(config, ctx, builder);
+    }
+
     let task = builder.build(config)?;
     let output = format_task_string(&task, config);
     writeln!(ctx.stdout, "{output}").map_err(RagtagError::Io)?;
@@ -104,74 +105,57 @@ pub fn run(
     Ok(())
 }
 
-/// Runs interactive task creation with prompts.
-fn run_interactive(config: &TaskConfig, ctx: &mut ExtensionContext) -> Result<(), RagtagError> {
-    let id = generate_task_id()?;
+/// Runs interactive task creation, prompting for any fields not already set in the builder.
+fn run_interactive(
+    config: &TaskConfig,
+    ctx: &mut ExtensionContext,
+    mut builder: TaskTagBuilder,
+) -> Result<(), RagtagError> {
+    if builder.id.is_none() {
+        builder.id = Some(generate_task_id()?);
+    }
 
-    let mut builder = TaskTagBuilder::new();
-    builder.id = Some(id);
-
-    // Read stdin line by line
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
 
-    // Required: title
-    loop {
-        write!(ctx.stderr, "Title (required): ").map_err(RagtagError::Io)?;
-        ctx.stderr.flush().map_err(RagtagError::Io)?;
-        if let Some(Ok(line)) = lines.next() {
-            let trimmed = line.trim().to_string();
-            if !trimmed.is_empty() {
-                builder.title = Some(trimmed);
-                break;
-            }
-            writeln!(ctx.stderr, "  Title is required. Please try again.")
-                .map_err(RagtagError::Io)?;
-        } else {
-            return Err(RagtagError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "unexpected end of input",
-            )));
-        }
-    }
-
-    // Required: ttc_estimate
-    loop {
-        write!(ctx.stderr, "TTC Estimate (required, numeric): ").map_err(RagtagError::Io)?;
-        ctx.stderr.flush().map_err(RagtagError::Io)?;
-        if let Some(Ok(line)) = lines.next() {
-            let trimmed = line.trim().to_string();
-            if let Ok(val) = trimmed.parse::<f64>() {
-                builder.ttc_estimate = Some(val);
-                break;
-            }
-            if !trimmed.is_empty() {
-                writeln!(ctx.stderr, "  Must be a number. Please try again.")
+    // Prompt for title if not already set
+    if builder.title.is_none() {
+        loop {
+            write!(ctx.stderr, "Title: ").map_err(RagtagError::Io)?;
+            ctx.stderr.flush().map_err(RagtagError::Io)?;
+            if let Some(Ok(line)) = lines.next() {
+                let trimmed = line.trim().to_string();
+                if !trimmed.is_empty() {
+                    builder.title = Some(trimmed);
+                    break;
+                }
+                writeln!(ctx.stderr, "  Title is required. Please try again.")
                     .map_err(RagtagError::Io)?;
             } else {
-                writeln!(ctx.stderr, "  TTC Estimate is required. Please try again.")
-                    .map_err(RagtagError::Io)?;
+                return Err(RagtagError::Io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "unexpected end of input",
+                )));
             }
-        } else {
-            return Err(RagtagError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "unexpected end of input",
-            )));
         }
     }
 
-    // Optional fields with prompts
-    let optional_prompts = [
-        ("Description (leave blank to skip): ", "description"),
-        ("Owner (leave blank for default): ", "owner"),
-        ("Status (leave blank for default): ", "status"),
-        ("Priority (leave blank to skip): ", "priority"),
-        ("Time Units (leave blank for default): ", "time_units"),
-        ("Parent ID (leave blank to skip): ", "pid"),
+    // Prompt for optional fields that aren't already set
+    let optional_prompts: Vec<(&str, &str, bool)> = vec![
+        ("Description", "description", builder.description.is_some()),
+        ("Owner", "owner", builder.owner.is_some()),
+        ("Status", "status", builder.status.is_some()),
+        ("Priority", "priority", builder.priority.is_some()),
+        ("TTC Estimate", "ttc_estimate", builder.ttc_estimate.is_some()),
+        ("Time Units", "time_units", builder.time_units.is_some()),
+        ("Parent ID", "pid", builder.pid.is_some()),
     ];
 
-    for (prompt, field) in &optional_prompts {
-        write!(ctx.stderr, "{prompt}").map_err(RagtagError::Io)?;
+    for (label, field, already_set) in &optional_prompts {
+        if *already_set {
+            continue;
+        }
+        write!(ctx.stderr, "{label} (leave blank to skip): ").map_err(RagtagError::Io)?;
         ctx.stderr.flush().map_err(RagtagError::Io)?;
         if let Some(Ok(line)) = lines.next() {
             let trimmed = line.trim().to_string();
@@ -183,6 +167,11 @@ fn run_interactive(config: &TaskConfig, ctx: &mut ExtensionContext) -> Result<()
                     "priority" => {
                         if let Ok(p) = trimmed.parse::<u32>() {
                             builder.priority = Some(p);
+                        }
+                    }
+                    "ttc_estimate" => {
+                        if let Ok(v) = trimmed.parse::<f64>() {
+                            builder.ttc_estimate = Some(v);
                         }
                     }
                     "time_units" => builder.time_units = Some(trimmed),
