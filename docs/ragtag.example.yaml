@@ -1,0 +1,105 @@
+# =============================================================================
+# ragtag configuration
+# =============================================================================
+#
+# Place this file as `.ragtag.yaml` or `ragtag.yaml` in your project root.
+# ragtag searches upward from the current directory, stopping at a `.git`
+# boundary. Use `--config <path>` to specify an explicit config file.
+#
+# Every field below has a default value — an empty file (or no file at all)
+# is perfectly valid. Only override what you need.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# File Discovery
+# ---------------------------------------------------------------------------
+
+# Regex patterns for file paths to ignore. Matched against the relative path
+# of each discovered file. Up to 256 patterns, each up to 1024 characters.
+ignore_patterns:
+  - ".*\\.pdf$"
+  - ".*\\.png$"
+  - "node_modules/"
+  - "target/"
+  - "vendor/"
+
+# Whether to respect .gitignore rules when scanning files.
+# Default: true
+respect_gitignore: true
+
+# Whether to skip hidden files and directories (names starting with `.`).
+# Default: true
+skip_hidden: true
+
+# Maximum directory depth to scan. Unset or null means unlimited.
+# Default: null (unlimited)
+max_depth: 10
+
+# Maximum file size in bytes to scan. Files larger than this are skipped.
+# Must not exceed 104857600 (100 MB).
+# Default: 10485760 (10 MB)
+max_file_size: 10485760
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+output:
+  # Color mode for terminal output.
+  # Options: "auto" (detect TTY), "always", "never"
+  # Default: "auto"
+  color: "auto"
+
+
+# ---------------------------------------------------------------------------
+# Task Extension
+# ---------------------------------------------------------------------------
+#
+# Configuration for the built-in `@task(...)` tag extension.
+# This section is optional — all fields have sensible defaults.
+
+tasks:
+  # The tag name that triggers the task extension.
+  # Change this to scan for a different tag (e.g., "todo", "ticket").
+  # Default: "task"
+  tag_name: "task"
+
+  # Default owner assigned to new tasks when `owner` is not specified.
+  # Default: "me"
+  default_owner: "me"
+
+  # Default time units for `time_estimate` and `time_actual`.
+  # Allowed values: "hours", "days", "weeks"
+  # Default: "hours"
+  default_time_units: "hours"
+
+  # Default status for newly created tasks.
+  # Must be one of the recognized status keywords below.
+  # Default: "new"
+  default_status: "new"
+
+  # Status keywords grouped by category. Each category maps to an output
+  # color: done=green, active=yellow, blocked=red, abandoned=orange,
+  # inactive=gray. You can add custom keywords to any category.
+  status_keywords:
+    done:
+      - "done"
+      - "finished"
+      - "complete"
+      - "completed"
+    active:
+      - "active"
+      - "underway"
+      - "working"
+      - "wip"
+    blocked:
+      - "blocked"
+    abandoned:
+      - "abandoned"
+      - "deleted"
+      - "removed"
+      - "dead"
+    inactive:
+      - "inactive"
+      - "pending"
+      - "new"

@@ -51,20 +51,12 @@ impl<'de> Deserialize<'de> for ColorMode {
 pub struct OutputConfig {
     /// Color mode.
     pub color: ColorMode,
-    /// Default attributes shown in `tasks list`.
-    pub default_list_attributes: Vec<String>,
 }
 
 impl Default for OutputConfig {
     fn default() -> Self {
         Self {
             color: ColorMode::Auto,
-            default_list_attributes: vec![
-                "id".to_string(),
-                "status".to_string(),
-                "title".to_string(),
-                "description".to_string(),
-            ],
         }
     }
 }
@@ -81,8 +73,6 @@ pub struct Config {
     pub respect_gitignore: bool,
     /// Whether to skip hidden files and directories.
     pub skip_hidden: bool,
-    /// Whether to skip binary files.
-    pub skip_binary: bool,
     /// Maximum directory depth (None = unlimited).
     pub max_depth: Option<usize>,
     /// Maximum file size in bytes to scan.
@@ -101,7 +91,6 @@ impl Default for Config {
             ignore_patterns: Vec::new(),
             respect_gitignore: true,
             skip_hidden: true,
-            skip_binary: true,
             max_depth: None,
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             output: OutputConfig::default(),
@@ -152,11 +141,10 @@ mod tests {
         assert!(config.ignore_patterns.is_empty());
         assert!(config.respect_gitignore);
         assert!(config.skip_hidden);
-        assert!(config.skip_binary);
         assert_eq!(config.max_depth, None);
         assert_eq!(config.max_file_size, 10_485_760);
         assert_eq!(config.output.color, ColorMode::Auto);
-        assert_eq!(config.output.default_list_attributes.len(), 4);
+        assert_eq!(config.output.color, ColorMode::Auto);
     }
 
     #[test]
@@ -167,24 +155,18 @@ ignore_patterns:
   - "target/"
 respect_gitignore: false
 skip_hidden: false
-skip_binary: false
 max_depth: 5
 max_file_size: 1048576
 output:
   color: "never"
-  default_list_attributes:
-    - "id"
-    - "title"
 "#;
         let config: Config = serde_yml::from_str(yaml).unwrap();
         assert_eq!(config.ignore_patterns.len(), 2);
         assert!(!config.respect_gitignore);
         assert!(!config.skip_hidden);
-        assert!(!config.skip_binary);
         assert_eq!(config.max_depth, Some(5));
         assert_eq!(config.max_file_size, 1_048_576);
         assert_eq!(config.output.color, ColorMode::Never);
-        assert_eq!(config.output.default_list_attributes.len(), 2);
     }
 
     #[test]
