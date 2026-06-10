@@ -116,6 +116,11 @@ fn apply_task_filter(task: &TaskTag, filter: &str) -> bool {
 }
 
 /// Gets a task field as a string for comparison.
+///
+/// Returns an empty string for unrecognized field names and logs a warning.
+///
+/// TODO: Return `Cow<'_, str>` or `&str` instead of `String` to avoid
+/// unnecessary allocations on every call during filtering and sorting.
 fn get_task_field_str(task: &TaskTag, field: &str) -> String {
     match field {
         "id" => task.id.clone(),
@@ -129,18 +134,26 @@ fn get_task_field_str(task: &TaskTag, field: &str) -> String {
         "ttc_estimate" => task.ttc_estimate.to_string(),
         "ttc_actual" => task.ttc_actual.map(|t| t.to_string()).unwrap_or_default(),
         "time_units" => task.time_units.clone(),
-        _ => String::new(),
+        _ => {
+            log::warn!("unknown task field \"{field}\" in filter/sort expression");
+            String::new()
+        }
     }
 }
 
-/// Compares a task field numerically if possible, otherwise as string.
+/// Compares a task field numerically if possible, otherwise lexicographically.
 fn compare_field(task: &TaskTag, field: &str, value: &str, cmp: fn(f64, f64) -> bool) -> bool {
     let field_str = get_task_field_str(task, field);
     if let (Ok(a), Ok(b)) = (field_str.parse::<f64>(), value.parse::<f64>()) {
         cmp(a, b)
     } else {
-        // String comparison
-        field_str == value
+        // Fall back to lexicographic string comparison for non-numeric values.
+        let ordering = field_str.as_str().cmp(value);
+        match ordering {
+            std::cmp::Ordering::Less => cmp(-1.0, 0.0),
+            std::cmp::Ordering::Equal => cmp(0.0, 0.0),
+            std::cmp::Ordering::Greater => cmp(1.0, 0.0),
+        }
     }
 }
 

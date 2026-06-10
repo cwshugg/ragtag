@@ -54,14 +54,27 @@ pub fn find_task_by_id(
     for file_path in &files {
         let content = match std::fs::read_to_string(file_path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(e) => {
+                log::warn!("skipping unreadable file {}: {}", file_path.display(), e);
+                continue;
+            }
         };
         let tags = ctx.parser.parse_file(&content, file_path);
         for tag in &tags {
             if tag.name == config.tag_name {
-                if let Ok(task) = TaskTag::from_tag(tag, config, &content) {
-                    if task.id == id {
-                        found.push((task, content.clone()));
+                match TaskTag::from_tag(tag, config, &content) {
+                    Ok(task) => {
+                        if task.id == id {
+                            found.push((task, content.clone()));
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "failed to parse task tag at {}:{}: {}",
+                            file_path.display(),
+                            tag.location.line,
+                            e
+                        );
                     }
                 }
             }
@@ -75,7 +88,7 @@ pub fn find_task_by_id(
                 "task not found with id \"{id}\"\nhint: run 'ragtag tasks list' to see all tasks"
             ),
         }),
-        1 => Ok(found.into_iter().next().unwrap()),
+        1 => Ok(found.into_iter().next().expect("guaranteed by match arm")),
         _ => {
             let locations: Vec<String> = found
                 .iter()

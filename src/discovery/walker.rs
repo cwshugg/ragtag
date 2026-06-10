@@ -20,8 +20,6 @@ pub struct IgnoreWalker {
     ignore_set: Option<regex::RegexSet>,
     respect_gitignore: bool,
     skip_hidden: bool,
-    #[allow(dead_code)]
-    skip_binary: bool,
     max_depth: Option<usize>,
     max_file_size: u64,
 }
@@ -54,7 +52,6 @@ impl IgnoreWalker {
             ignore_set,
             respect_gitignore: config.respect_gitignore,
             skip_hidden: config.skip_hidden,
-            skip_binary: config.skip_binary,
             max_depth: config.max_depth,
             max_file_size: config.max_file_size,
         })
@@ -89,9 +86,7 @@ impl FileWalker for IgnoreWalker {
             builder.max_depth(Some(depth));
         }
 
-        if let Some(max_size) = Some(self.max_file_size) {
-            builder.max_filesize(Some(max_size));
-        }
+        builder.max_filesize(Some(self.max_file_size));
 
         let mut files = Vec::new();
 

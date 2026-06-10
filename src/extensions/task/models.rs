@@ -74,6 +74,10 @@ fn get_float(tag: &Tag, name: &str) -> Option<f64> {
 }
 
 /// Extracts a u32 value from a named attribute.
+///
+/// Only accepts integer values. Float values are rejected because fields
+/// like `priority` must be whole numbers — silent truncation (e.g., 3.9 → 3)
+/// would be surprising.
 fn get_u32(tag: &Tag, name: &str) -> Option<u32> {
     tag.get_named_attribute(name).and_then(|v| match v {
         AttributeValue::Integer { value, .. } => {
@@ -83,13 +87,8 @@ fn get_u32(tag: &Tag, name: &str) -> Option<u32> {
                 None
             }
         }
-        AttributeValue::Float(f) => {
-            if *f >= 0.0 && *f <= u32::MAX as f64 {
-                Some(*f as u32)
-            } else {
-                None
-            }
-        }
+        // Floats are not accepted for integer fields; use a whole number.
+        AttributeValue::Float(_) => None,
         _ => None,
     })
 }

@@ -18,10 +18,16 @@ pub fn parse_attr_value(cursor: &mut Cursor) -> Option<AttributeValue> {
     }
 }
 
+/// Maximum allowed length for a quoted string value (in characters).
+/// This prevents memory amplification when parsing adversarial files.
+const MAX_QUOTED_VALUE_LENGTH: usize = 1_048_576; // 1 MB
+
 /// Parses a quoted string value, handling backslash escapes.
 ///
 /// Backslash causes the next character to be included literally — there is
-/// no special interpretation of `\n`, `\t`, etc.
+/// no special interpretation of `\n`, `\t`, etc. Only `\\` and `\"` (or `\'`)
+/// produce meaningful escapes. For example, `\n` in input becomes the single
+/// character `n`, not a newline.
 pub fn parse_quoted_string(cursor: &mut Cursor, quote_char: char) -> Option<AttributeValue> {
     // Advance past the opening quote
     cursor.advance()?;
@@ -38,6 +44,9 @@ pub fn parse_quoted_string(cursor: &mut Cursor, quote_char: char) -> Option<Attr
             return Some(AttributeValue::Str(result));
         } else {
             result.push(ch);
+        }
+        if result.len() > MAX_QUOTED_VALUE_LENGTH {
+            return None;
         }
     }
 }

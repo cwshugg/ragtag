@@ -3,8 +3,6 @@
 //! Defines the top-level `Cli` struct and builds the clap command tree,
 //! dynamically including extension subcommands.
 
-pub mod args;
-
 use crate::extensions::ExtensionRegistry;
 use clap::{Arg, Command};
 

@@ -110,10 +110,13 @@ impl Default for Config {
     }
 }
 
+/// The maximum allowed value for `max_file_size` (100 MB).
+const MAX_ALLOWED_FILE_SIZE: u64 = 100 * 1024 * 1024;
+
 impl Config {
     /// Validates the configuration values.
     ///
-    /// Checks ignore pattern counts and lengths.
+    /// Checks ignore pattern counts, lengths, and max_file_size bounds.
     pub fn validate(&self) -> Result<(), crate::error::RagtagError> {
         if self.ignore_patterns.len() > MAX_IGNORE_PATTERNS {
             return Err(crate::error::RagtagError::InvalidConfig(format!(
@@ -128,6 +131,12 @@ impl Config {
                     i + 1
                 )));
             }
+        }
+        if self.max_file_size > MAX_ALLOWED_FILE_SIZE {
+            return Err(crate::error::RagtagError::InvalidConfig(format!(
+                "max_file_size {} exceeds maximum allowed value of {MAX_ALLOWED_FILE_SIZE}",
+                self.max_file_size
+            )));
         }
         Ok(())
     }
@@ -244,5 +253,14 @@ tasks:
     fn test_validate_ok() {
         let config = Config::default();
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_max_file_size_too_large() {
+        let mut config = Config::default();
+        config.max_file_size = 200 * 1024 * 1024; // 200 MB, exceeds 100 MB limit
+        assert!(config.validate().is_err());
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("max_file_size"));
     }
 }

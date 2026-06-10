@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::super::config::TaskConfig;
 use super::super::output::format_task_detail;
+use super::create::escape_for_tag;
 use super::find_task_by_id;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
@@ -28,7 +29,7 @@ pub fn run(
         .unwrap_or(".");
     let path = Path::new(path_str);
 
-    let (mut task, file_content) = find_task_by_id(id, path, config, ctx)?;
+    let (mut task, _) = find_task_by_id(id, path, config, ctx)?;
 
     // Get new status
     let new_status = if let Some(status) = matches.get_one::<String>("status") {
@@ -71,12 +72,11 @@ pub fn run(
     }
 
     // Edit file
-    let _ = file_content; // used in find_task_by_id
     ctx.editor.update_tag_attribute(
         &task.location.file_path,
         task.raw_span.clone(),
         "status",
-        &format!("\"{}\"", new_status),
+        &format!("\"{}\"", escape_for_tag(&new_status)),
     )?;
 
     task.status = new_status;

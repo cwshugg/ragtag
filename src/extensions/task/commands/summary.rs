@@ -265,7 +265,7 @@ fn format_colored_row(plain: &[String], colored: &[String], widths: &[usize]) ->
         .zip(colored.iter())
         .zip(widths.iter())
         .map(|((p, c), width)| {
-            let visible_len = p.len();
+            let visible_len = p.chars().count();
             if visible_len >= *width {
                 c.clone()
             } else {

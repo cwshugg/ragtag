@@ -45,6 +45,12 @@ pub fn validate_task_tag(tag: &Tag, config: &TaskConfig) -> Vec<ValidationMessag
                     location: Some(tag.location.clone()),
                 });
             }
+        } else {
+            messages.push(ValidationMessage {
+                level: ValidationLevel::Error,
+                message: "time_units must be a string value".to_string(),
+                location: Some(tag.location.clone()),
+            });
         }
     }
 
@@ -62,6 +68,12 @@ pub fn validate_task_tag(tag: &Tag, config: &TaskConfig) -> Vec<ValidationMessag
                     location: Some(tag.location.clone()),
                 });
             }
+        } else {
+            messages.push(ValidationMessage {
+                level: ValidationLevel::Error,
+                message: "status must be a string value".to_string(),
+                location: Some(tag.location.clone()),
+            });
         }
     }
 
@@ -177,5 +189,59 @@ mod tests {
         };
         let msgs = validate_task_tag(&tag, &TaskConfig::default());
         assert!(msgs.iter().any(|m| m.message.contains("time_units")));
+    }
+
+    #[test]
+    fn test_non_string_status_rejected() {
+        let tag = Tag {
+            name: "task".to_string(),
+            attributes: vec![
+                TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
+                TagAttribute::named(
+                    "ttc_estimate",
+                    AttributeValue::Integer {
+                        value: 4,
+                        base: NumericBase::Decimal,
+                    },
+                ),
+                TagAttribute::named(
+                    "status",
+                    AttributeValue::Integer {
+                        value: 42,
+                        base: NumericBase::Decimal,
+                    },
+                ),
+            ],
+            location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
+            raw_span: 0..50,
+        };
+        let msgs = validate_task_tag(&tag, &TaskConfig::default());
+        assert!(msgs
+            .iter()
+            .any(|m| m.message.contains("status must be a string")));
+    }
+
+    #[test]
+    fn test_non_string_time_units_rejected() {
+        let tag = Tag {
+            name: "task".to_string(),
+            attributes: vec![
+                TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
+                TagAttribute::named(
+                    "ttc_estimate",
+                    AttributeValue::Integer {
+                        value: 4,
+                        base: NumericBase::Decimal,
+                    },
+                ),
+                TagAttribute::named("time_units", AttributeValue::Float(3.5)),
+            ],
+            location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
+            raw_span: 0..50,
+        };
+        let msgs = validate_task_tag(&tag, &TaskConfig::default());
+        assert!(msgs
+            .iter()
+            .any(|m| m.message.contains("time_units must be a string")));
     }
 }

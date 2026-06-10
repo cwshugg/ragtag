@@ -21,11 +21,7 @@ fn parse_fixture(name: &str) -> Vec<ragtag::models::Tag> {
 fn test_simple_tags_count() {
     let tags = parse_fixture("simple_tags.txt");
     // @note, @todo, @bookmark, @tag x3, @_private_tag, @-hyphen-tag = 8
-    assert!(
-        tags.len() >= 8,
-        "Expected at least 8 tags, got {}",
-        tags.len()
-    );
+    assert_eq!(tags.len(), 8, "Expected exactly 8 tags, got {}", tags.len());
 }
 
 #[test]
@@ -127,9 +123,9 @@ fn test_edge_cases_invalid_start() {
 #[test]
 fn test_edge_cases_tag_termination() {
     let tags = parse_fixture("edge_cases.txt");
-    // @terminated::extra should parse as @terminated
+    // @terminated::extra should parse as @terminated, and "is just @terminated" adds another
     let terminated: Vec<_> = tags.iter().filter(|t| t.name == "terminated").collect();
-    assert!(terminated.len() >= 1);
+    assert_eq!(terminated.len(), 2);
 }
 
 #[test]

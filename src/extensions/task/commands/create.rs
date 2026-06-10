@@ -24,7 +24,7 @@ pub fn generate_task_id() -> Result<String, RagtagError> {
 /// Escapes special characters in a string for safe embedding in a tag attribute value.
 ///
 /// Backslashes are escaped first (to avoid double-escaping), then double quotes.
-fn escape_for_tag(s: &str) -> String {
+pub fn escape_for_tag(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 

@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::super::config::TaskConfig;
 use super::super::output::format_task_detail;
+use super::create::escape_for_tag;
 use super::find_task_by_id;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
@@ -60,7 +61,7 @@ pub fn run(
         &task.location.file_path,
         task.raw_span.clone(),
         "owner",
-        &format!("\"{}\"", new_owner),
+        &format!("\"{}\"", escape_for_tag(&new_owner)),
     )?;
 
     task.owner = new_owner;

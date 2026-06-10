@@ -131,12 +131,20 @@ fn get_tag_attr_str(tag: &Tag, field: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Compares two values numerically if possible, otherwise as strings.
+/// Compares two values numerically if possible, otherwise lexicographically.
 fn compare_values(a: &str, b: &str, cmp: fn(f64, f64) -> bool) -> bool {
     if let (Ok(na), Ok(nb)) = (a.parse::<f64>(), b.parse::<f64>()) {
         cmp(na, nb)
     } else {
-        false
+        // Fall back to lexicographic string comparison for non-numeric values.
+        let ordering = a.cmp(b);
+        // Map the string comparison to the same semantics as the numeric comparator:
+        // we test the comparator against (0, -1), (0, 0), (0, 1) to determine its behavior.
+        match ordering {
+            std::cmp::Ordering::Less => cmp(-1.0, 0.0),
+            std::cmp::Ordering::Equal => cmp(0.0, 0.0),
+            std::cmp::Ordering::Greater => cmp(1.0, 0.0),
+        }
     }
 }
 
@@ -261,5 +269,35 @@ mod tests {
             )],
         );
         assert!(apply_filter(&tag, "statusinvalid").is_err());
+    }
+
+    #[test]
+    fn test_apply_filter_string_gt() {
+        // Non-numeric values should fall back to lexicographic comparison
+        let tag = make_tag(
+            "tag",
+            vec![TagAttribute::named(
+                "status",
+                AttributeValue::Str("draft".to_string()),
+            )],
+        );
+        // "draft" > "active" lexicographically
+        assert!(apply_filter(&tag, "status>active").unwrap());
+        // "draft" < "final" lexicographically
+        assert!(!apply_filter(&tag, "status>final").unwrap());
+    }
+
+    #[test]
+    fn test_apply_filter_string_gte() {
+        let tag = make_tag(
+            "tag",
+            vec![TagAttribute::named(
+                "status",
+                AttributeValue::Str("draft".to_string()),
+            )],
+        );
+        assert!(apply_filter(&tag, "status>=draft").unwrap());
+        assert!(apply_filter(&tag, "status>=active").unwrap());
+        assert!(!apply_filter(&tag, "status>=final").unwrap());
     }
 }

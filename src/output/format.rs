@@ -61,7 +61,7 @@ pub fn colorize_path(path: &Path, color_mode: &ColorMode) -> String {
     let has_leading_sep = display.starts_with('/') || display.starts_with('\\');
 
     if has_leading_sep {
-        result.push(display.chars().next().unwrap());
+        result.push(display.chars().next().unwrap_or('/'));
     }
 
     let parts: Vec<&str> = display

@@ -168,7 +168,7 @@ fn test_tasks_list() {
 #[test]
 fn test_tasks_list_sort() {
     let path = format!("{}/tasks.md", fixtures_dir());
-    ragtag()
+    let output = ragtag()
         .args([
             "--no-color",
             "tasks",
@@ -179,7 +179,38 @@ fn test_tasks_list_sort() {
             "priority",
         ])
         .assert()
-        .success();
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    // Verify that tasks appear in priority order in the output
+    let output_str = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = output_str.lines().collect();
+    assert!(
+        !lines.is_empty(),
+        "Expected sorted task output, got empty output"
+    );
+    // Tasks should be sorted by priority ascending; verify by checking
+    // that the first task in output has a lower or equal priority number
+    // than the last task.
+    if lines.len() >= 2 {
+        // Extract priority numbers from the bracket notation [N/status]
+        let extract_priority = |line: &str| -> Option<u32> {
+            let start = line.find('[')? + 1;
+            let slash = line[start..].find('/')? + start;
+            line[start..slash].parse().ok()
+        };
+        let priorities: Vec<u32> = lines.iter().filter_map(|l| extract_priority(l)).collect();
+        for window in priorities.windows(2) {
+            assert!(
+                window[0] <= window[1],
+                "Tasks not sorted by priority: {} should come before {}",
+                window[0],
+                window[1]
+            );
+        }
+    }
 }
 
 #[test]
@@ -325,10 +356,8 @@ fn test_nonexistent_path() {
 fn test_invalid_status() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
-    fs::write(
-        &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
-    ).unwrap();
+    let original_content = "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")";
+    fs::write(&file, original_content).unwrap();
 
     ragtag()
         .args([
@@ -344,6 +373,13 @@ fn test_invalid_status() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("invalid status"));
+
+    // Verify the file was NOT modified by the invalid status attempt
+    let after_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        after_content, original_content,
+        "File should not be modified when an invalid status is provided"
+    );
 }
 
 #[test]
