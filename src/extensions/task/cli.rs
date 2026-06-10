@@ -104,6 +104,30 @@ pub fn build_tasks_command() -> Command {
                         .value_name("LIST"),
                 ),
         )
+        .subcommand(
+            Command::new("summary")
+                .about("Display a table-like summary of tasks grouped by field")
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory)")
+                        .value_name("PATH")
+                        .default_value("."),
+                )
+                .arg(
+                    Arg::new("group")
+                        .long("group")
+                        .help("Group tasks by field (status, owner, priority)")
+                        .value_name("FIELD")
+                        .default_value("status"),
+                )
+                .arg(
+                    Arg::new("sort")
+                        .long("sort")
+                        .help("Sort tasks within each group by field")
+                        .value_name("FIELD"),
+                ),
+        )
         .subcommand(build_set_command(
             "set-status",
             "Update a task's status",

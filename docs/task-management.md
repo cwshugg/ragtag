@@ -68,6 +68,8 @@ Task statuses are grouped into five categories, each with a set of recognized ke
 
 Only recognized status keywords are accepted. Attempting to set an unrecognized status produces an error.
 
+> **Note:** Colors are automatically disabled when output is piped to another command or redirected to a file. Use `--no-color` to explicitly disable colors, or set the `NO_COLOR` environment variable.
+
 ### Priority Color
 
 * Priority `0` is displayed in **red** (highest urgency)
@@ -188,6 +190,42 @@ ragtag tasks list --filter priority=0 --filter owner=alice
 ragtag tasks list --filter ttc_estimate>4
 ```
 
+### `tasks summary`
+
+Displays a table-like summary of all tasks, grouped by a field and with aligned columns.
+
+```bash
+ragtag tasks summary
+ragtag tasks summary --group owner
+ragtag tasks summary --group priority --sort title
+ragtag tasks summary --path ./notes
+```
+
+**Output** shows tasks in grouped tables with headers:
+
+```
+=== Status: active ===
+ID                Title              Owner   Status   Priority  Time Spent  TTC Est.  TTC Act.  Time Units
+--                -----              -----   ------   --------  ----------  --------  --------  ----------
+a1b2c3d4e5f67890  Design API         alice   active   0         3.5         8         -         hours
+f0e1d2c3b4a59687  Write parser       bob     active   1         -           4         -         hours
+
+=== Status: done ===
+ID                Title              Owner   Status   Priority  Time Spent  TTC Est.  TTC Act.  Time Units
+--                -----              -----   ------   --------  ----------  --------  --------  ----------
+1122334455667788  Setup project      alice   done     2         2           2         2         hours
+```
+
+Status values are color-coded (green for done, yellow for active, red for blocked, orange for abandoned, gray for inactive). Priority `0` is displayed in red.
+
+**Flags:**
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--group <FIELD>` | `status` | Group tasks by field: `status`, `owner`, or `priority` |
+| `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
+
 ### `tasks set-status`
 
 Updates a task's status in-place in its source file.
@@ -299,7 +337,14 @@ ragtag tasks set-parent --id a1b2c3d4e5f67890 --pid f0e1d2c3b4a59687
     ragtag tasks list --filter status!=done --sort priority
     ```
 
-5. **Mark complete** when finished:
+5. **View a summary** of all tasks grouped by status:
+
+    ```bash
+    ragtag tasks summary
+    ragtag tasks summary --group owner
+    ```
+
+6. **Mark complete** when finished:
 
     ```bash
     ragtag tasks set-status --id <task-id> --status done

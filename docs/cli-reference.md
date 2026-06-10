@@ -181,6 +181,30 @@ notes/project.md id="a1b2c3d4e5f67890" status="active" title="Design API" descri
 notes/bugs.md id="f0e1d2c3b4a59687" status="blocked" title="Fix parser bug"
 ```
 
+#### `tasks summary`
+
+Display a table-like summary of tasks grouped by field.
+
+```
+ragtag tasks summary [OPTIONS]
+```
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--group <FIELD>` | `status` | Group tasks by field: `status`, `owner`, or `priority` |
+| `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
+
+**Output:**
+
+Tasks are displayed in aligned tables, grouped by the specified field. Each group has a header (e.g., `=== Status: active ===`).
+
+Columns: ID, Title, Owner, Status, Priority, Time Spent, TTC Est., TTC Act., Time Units.
+
+Status values are color-coded and priority `0` is shown in red.
+
 #### `tasks set-status`
 
 Update a task's status.
@@ -267,6 +291,8 @@ All errors are printed to stderr with a descriptive message.
 | --- | --- |
 | `RUST_LOG` | Controls log verbosity (e.g., `RUST_LOG=info` or `RUST_LOG=debug`). Uses the `env_logger` crate format. |
 | `NO_COLOR` | When set, disables colored output. Overrides the `output.color` config setting but is itself overridden by the `--no-color` CLI flag. |
+
+> **Note:** When `output.color` is set to `auto` (the default), colors are automatically disabled when stdout is not a terminal (e.g., when piping to another command or redirecting to a file).
 
 ## File Editing Safety
 

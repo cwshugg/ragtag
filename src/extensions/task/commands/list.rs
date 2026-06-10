@@ -76,7 +76,7 @@ pub fn run(
 
     // Output
     for task in &tasks {
-        let line = format_task_line(task, &show_attrs, &ctx.color_mode);
+        let line = format_task_line(task, &show_attrs, &ctx.color_mode, config);
         writeln!(ctx.stdout, "{line}").map_err(RagtagError::Io)?;
     }
 

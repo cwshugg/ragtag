@@ -9,6 +9,7 @@ pub mod set_owner;
 pub mod set_parent;
 pub mod set_status;
 pub mod set_time;
+pub mod summary;
 
 use std::path::Path;
 
@@ -26,6 +27,7 @@ pub fn dispatch(
     match matches.subcommand() {
         Some(("create", sub_m)) => create::run(sub_m, config, ctx),
         Some(("list", sub_m)) => list::run(sub_m, config, ctx),
+        Some(("summary", sub_m)) => summary::run(sub_m, config, ctx),
         Some(("set-status", sub_m)) => set_status::run(sub_m, config, ctx),
         Some(("set-time", sub_m)) => set_time::run(sub_m, config, ctx),
         Some(("set-owner", sub_m)) => set_owner::run(sub_m, config, ctx),
