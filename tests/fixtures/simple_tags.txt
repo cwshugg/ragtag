@@ -1,0 +1,13 @@
+This is a test file with various tags.
+
+@note This is a simple note tag.
+@todo(priority=1, description="Fix the bug")
+@bookmark(url="https://example.com", title="Example Site")
+@tag(positional1, positional2)
+@tag(key=value, name="hello world")
+@tag(num=42, hex=0xff, float=3.14)
+
+An email address like user@example.com should NOT be parsed as a tag.
+
+@_private_tag(secret=true)
+@-hyphen-tag(test=1)

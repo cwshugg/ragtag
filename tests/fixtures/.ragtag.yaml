@@ -1,0 +1,7 @@
+ignore_patterns:
+  - ".*\\.bak$"
+output:
+  color: "never"
+tasks:
+  tag_name: "task"
+  default_owner: "test_user"

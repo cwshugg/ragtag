@@ -1,0 +1,2 @@
+@note(text="File A note")
+@tag(source=a)

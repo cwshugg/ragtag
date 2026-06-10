@@ -1,0 +1,32 @@
+[package]
+name = "ragtag"
+version = "0.1.0"
+edition = "2021"
+description = "A CLI tool for parsing @tag(attr=value) from plain text files"
+license = "MIT"
+keywords = ["tag", "parser", "cli", "notes", "tasks"]
+categories = ["command-line-utilities", "text-processing"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+ignore = "0.4"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yml = "=0.0.12"
+owo-colors = { version = "4", features = ["supports-colors"] }
+tempfile = "3"
+getrandom = "0.3"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
+[profile.release]
+strip = true

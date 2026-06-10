@@ -1,0 +1,28 @@
+Email test: user@domain.com should not be a tag.
+But @valid_tag should be.
+
+Multi-line tag:
+@multiline(
+    key1="value 1",
+    key2="value 2",
+    key3=42,
+)
+
+Numeric bases:
+@numbers(dec=42, hex=0xff, oct=0o77, bin=0b1010, float=3.14, neg=-5)
+
+Quoted strings:
+@quoted(double="hello world", single='single quoted', escaped="has \"quotes\"")
+
+Tag with no attrs: @bare
+
+Tag name variations:
+@_underscore_start
+@-hyphen-start
+@MiXeD_CaSe-123
+
+Invalid (should be skipped): @1invalid_start
+
+Tag termination: @terminated::extra is just @terminated
+
+Overflow: @overflow(n=99999999999999999999)
