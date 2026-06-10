@@ -103,3 +103,10 @@ tasks:
       - "inactive"
       - "pending"
       - "new"
+
+  # Status categories to exclude from `tasks list` and `tasks summary` by default.
+  # Use `--all` or `--filter status=<value>` to override.
+  # Default: ["done", "abandoned"]
+  exclude_status_categories:
+    - "done"
+    - "abandoned"

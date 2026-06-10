@@ -56,7 +56,9 @@ pub fn format_task_detail(task: &TaskTag, config: &TaskConfig, color_mode: &Colo
     if let Some(ts) = task.time_spent {
         lines.push(format!("  time_spent: {ts}"));
     }
-    lines.push(format!("  ttc_estimate: {}", task.ttc_estimate));
+    if let Some(te) = task.ttc_estimate {
+        lines.push(format!("  ttc_estimate: {te}"));
+    }
     if let Some(ta) = task.ttc_actual {
         lines.push(format!("  ttc_actual: {ta}"));
     }
@@ -94,7 +96,11 @@ pub fn format_task_summary(tags: &[Tag], config: &TaskConfig, color_mode: &Color
     let mut parts = Vec::new();
     if done > 0 {
         let s = format!("{done} done");
-        parts.push(if use_color { s.green().to_string() } else { s });
+        parts.push(if use_color {
+            s.bright_green().to_string()
+        } else {
+            s
+        });
     }
     if active > 0 {
         let s = format!("{active} active");
@@ -147,7 +153,7 @@ pub fn colorize_status(
     }
 
     match categorize_status(status, keywords) {
-        StatusCategory::Done => status.green().to_string(),
+        StatusCategory::Done => status.bright_green().to_string(),
         StatusCategory::Active => status.bright_yellow().to_string(),
         StatusCategory::Blocked => status.bright_red().to_string(),
         StatusCategory::Abandoned => status.truecolor(255, 165, 0).to_string(),
@@ -183,7 +189,7 @@ mod tests {
             status: "active".to_string(),
             priority: Some(1),
             time_spent: Some(2.0),
-            ttc_estimate: 4.5,
+            ttc_estimate: Some(4.5),
             ttc_actual: None,
             time_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),

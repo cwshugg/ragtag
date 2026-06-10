@@ -64,6 +64,14 @@ pub fn run(
         tasks.retain(|task| filters.iter().all(|f| apply_task_filter(task, f)));
     }
 
+    // Apply default status exclusion (exclude done/abandoned by default)
+    let show_all = matches.get_flag("all");
+    let filter_mentions_status = filters.iter().any(|f| f.starts_with("status"));
+    if !show_all && !filter_mentions_status {
+        let excluded = config.get_excluded_keywords();
+        tasks.retain(|t| !excluded.contains(&t.status));
+    }
+
     // Sort (default: by priority)
     let effective_sort = sort_field.as_deref().unwrap_or("priority");
     sort_tasks(&mut tasks, effective_sort, reverse);
@@ -131,7 +139,7 @@ fn get_task_field_str(task: &TaskTag, field: &str) -> String {
         "status" => task.status.clone(),
         "priority" => task.priority.map(|p| p.to_string()).unwrap_or_default(),
         "time_spent" => task.time_spent.map(|t| t.to_string()).unwrap_or_default(),
-        "ttc_estimate" => task.ttc_estimate.to_string(),
+        "ttc_estimate" => task.ttc_estimate.map(|t| t.to_string()).unwrap_or_default(),
         "ttc_actual" => task.ttc_actual.map(|t| t.to_string()).unwrap_or_default(),
         "time_units" => task.time_units.clone(),
         _ => {
@@ -194,7 +202,7 @@ mod tests {
             status: status.to_string(),
             priority,
             time_spent: None,
-            ttc_estimate: 4.0,
+            ttc_estimate: Some(4.0),
             ttc_actual: None,
             time_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
@@ -258,5 +266,74 @@ mod tests {
     #[test]
     fn test_validate_task_filter_invalid() {
         assert!(validate_task_filter("statusinvalid").is_err());
+    }
+
+    #[test]
+    fn test_done_tasks_excluded_by_default() {
+        let config = TaskConfig::default();
+        let mut tasks = vec![
+            make_task("a", "active", Some(1), "Active task"),
+            make_task("b", "done", Some(2), "Done task"),
+            make_task("c", "abandoned", Some(3), "Abandoned task"),
+            make_task("d", "blocked", Some(4), "Blocked task"),
+        ];
+
+        // Simulate default exclusion (no --all, no status filter)
+        let excluded = config.get_excluded_keywords();
+        tasks.retain(|t| !excluded.contains(&t.status));
+
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].id, "a");
+        assert_eq!(tasks[1].id, "d");
+    }
+
+    #[test]
+    fn test_all_flag_shows_everything() {
+        let config = TaskConfig::default();
+        let tasks = vec![
+            make_task("a", "active", Some(1), "Active task"),
+            make_task("b", "done", Some(2), "Done task"),
+            make_task("c", "abandoned", Some(3), "Abandoned task"),
+            make_task("d", "blocked", Some(4), "Blocked task"),
+        ];
+
+        // With --all, no exclusion is applied
+        let show_all = true;
+        let filter_mentions_status = false;
+        let mut filtered = tasks.clone();
+        if !show_all && !filter_mentions_status {
+            let excluded = config.get_excluded_keywords();
+            filtered.retain(|t| !excluded.contains(&t.status));
+        }
+
+        assert_eq!(filtered.len(), 4);
+    }
+
+    #[test]
+    fn test_status_filter_overrides_exclusion() {
+        let config = TaskConfig::default();
+        let tasks = vec![
+            make_task("a", "active", Some(1), "Active task"),
+            make_task("b", "done", Some(2), "Done task"),
+            make_task("c", "abandoned", Some(3), "Abandoned task"),
+        ];
+
+        // When filter mentions status, exclusion is disabled
+        let show_all = false;
+        let filters = vec!["status=done".to_string()];
+        let filter_mentions_status = filters.iter().any(|f| f.starts_with("status"));
+
+        let mut filtered = tasks.clone();
+        if !show_all && !filter_mentions_status {
+            let excluded = config.get_excluded_keywords();
+            filtered.retain(|t| !excluded.contains(&t.status));
+        }
+
+        // Apply the explicit filter
+        filtered.retain(|task| filters.iter().all(|f| apply_task_filter(task, f)));
+
+        // Should show only the "done" task
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].status, "done");
     }
 }

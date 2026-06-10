@@ -96,6 +96,13 @@ pub fn build_tasks_command() -> Command {
                         .long("reverse")
                         .help("Reverse sort order")
                         .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .short('a')
+                        .help("Show all tasks, including excluded status categories (done, abandoned)")
+                        .action(clap::ArgAction::SetTrue),
                 ),
         )
         .subcommand(
@@ -120,6 +127,20 @@ pub fn build_tasks_command() -> Command {
                         .long("sort")
                         .help("Sort tasks within each group by field")
                         .value_name("FIELD"),
+                )
+                .arg(
+                    Arg::new("filter")
+                        .long("filter")
+                        .help("Filter tasks by attribute (e.g., status=active)")
+                        .value_name("EXPR")
+                        .action(clap::ArgAction::Append),
+                )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .short('a')
+                        .help("Show all tasks, including excluded status categories (done, abandoned)")
+                        .action(clap::ArgAction::SetTrue),
                 ),
         )
         .subcommand(build_set_command(

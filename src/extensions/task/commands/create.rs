@@ -54,7 +54,9 @@ pub fn format_task_string(task: &TaskTag, config: &TaskConfig) -> String {
         attrs.push(format!("    time_spent={time_spent}"));
     }
 
-    attrs.push(format!("    ttc_estimate={}", task.ttc_estimate));
+    if let Some(ttc_estimate) = task.ttc_estimate {
+        attrs.push(format!("    ttc_estimate={ttc_estimate}"));
+    }
 
     if let Some(ttc_actual) = task.ttc_actual {
         attrs.push(format!("    ttc_actual={ttc_actual}"));

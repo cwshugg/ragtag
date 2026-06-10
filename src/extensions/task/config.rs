@@ -24,6 +24,10 @@ pub struct TaskConfig {
     pub default_status: String,
     /// Status keywords grouped by category.
     pub status_keywords: StatusKeywords,
+    /// Status categories to exclude from list/summary by default.
+    /// Defaults to ["done", "abandoned"]. These use the category names
+    /// (the keys in status_keywords), not individual keyword values.
+    pub exclude_status_categories: Vec<String>,
 }
 
 impl Default for TaskConfig {
@@ -34,6 +38,7 @@ impl Default for TaskConfig {
             default_time_units: "hours".to_string(),
             default_status: "new".to_string(),
             status_keywords: StatusKeywords::default(),
+            exclude_status_categories: vec!["done".to_string(), "abandoned".to_string()],
         }
     }
 }
@@ -77,6 +82,25 @@ impl TaskConfig {
         keywords.extend(self.status_keywords.abandoned.iter().map(|s| s.as_str()));
         keywords.extend(self.status_keywords.inactive.iter().map(|s| s.as_str()));
         keywords
+    }
+
+    /// Returns the list of status keywords that belong to excluded categories.
+    ///
+    /// Looks up each category name in `exclude_status_categories` and collects
+    /// all individual keywords from those categories.
+    pub fn get_excluded_keywords(&self) -> Vec<String> {
+        let mut excluded = Vec::new();
+        for cat in &self.exclude_status_categories {
+            match cat.as_str() {
+                "done" => excluded.extend(self.status_keywords.done.iter().cloned()),
+                "active" => excluded.extend(self.status_keywords.active.iter().cloned()),
+                "blocked" => excluded.extend(self.status_keywords.blocked.iter().cloned()),
+                "abandoned" => excluded.extend(self.status_keywords.abandoned.iter().cloned()),
+                "inactive" => excluded.extend(self.status_keywords.inactive.iter().cloned()),
+                _ => {}
+            }
+        }
+        excluded
     }
 
     /// Deserializes from a raw YAML value.
@@ -198,5 +222,41 @@ default_owner: "alice"
         assert_eq!(kw.blocked.len(), 1);
         assert_eq!(kw.abandoned.len(), 4);
         assert_eq!(kw.inactive.len(), 3);
+    }
+
+    #[test]
+    fn test_default_exclude_status_categories() {
+        let config = TaskConfig::default();
+        assert_eq!(
+            config.exclude_status_categories,
+            vec!["done".to_string(), "abandoned".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_get_excluded_keywords_default() {
+        let config = TaskConfig::default();
+        let excluded = config.get_excluded_keywords();
+        // Should include all "done" and "abandoned" keywords
+        assert!(excluded.contains(&"done".to_string()));
+        assert!(excluded.contains(&"finished".to_string()));
+        assert!(excluded.contains(&"complete".to_string()));
+        assert!(excluded.contains(&"completed".to_string()));
+        assert!(excluded.contains(&"abandoned".to_string()));
+        assert!(excluded.contains(&"deleted".to_string()));
+        assert!(excluded.contains(&"removed".to_string()));
+        assert!(excluded.contains(&"dead".to_string()));
+        // Should NOT include active/blocked/inactive keywords
+        assert!(!excluded.contains(&"active".to_string()));
+        assert!(!excluded.contains(&"blocked".to_string()));
+        assert!(!excluded.contains(&"new".to_string()));
+    }
+
+    #[test]
+    fn test_get_excluded_keywords_empty() {
+        let mut config = TaskConfig::default();
+        config.exclude_status_categories = vec![];
+        let excluded = config.get_excluded_keywords();
+        assert!(excluded.is_empty());
     }
 }

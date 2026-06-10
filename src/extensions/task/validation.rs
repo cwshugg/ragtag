@@ -22,15 +22,6 @@ pub fn validate_task_tag(tag: &Tag, config: &TaskConfig) -> Vec<ValidationMessag
         });
     }
 
-    // Check required: ttc_estimate
-    if tag.get_named_attribute("ttc_estimate").is_none() {
-        messages.push(ValidationMessage {
-            level: ValidationLevel::Error,
-            message: "missing required attribute \"ttc_estimate\"".to_string(),
-            location: Some(tag.location.clone()),
-        });
-    }
-
     // Validate time_units if present
     if let Some(val) = tag.get_named_attribute("time_units") {
         if let Some(s) = val.as_str() {

@@ -47,6 +47,11 @@ pub fn run(
 
     let sort_by = matches.get_one::<String>("sort").cloned();
 
+    let filters: Vec<String> = matches
+        .get_many::<String>("filter")
+        .map(|vals| vals.cloned().collect())
+        .unwrap_or_default();
+
     // Discover and parse tasks
     let files = ctx.walker.walk(path)?;
     let mut tasks: Vec<TaskTag> = Vec::new();
@@ -68,6 +73,14 @@ pub fn run(
                 }
             }
         }
+    }
+
+    // Apply default status exclusion (exclude done/abandoned by default)
+    let show_all = matches.get_flag("all");
+    let filter_mentions_status = filters.iter().any(|f| f.starts_with("status"));
+    if !show_all && !filter_mentions_status {
+        let excluded = config.get_excluded_keywords();
+        tasks.retain(|t| !excluded.contains(&t.status));
     }
 
     // Sort within groups
@@ -215,7 +228,9 @@ fn build_rows(
                 task.time_spent
                     .map(format_float)
                     .unwrap_or_else(|| "-".to_string()),
-                format_float(task.ttc_estimate),
+                task.ttc_estimate
+                    .map(format_float)
+                    .unwrap_or_else(|| "-".to_string()),
                 task.ttc_actual
                     .map(format_float)
                     .unwrap_or_else(|| "-".to_string()),
@@ -233,7 +248,9 @@ fn build_rows(
                 task.time_spent
                     .map(format_float)
                     .unwrap_or_else(|| "-".to_string()),
-                format_float(task.ttc_estimate),
+                task.ttc_estimate
+                    .map(format_float)
+                    .unwrap_or_else(|| "-".to_string()),
                 task.ttc_actual
                     .map(format_float)
                     .unwrap_or_else(|| "-".to_string()),
@@ -308,7 +325,7 @@ mod tests {
         status: &str,
         priority: Option<u32>,
         time_spent: Option<f64>,
-        ttc_estimate: f64,
+        ttc_estimate: Option<f64>,
         ttc_actual: Option<f64>,
     ) -> TaskTag {
         TaskTag {
@@ -338,7 +355,7 @@ mod tests {
                 "active",
                 Some(1),
                 Some(2.0),
-                8.0,
+                Some(8.0),
                 None,
             ),
             make_task(
@@ -348,7 +365,7 @@ mod tests {
                 "done",
                 Some(2),
                 Some(4.0),
-                4.0,
+                Some(4.0),
                 Some(5.0),
             ),
             make_task(
@@ -358,10 +375,19 @@ mod tests {
                 "active",
                 Some(0),
                 None,
-                6.0,
+                Some(6.0),
                 None,
             ),
-            make_task("ddd4", "Task D", "bob", "blocked", None, None, 10.0, None),
+            make_task(
+                "ddd4",
+                "Task D",
+                "bob",
+                "blocked",
+                None,
+                None,
+                Some(10.0),
+                None,
+            ),
         ]
     }
 
@@ -480,19 +506,28 @@ mod tests {
 
     #[test]
     fn test_get_group_key_status() {
-        let task = make_task("a", "Test", "me", "active", Some(1), None, 4.0, None);
+        let task = make_task("a", "Test", "me", "active", Some(1), None, Some(4.0), None);
         assert_eq!(get_group_key(&task, "status"), "active");
     }
 
     #[test]
     fn test_get_group_key_owner() {
-        let task = make_task("a", "Test", "alice", "active", Some(1), None, 4.0, None);
+        let task = make_task(
+            "a",
+            "Test",
+            "alice",
+            "active",
+            Some(1),
+            None,
+            Some(4.0),
+            None,
+        );
         assert_eq!(get_group_key(&task, "owner"), "alice");
     }
 
     #[test]
     fn test_get_group_key_priority_none() {
-        let task = make_task("a", "Test", "me", "active", None, None, 4.0, None);
+        let task = make_task("a", "Test", "me", "active", None, None, Some(4.0), None);
         assert_eq!(get_group_key(&task, "priority"), "(none)");
     }
 

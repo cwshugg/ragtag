@@ -51,7 +51,7 @@ pub struct TaskTag {
     pub status: String,
     pub priority: Option<u32>,
     pub time_spent: Option<f64>,
-    pub ttc_estimate: f64,
+    pub ttc_estimate: Option<f64>,
     pub ttc_actual: Option<f64>,
     pub time_units: String,
     pub location: TagLocation,
@@ -110,9 +110,8 @@ impl TaskTag {
         let title = get_str(tag, "title")
             .ok_or_else(|| ext_err("missing required attribute \"title\"".to_string()))?;
 
-        // Required: ttc_estimate
-        let ttc_estimate = get_float(tag, "ttc_estimate")
-            .ok_or_else(|| ext_err("missing required attribute \"ttc_estimate\"".to_string()))?;
+        // ttc_estimate (optional)
+        let ttc_estimate = get_float(tag, "ttc_estimate");
 
         // time_units with default
         let time_units =
@@ -219,9 +218,7 @@ impl TaskTagBuilder {
             .title
             .ok_or_else(|| ext_err("missing required field \"title\"".to_string()))?;
 
-        let ttc_estimate = self
-            .ttc_estimate
-            .ok_or_else(|| ext_err("missing required field \"ttc_estimate\"".to_string()))?;
+        let ttc_estimate = self.ttc_estimate;
 
         let time_units = self
             .time_units
@@ -310,7 +307,7 @@ mod tests {
         ]);
         let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
         assert_eq!(task.title, "Test Task");
-        assert_eq!(task.ttc_estimate, 4.5);
+        assert_eq!(task.ttc_estimate, Some(4.5));
         assert_eq!(task.status, "active");
         assert_eq!(task.owner, "alice");
     }
@@ -351,7 +348,9 @@ mod tests {
             "title",
             AttributeValue::Str("Test".to_string()),
         )]);
-        assert!(TaskTag::from_tag(&tag, &default_config(), "").is_err());
+        // ttc_estimate is now optional — should succeed
+        let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
+        assert_eq!(task.ttc_estimate, None);
     }
 
     #[test]
@@ -399,7 +398,7 @@ mod tests {
             ),
         ]);
         let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
-        assert_eq!(task.ttc_estimate, 4.0);
+        assert_eq!(task.ttc_estimate, Some(4.0));
     }
 
     #[test]
@@ -409,7 +408,7 @@ mod tests {
             TagAttribute::named("ttc_estimate", AttributeValue::Float(4.5)),
         ]);
         let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
-        assert_eq!(task.ttc_estimate, 4.5);
+        assert_eq!(task.ttc_estimate, Some(4.5));
     }
 
     #[test]
