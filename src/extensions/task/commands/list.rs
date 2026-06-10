@@ -23,11 +23,6 @@ pub fn run(
         .unwrap_or(".");
     let path = Path::new(path_str);
 
-    let show_attrs: Vec<String> = matches
-        .get_one::<String>("show-attributes")
-        .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
-        .unwrap_or_default();
-
     let sort_field = matches.get_one::<String>("sort").cloned();
     let reverse = matches.get_flag("reverse");
 
@@ -69,14 +64,13 @@ pub fn run(
         tasks.retain(|task| filters.iter().all(|f| apply_task_filter(task, f)));
     }
 
-    // Sort
-    if let Some(ref field) = sort_field {
-        sort_tasks(&mut tasks, field, reverse);
-    }
+    // Sort (default: by priority)
+    let effective_sort = sort_field.as_deref().unwrap_or("priority");
+    sort_tasks(&mut tasks, effective_sort, reverse);
 
     // Output
     for task in &tasks {
-        let line = format_task_line(task, &show_attrs, &ctx.color_mode, config);
+        let line = format_task_line(task, &ctx.color_mode, config);
         writeln!(ctx.stdout, "{line}").map_err(RagtagError::Io)?;
     }
 

@@ -2,51 +2,30 @@
 //!
 //! Handles colored status/priority display and task line/detail formatting.
 
-use std::io::IsTerminal;
-
 use owo_colors::OwoColorize;
 
 use super::config::TaskConfig;
 use super::models::{categorize_status, StatusCategory, TaskTag};
 use crate::config::ColorMode;
 use crate::models::Tag;
+use crate::output::format::{colorize_path, should_use_color};
 
 /// Formats a task as a single output line.
 ///
-/// If `show_attrs` is empty, uses the default attribute list.
-/// Otherwise, only the specified attributes are shown.
-/// Status and priority values are color-coded when color is enabled.
-pub fn format_task_line(
-    task: &TaskTag,
-    show_attrs: &[String],
-    color_mode: &ColorMode,
-    config: &TaskConfig,
-) -> String {
-    let path = task.location.file_path.display().to_string();
+/// Format: `file/path.md: ID [OWNER/PRIORITY/STATUS] TITLE`
+/// Only file path, priority, and status are colored.
+pub fn format_task_line(task: &TaskTag, color_mode: &ColorMode, config: &TaskConfig) -> String {
+    let path = colorize_path(&task.location.file_path, color_mode);
+    let status = colorize_status(&task.status, &config.status_keywords, color_mode);
+    let priority = task
+        .priority
+        .map(|p| colorize_priority(p, color_mode))
+        .unwrap_or_else(|| "-".to_string());
 
-    let default_attrs = vec![
-        "id".to_string(),
-        "status".to_string(),
-        "title".to_string(),
-        "description".to_string(),
-    ];
-
-    let attrs = if show_attrs.is_empty() {
-        &default_attrs
-    } else {
-        show_attrs
-    };
-
-    let mut parts = vec![path];
-
-    for attr in attrs {
-        let value = get_task_attr_display(task, attr, color_mode, config);
-        if let Some(v) = value {
-            parts.push(format!("{attr}=\"{v}\""));
-        }
-    }
-
-    parts.join(" ")
+    format!(
+        "{path}: {} [{}] [{priority}/{status}] {}",
+        task.id, task.owner, task.title
+    )
 }
 
 /// Formats a full task detail listing (multi-line).
@@ -84,18 +63,6 @@ pub fn format_task_detail(task: &TaskTag, config: &TaskConfig, color_mode: &Colo
     lines.push(format!("  time_units: {}", task.time_units));
 
     lines.join("\n")
-}
-
-/// Determines whether colors should be used based on the color mode.
-///
-/// When `Auto`, checks if stdout is a terminal (TTY). Colors are only
-/// emitted when the output is interactive.
-fn should_use_color(color_mode: &ColorMode) -> bool {
-    match color_mode {
-        ColorMode::Always => true,
-        ColorMode::Never => false,
-        ColorMode::Auto => std::io::stdout().is_terminal(),
-    }
 }
 
 /// Formats a summary of task tags.
@@ -200,33 +167,6 @@ pub fn colorize_priority(priority: u32, color_mode: &ColorMode) -> String {
     }
 }
 
-/// Gets a task attribute's display value, with color applied to status and priority.
-fn get_task_attr_display(
-    task: &TaskTag,
-    attr: &str,
-    color_mode: &ColorMode,
-    config: &TaskConfig,
-) -> Option<String> {
-    match attr {
-        "id" => Some(task.id.clone()),
-        "pid" => task.pid.clone(),
-        "title" => Some(task.title.clone()),
-        "description" => task.description.clone(),
-        "owner" => Some(task.owner.clone()),
-        "status" => Some(colorize_status(
-            &task.status,
-            &config.status_keywords,
-            color_mode,
-        )),
-        "priority" => task.priority.map(|p| colorize_priority(p, color_mode)),
-        "time_spent" => task.time_spent.map(|t| t.to_string()),
-        "ttc_estimate" => Some(task.ttc_estimate.to_string()),
-        "ttc_actual" => task.ttc_actual.map(|t| t.to_string()),
-        "time_units" => Some(task.time_units.clone()),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,22 +196,13 @@ mod tests {
     fn test_format_task_line_default() {
         let task = make_task();
         let config = TaskConfig::default();
-        let line = format_task_line(&task, &[], &ColorMode::Never, &config);
-        assert!(line.contains("test.md"));
-        assert!(line.contains("id="));
-        assert!(line.contains("status="));
-        assert!(line.contains("title="));
-    }
-
-    #[test]
-    fn test_format_task_line_custom_attrs() {
-        let task = make_task();
-        let config = TaskConfig::default();
-        let attrs = vec!["id".to_string(), "title".to_string()];
-        let line = format_task_line(&task, &attrs, &ColorMode::Never, &config);
-        assert!(line.contains("id="));
-        assert!(line.contains("title="));
-        assert!(!line.contains("status="));
+        let line = format_task_line(&task, &ColorMode::Never, &config);
+        // Format: path: ID [OWNER] [PRIORITY/STATUS] TITLE
+        assert!(line.contains("test.md:"));
+        assert!(line.contains("abc123"));
+        assert!(line.contains("[me]"));
+        assert!(line.contains("[1/active]"));
+        assert!(line.contains("Test Task"));
     }
 
     #[test]
@@ -320,10 +251,10 @@ mod tests {
     fn test_format_task_line_status_colored() {
         let task = make_task();
         let config = TaskConfig::default();
-        let line = format_task_line(&task, &[], &ColorMode::Always, &config);
-        // "active" status should have ANSI color codes (yellow)
+        let line = format_task_line(&task, &ColorMode::Always, &config);
+        // "active" status should have ANSI color codes
         assert!(line.contains("\x1b["));
-        assert!(line.contains("status="));
+        assert!(line.contains("active"));
     }
 
     #[test]
@@ -331,8 +262,7 @@ mod tests {
         let mut task = make_task();
         task.priority = Some(0);
         let config = TaskConfig::default();
-        let attrs = vec!["priority".to_string()];
-        let line = format_task_line(&task, &attrs, &ColorMode::Always, &config);
+        let line = format_task_line(&task, &ColorMode::Always, &config);
         // Priority 0 should be red (has ANSI codes)
         assert!(line.contains("\x1b["));
     }
@@ -341,17 +271,17 @@ mod tests {
     fn test_format_task_line_priority_nonzero_no_color() {
         let task = make_task();
         let config = TaskConfig::default();
-        let attrs = vec!["priority".to_string()];
-        let line = format_task_line(&task, &attrs, &ColorMode::Always, &config);
-        // Priority 1 should NOT be colored
-        assert!(line.contains("priority=\"1\""));
+        let line = format_task_line(&task, &ColorMode::Always, &config);
+        // Priority 1 should NOT have bright_red coloring
+        assert!(line.contains("1"));
+        assert!(!line.contains("\x1b[91m1"));
     }
 
     #[test]
     fn test_format_task_line_no_color_mode() {
         let task = make_task();
         let config = TaskConfig::default();
-        let line = format_task_line(&task, &[], &ColorMode::Never, &config);
+        let line = format_task_line(&task, &ColorMode::Never, &config);
         // No ANSI codes when color is never
         assert!(!line.contains("\x1b["));
     }

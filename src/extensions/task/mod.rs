@@ -82,7 +82,6 @@ impl TagExtension for TaskExtension {
         match models::TaskTag::from_tag(tag, &self.config, "") {
             Ok(task) => Some(output::format_task_line(
                 &task,
-                &[],
                 color_mode,
                 &self.config,
             )),

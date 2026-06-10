@@ -96,12 +96,6 @@ pub fn build_tasks_command() -> Command {
                         .long("reverse")
                         .help("Reverse sort order")
                         .action(clap::ArgAction::SetTrue),
-                )
-                .arg(
-                    Arg::new("show-attributes")
-                        .long("show-attributes")
-                        .help("Comma-separated list of attributes to display")
-                        .value_name("LIST"),
                 ),
         )
         .subcommand(

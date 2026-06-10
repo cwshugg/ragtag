@@ -99,23 +99,6 @@ fn test_query_filter() {
         .success();
 }
 
-#[test]
-fn test_query_show_attributes() {
-    let path = format!("{}/simple_tags.txt", fixtures_dir());
-    ragtag()
-        .args([
-            "query",
-            "todo",
-            "--path",
-            &path,
-            "--show-attributes",
-            "priority,description",
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("priority="));
-}
-
 // === Tasks Create ===
 
 #[test]
@@ -177,27 +160,9 @@ fn test_tasks_list() {
         .args(["--no-color", "tasks", "list", "--path", &path])
         .assert()
         .success()
-        .stdout(predicate::str::contains("a1b2c3d4e5f67890"))
-        .stdout(predicate::str::contains("Design API"));
-}
-
-#[test]
-fn test_tasks_list_show_attributes() {
-    let path = format!("{}/tasks.md", fixtures_dir());
-    ragtag()
-        .args([
-            "--no-color",
-            "tasks",
-            "list",
-            "--path",
-            &path,
-            "--show-attributes",
-            "id,title,priority",
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("id="))
-        .stdout(predicate::str::contains("title="));
+        .stdout(predicate::str::contains("Design API"))
+        .stdout(predicate::str::contains("[alice]"))
+        .stdout(predicate::str::contains("[1/active]"));
 }
 
 #[test]

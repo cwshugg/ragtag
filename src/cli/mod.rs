@@ -70,12 +70,6 @@ pub fn build_cli(registry: &ExtensionRegistry) -> Command {
                         .long("count")
                         .help("Show count only")
                         .action(clap::ArgAction::SetTrue),
-                )
-                .arg(
-                    Arg::new("show-attributes")
-                        .long("show-attributes")
-                        .help("Comma-separated list of attributes to display")
-                        .value_name("LIST"),
                 ),
         );
 

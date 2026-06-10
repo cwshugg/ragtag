@@ -11,6 +11,7 @@ use crate::discovery;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionRegistry;
 use crate::models::Tag;
+use crate::output::format::colorize_path;
 use crate::parser;
 
 /// Runs the query command.
@@ -31,11 +32,6 @@ pub fn run(
         .unwrap_or(".");
     let path = Path::new(path_str);
     let count_only = matches.get_flag("count");
-
-    let show_attrs: Vec<String> = matches
-        .get_one::<String>("show-attributes")
-        .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
-        .unwrap_or_default();
 
     let filters: Vec<String> = matches
         .get_many::<String>("filter")
@@ -86,28 +82,9 @@ pub fn run(
             writeln!(stdout, "{line}").map_err(RagtagError::Io)?;
         } else {
             // Default grep-style output
-            let path_display = tag.location.file_path.display();
+            let path_display = colorize_path(&tag.location.file_path, color_mode);
             let line_num = tag.location.line;
-
-            if show_attrs.is_empty() {
-                writeln!(stdout, "{path_display}:{line_num}: {tag}").map_err(RagtagError::Io)?;
-            } else {
-                // Only show specified attributes
-                let attr_parts: Vec<String> = show_attrs
-                    .iter()
-                    .filter_map(|attr_name| {
-                        tag.get_named_attribute(attr_name)
-                            .map(|v| format!("{attr_name}={v}"))
-                    })
-                    .collect();
-                writeln!(
-                    stdout,
-                    "{path_display}:{line_num}: @{}({})",
-                    tag.name,
-                    attr_parts.join(", ")
-                )
-                .map_err(RagtagError::Io)?;
-            }
+            writeln!(stdout, "{path_display}:{line_num}: {tag}").map_err(RagtagError::Io)?;
         }
     }
 
