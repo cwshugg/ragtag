@@ -38,9 +38,7 @@ fn run() -> Result<(), RagtagError> {
     let matches = cli_cmd.get_matches();
 
     // Load config
-    let config_path = matches
-        .get_one::<String>("config")
-        .map(std::path::PathBuf::from);
+    let config_path = cli::resolve_config_path(&matches);
     let cwd = std::env::current_dir().map_err(RagtagError::Io)?;
     let app_config = config::load_config(config_path.as_deref(), &cwd)?;
     app_config.validate()?;

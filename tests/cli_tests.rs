@@ -838,3 +838,100 @@ fn test_set_time_negative_rejected() {
         .failure()
         .stderr(predicate::str::contains("non-negative"));
 }
+
+// === Environment Variable Tests ===
+
+#[test]
+fn test_ragtag_path_env_var() {
+    // When RAGTAG_PATH is set and --path is not provided, the env var path should be used.
+    let path = format!("{}/simple_tags.txt", fixtures_dir());
+    ragtag()
+        .env("RAGTAG_PATH", &path)
+        .args(["summary"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tag"));
+}
+
+#[test]
+fn test_ragtag_path_cli_overrides_env() {
+    // When both RAGTAG_PATH and --path are provided, --path should take precedence.
+    let fixtures = fixtures_dir();
+    let correct_path = format!("{}/simple_tags.txt", fixtures);
+
+    // Set env var to a path that would produce different results (the whole fixtures dir).
+    ragtag()
+        .env("RAGTAG_PATH", &fixtures)
+        .args(["query", "tag", "--path", &correct_path, "--count"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("3")); // 3 @tag entries in simple_tags.txt
+}
+
+#[test]
+fn test_ragtag_path_env_var_task_list() {
+    // RAGTAG_PATH should work with task subcommands too.
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .env("RAGTAG_PATH", &path)
+        .args(["--no-color", "task", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Design API"));
+}
+
+#[test]
+fn test_ragtag_config_env_var() {
+    // When RAGTAG_CONFIG is set, it should load the specified config file.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("custom.ragtag.yaml");
+    fs::write(
+        &config_path,
+        "skip_hidden: false\noutput:\n  color: \"never\"\n",
+    )
+    .unwrap();
+
+    let fixtures = fixtures_dir();
+    ragtag()
+        .env("RAGTAG_CONFIG", config_path.to_str().unwrap())
+        .args(["summary", "--path", &fixtures])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_ragtag_config_cli_overrides_env() {
+    // When both RAGTAG_CONFIG and --config are provided, --config should take precedence.
+    let dir = tempfile::tempdir().unwrap();
+
+    // Create a valid config that --config points to.
+    let cli_config = dir.path().join("cli.ragtag.yaml");
+    fs::write(&cli_config, "output:\n  color: \"never\"\n").unwrap();
+
+    // Create a config at the env var path that would cause a validation error (bad data).
+    let env_config = dir.path().join("env.ragtag.yaml");
+    fs::write(&env_config, "output:\n  color: \"never\"\n").unwrap();
+
+    let fixtures = fixtures_dir();
+    ragtag()
+        .env("RAGTAG_CONFIG", env_config.to_str().unwrap())
+        .args([
+            "--config",
+            cli_config.to_str().unwrap(),
+            "summary",
+            "--path",
+            &fixtures,
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_ragtag_config_env_var_missing_file() {
+    // When RAGTAG_CONFIG points to a nonexistent file, it should error.
+    ragtag()
+        .env("RAGTAG_CONFIG", "/nonexistent/path/.ragtag.yaml")
+        .args(["summary"])
+        .assert()
+        .failure();
+}

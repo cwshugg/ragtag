@@ -4,7 +4,8 @@
 #
 # Place this file as `.ragtag.yaml` or `ragtag.yaml` in your project root.
 # ragtag searches upward from the current directory, stopping at a `.git`
-# boundary. Use `--config <path>` to specify an explicit config file.
+# boundary. Use `--config <path>` or the `RAGTAG_CONFIG` environment variable
+# to specify an explicit config file.
 #
 # Every field below has a default value — an empty file (or no file at all)
 # is perfectly valid. Only override what you need.

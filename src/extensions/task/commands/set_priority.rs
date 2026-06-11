@@ -5,6 +5,7 @@ use std::path::Path;
 use super::super::config::TaskConfig;
 use super::super::output::format_task_detail;
 use super::{find_task_by_id, prompt_for_value};
+use crate::cli;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -21,11 +22,8 @@ pub fn run(
             message: "missing required argument --id".to_string(),
         })?;
 
-    let path_str = matches
-        .get_one::<String>("path")
-        .map(|s| s.as_str())
-        .unwrap_or(".");
-    let path = Path::new(path_str);
+    let path_str = cli::resolve_path(matches);
+    let path = Path::new(&path_str);
 
     let (mut task, _) = find_task_by_id(id, path, config, ctx)?;
 

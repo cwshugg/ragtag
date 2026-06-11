@@ -9,6 +9,7 @@ use super::super::config::TaskConfig;
 use super::super::models::TaskTag;
 use super::super::output::format_task_line;
 use super::collect_tasks;
+use crate::cli;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -18,11 +19,8 @@ pub fn run(
     config: &TaskConfig,
     ctx: &mut ExtensionContext,
 ) -> Result<(), RagtagError> {
-    let path_str = matches
-        .get_one::<String>("path")
-        .map(|s| s.as_str())
-        .unwrap_or(".");
-    let path = Path::new(path_str);
+    let path_str = cli::resolve_path(matches);
+    let path = Path::new(&path_str);
 
     let sort_field = matches.get_one::<String>("sort").cloned();
     let reverse = matches.get_flag("reverse");

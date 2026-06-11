@@ -12,6 +12,7 @@ use super::super::models::TaskTag;
 use super::super::output::{colorize_priority, colorize_status};
 use super::collect_tasks;
 use super::list::sort_tasks;
+use crate::cli;
 use crate::config::ColorMode;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
@@ -26,11 +27,8 @@ pub fn run(
     config: &TaskConfig,
     ctx: &mut ExtensionContext,
 ) -> Result<(), RagtagError> {
-    let path_str = matches
-        .get_one::<String>("path")
-        .map(|s| s.as_str())
-        .unwrap_or(".");
-    let path = Path::new(path_str);
+    let path_str = cli::resolve_path(matches);
+    let path = Path::new(&path_str);
 
     let group_by = matches
         .get_one::<String>("group")

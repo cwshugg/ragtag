@@ -67,9 +67,8 @@ pub fn build_task_command() -> Command {
                 .arg(
                     Arg::new("path")
                         .long("path")
-                        .help("Search path (file or directory)")
-                        .value_name("PATH")
-                        .default_value("."),
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
                 )
                 .arg(
                     Arg::new("filter")
@@ -110,9 +109,8 @@ pub fn build_task_command() -> Command {
                 .arg(
                     Arg::new("path")
                         .long("path")
-                        .help("Search path (file or directory)")
-                        .value_name("PATH")
-                        .default_value("."),
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
                 )
                 .arg(
                     Arg::new("all")
@@ -128,9 +126,8 @@ pub fn build_task_command() -> Command {
                 .arg(
                     Arg::new("path")
                         .long("path")
-                        .help("Search path (file or directory)")
-                        .value_name("PATH")
-                        .default_value("."),
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
                 )
                 .arg(
                     Arg::new("group")
@@ -211,9 +208,8 @@ fn build_set_command(
         .arg(
             Arg::new("path")
                 .long("path")
-                .help("Search path (file or directory)")
-                .value_name("PATH")
-                .default_value("."),
+                .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                .value_name("PATH"),
         )
         .arg(
             Arg::new(value_arg)

@@ -21,6 +21,17 @@ ragtag --config /path/to/.ragtag.yaml summary
 
 If the specified file does not exist, ragtag exits with an error.
 
+### Override With `RAGTAG_CONFIG`
+
+Alternatively, set the `RAGTAG_CONFIG` environment variable to specify a config file path without passing `--config` every time:
+
+```bash
+export RAGTAG_CONFIG=~/.config/ragtag/.ragtag.yaml
+ragtag summary
+```
+
+The `--config` CLI flag takes precedence over `RAGTAG_CONFIG`. If neither is set, walk-up discovery is used.
+
 ## Complete Schema
 
 Below is a fully-specified config file showing all options and their default values:

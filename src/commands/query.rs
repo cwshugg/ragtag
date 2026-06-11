@@ -6,6 +6,7 @@
 use std::io::Write;
 use std::path::Path;
 
+use crate::cli;
 use crate::config::{ColorMode, Config};
 use crate::discovery;
 use crate::error::RagtagError;
@@ -26,11 +27,8 @@ pub fn run(
         .get_one::<String>("TAG_NAME")
         .ok_or_else(|| RagtagError::UnknownCommand("missing tag name argument".to_string()))?;
 
-    let path_str = matches
-        .get_one::<String>("path")
-        .map(|s| s.as_str())
-        .unwrap_or(".");
-    let path = Path::new(path_str);
+    let path_str = cli::resolve_path(matches);
+    let path = Path::new(&path_str);
     let count_only = matches.get_flag("count");
 
     let filters: Vec<String> = matches

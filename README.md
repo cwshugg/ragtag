@@ -122,6 +122,17 @@ Task management commands. See the [task management guide](docs/task-management.m
 | `--no-color` | Disable colored output |
 | `--version` | Print version information |
 
+## Environment Variables
+
+| Variable | Description |
+| --- | --- |
+| `RAGTAG_CONFIG` | Path to the ragtag config file. Alternative to `--config`. The CLI flag takes precedence over this variable. If neither is set, ragtag uses walk-up config discovery. |
+| `RAGTAG_PATH` | Default search path for tags and tasks. Alternative to `--path`. The CLI flag takes precedence over this variable. If neither is set, defaults to `.` (current directory). |
+| `RUST_LOG` | Controls log verbosity (e.g., `RUST_LOG=info` or `RUST_LOG=debug`). Uses the `env_logger` crate format. |
+| `NO_COLOR` | When set, disables colored output. Overrides the `output.color` config setting but is itself overridden by the `--no-color` CLI flag. |
+
+**Precedence:** CLI flag > environment variable > default value.
+
 ## Configuration
 
 ragtag looks for `.ragtag.yaml` or `ragtag.yaml` in the current directory and walks up the directory tree until it finds one (stopping at a directory containing a `.git` folder or the filesystem root). See the [configuration reference](docs/configuration.md) for full details.

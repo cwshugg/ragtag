@@ -333,10 +333,27 @@ All errors are printed to stderr with a descriptive message.
 
 | Variable | Description |
 | --- | --- |
+| `RAGTAG_CONFIG` | Path to the ragtag config file. Alternative to the `--config` CLI flag. The CLI flag takes precedence. If neither is set, ragtag uses walk-up config discovery (see [Configuration Reference](configuration.md)). |
+| `RAGTAG_PATH` | Default search path for tags and tasks. Alternative to the `--path` CLI flag used by `summary`, `query`, and all `task` subcommands. The CLI flag takes precedence. If neither is set, defaults to `.` (current directory). |
 | `RUST_LOG` | Controls log verbosity (e.g., `RUST_LOG=info` or `RUST_LOG=debug`). Uses the `env_logger` crate format. |
 | `NO_COLOR` | When set, disables colored output. Overrides the `output.color` config setting but is itself overridden by the `--no-color` CLI flag. |
 
-> **Note:** When `output.color` is set to `auto` (the default), colors are automatically disabled when stdout is not a terminal (e.g., when piping to another command or redirecting to a file).
+**Precedence order:** CLI flag > environment variable > default value.
+
+For example, to always search a specific directory for tasks without passing `--path` every time:
+
+```bash
+export RAGTAG_PATH=~/notes
+ragtag task list            # searches ~/notes
+ragtag task list --path .   # overrides to current directory
+```
+
+Similarly, to use a specific config file without passing `--config`:
+
+```bash
+export RAGTAG_CONFIG=~/.config/ragtag/.ragtag.yaml
+ragtag summary              # uses the config at the exported path
+```
 
 ## File Editing Safety
 

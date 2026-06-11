@@ -8,6 +8,7 @@ use super::super::config::TaskConfig;
 use super::super::models::TaskTag;
 use super::super::output::format_task_detail;
 use super::collect_tasks;
+use crate::cli;
 use crate::config::ColorMode;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
@@ -22,11 +23,8 @@ pub fn run(
     let search = matches
         .get_one::<String>("search")
         .expect("search is required");
-    let path_str = matches
-        .get_one::<String>("path")
-        .map(|s| s.as_str())
-        .unwrap_or(".");
-    let path = Path::new(path_str);
+    let path_str = cli::resolve_path(matches);
+    let path = Path::new(&path_str);
 
     // Discover and parse tasks
     let tasks = collect_tasks(path, config, ctx)?;
