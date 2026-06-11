@@ -43,7 +43,8 @@ fn test_tasks_help() {
         .success()
         .stdout(predicate::str::contains("create"))
         .stdout(predicate::str::contains("list"))
-        .stdout(predicate::str::contains("set-status"));
+        .stdout(predicate::str::contains("set-attr"))
+        .stdout(predicate::str::contains("get-attr"));
 }
 
 // === Summary ===
@@ -234,7 +235,7 @@ fn test_tasks_list_filter() {
 // === Tasks Set Commands ===
 
 #[test]
-fn test_tasks_set_status() {
+fn test_tasks_set_attr_status() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
     fs::write(
@@ -246,17 +247,16 @@ fn test_tasks_set_status() {
         .args([
             "--no-color",
             "task",
-            "set-status",
-            "--id",
+            "set-attr",
             "testid1234567890",
-            "--status",
+            "status",
             "active",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Status: active"));
+        .stdout(predicate::str::contains("Updated status to \"active\""));
 
     // Verify file was actually modified
     let content = fs::read_to_string(&file).unwrap();
@@ -264,7 +264,7 @@ fn test_tasks_set_status() {
 }
 
 #[test]
-fn test_tasks_set_time() {
+fn test_tasks_set_attr_time_spent() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
     fs::write(
@@ -276,21 +276,20 @@ fn test_tasks_set_time() {
         .args([
             "--no-color",
             "task",
-            "set-time",
-            "--id",
+            "set-attr",
             "testid1234567890",
-            "--time",
+            "time_spent",
             "2.5",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Time Spent: 2.5"));
+        .stdout(predicate::str::contains("Updated time_spent to \"2.5\""));
 }
 
 #[test]
-fn test_tasks_set_owner() {
+fn test_tasks_set_attr_owner() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
     fs::write(
@@ -302,21 +301,20 @@ fn test_tasks_set_owner() {
         .args([
             "--no-color",
             "task",
-            "set-owner",
-            "--id",
+            "set-attr",
             "testid1234567890",
-            "--owner",
+            "owner",
             "alice",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Owner: alice"));
+        .stdout(predicate::str::contains("Updated owner to \"alice\""));
 }
 
 #[test]
-fn test_tasks_set_parent() {
+fn test_tasks_set_attr_parent() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
     fs::write(
@@ -328,21 +326,20 @@ fn test_tasks_set_parent() {
         .args([
             "--no-color",
             "task",
-            "set-parent",
-            "--id",
+            "set-attr",
             "testid1234567890",
-            "--pid",
+            "pid",
             "parent123",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Parent ID: parent123"));
+        .stdout(predicate::str::contains("Updated pid to \"parent123\""));
 }
 
 #[test]
-fn test_tasks_set_priority() {
+fn test_tasks_set_attr_priority() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
     fs::write(
@@ -354,17 +351,16 @@ fn test_tasks_set_priority() {
         .args([
             "--no-color",
             "task",
-            "set-priority",
-            "--id",
+            "set-attr",
             "testid1234567890",
-            "--priority",
+            "priority",
             "2",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Priority: 2"));
+        .stdout(predicate::str::contains("Updated priority to \"2\""));
 
     // Verify file was actually modified
     let content = fs::read_to_string(&file).unwrap();
@@ -450,10 +446,9 @@ fn test_invalid_status() {
     ragtag()
         .args([
             "task",
-            "set-status",
-            "--id",
+            "set-attr",
             "testid1234567890",
-            "--status",
+            "status",
             "invalid_status_xyz",
             "--path",
             file.to_str().unwrap(),
@@ -479,10 +474,9 @@ fn test_task_not_found() {
     ragtag()
         .args([
             "task",
-            "set-status",
-            "--id",
+            "set-attr",
             "nonexistent1234567",
-            "--status",
+            "status",
             "done",
             "--path",
             file.to_str().unwrap(),
@@ -538,10 +532,9 @@ fn test_duplicate_task_ids() {
     ragtag()
         .args([
             "task",
-            "set-status",
-            "--id",
+            "set-attr",
             "dupeid123456789a",
-            "--status",
+            "status",
             "done",
             "--path",
             &path,
@@ -604,51 +597,48 @@ fn test_full_workflow() {
         .args([
             "--no-color",
             "task",
-            "set-status",
-            "--id",
+            "set-attr",
             task_id,
-            "--status",
+            "status",
             "active",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Status: active"));
+        .stdout(predicate::str::contains("Updated status to \"active\""));
 
     // Set time
     ragtag()
         .args([
             "--no-color",
             "task",
-            "set-time",
-            "--id",
+            "set-attr",
             task_id,
-            "--time",
+            "time_spent",
             "2.5",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Time Spent: 2.5"));
+        .stdout(predicate::str::contains("Updated time_spent to \"2.5\""));
 
     // Set owner
     ragtag()
         .args([
             "--no-color",
             "task",
-            "set-owner",
-            "--id",
+            "set-attr",
             task_id,
-            "--owner",
+            "owner",
             "alice",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Owner: alice"));
+        .stdout(predicate::str::contains("Updated owner to \"alice\""));
 
     // Verify final file state
     let final_content = fs::read_to_string(&file).unwrap();
@@ -816,7 +806,7 @@ fn test_task_summary_group_owner() {
 }
 
 #[test]
-fn test_set_time_negative_rejected() {
+fn test_set_attr_negative_time_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
     fs::write(
@@ -827,16 +817,213 @@ fn test_set_time_negative_rejected() {
     ragtag()
         .args([
             "task",
-            "set-time",
-            "--id",
+            "set-attr",
             "testid1234567890",
-            "--time=-5",
+            "time_spent",
+            "-5",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("non-negative"));
+}
+
+// === get-attr tests ===
+
+#[test]
+fn test_get_attr_status() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args([
+            "task",
+            "get-attr",
+            "a1b2c3d4e5f67890",
+            "status",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("active"));
+}
+
+#[test]
+fn test_get_attr_title() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args([
+            "task",
+            "get-attr",
+            "a1b2c3d4e5f67890",
+            "title",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Design API"));
+}
+
+#[test]
+fn test_get_attr_priority() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args([
+            "task",
+            "get-attr",
+            "a1b2c3d4e5f67890",
+            "priority",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1"));
+}
+
+#[test]
+fn test_get_attr_unknown() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args([
+            "task",
+            "get-attr",
+            "a1b2c3d4e5f67890",
+            "nonexistent",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown attribute"));
+}
+
+#[test]
+fn test_get_attr_by_prefix() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args(["task", "get-attr", "a1b2c3", "status", "--path", &path])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("active"));
+}
+
+#[test]
+fn test_set_attr_no_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    let original_content =
+        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")";
+    fs::write(&file, original_content).unwrap();
+
+    let output = ragtag()
+        .args([
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "status",
+            "active",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("@task("))
+        .stdout(predicate::str::contains("status=\"active\""))
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout_str = String::from_utf8(output).unwrap();
+
+    // Output should be single-line (preserving the original layout)
+    let tag_line = stdout_str.trim();
+    assert!(
+        !tag_line.contains('\n'),
+        "single-line task should produce single-line output, got: {tag_line}"
+    );
+
+    // Verify the file was NOT modified
+    let after_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        after_content, original_content,
+        "File should not be modified when --no-edit is used"
+    );
+}
+
+#[test]
+fn test_set_attr_no_edit_multiline_preserves_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    let original_content = "@task(\n    id=\"testid1234567890\",\n    title=\"Test\",\n    ttc_estimate=4,\n    time_units=\"hours\",\n    status=\"new\"\n)";
+    fs::write(&file, original_content).unwrap();
+
+    let output = ragtag()
+        .args([
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "status",
+            "active",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("status=\"active\""))
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout_str = String::from_utf8(output).unwrap();
+
+    // Output should be multi-line (preserving the original layout)
+    let tag_text = stdout_str.trim();
+    assert!(
+        tag_text.contains('\n'),
+        "multi-line task should produce multi-line output, got: {tag_text}"
+    );
+
+    // Verify indentation is preserved
+    assert!(
+        tag_text.contains("    id=\"testid1234567890\""),
+        "indentation should be preserved"
+    );
+
+    // Verify the file was NOT modified
+    let after_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        after_content, original_content,
+        "File should not be modified when --no-edit is used"
+    );
+}
+
+#[test]
+fn test_set_attr_id_immutable() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "id",
+            "newid",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("immutable"));
 }
 
 // === Environment Variable Tests ===

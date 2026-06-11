@@ -118,11 +118,8 @@ Task management commands. See the [task management guide](docs/task-management.m
 | `list` | List tasks found in files |
 | `get` | Look up a task by ID or title |
 | `summary` | Display a grouped summary of tasks |
-| `set-status` | Update a task's status |
-| `set-priority` | Update a task's priority |
-| `set-time` | Update a task's `time_spent` |
-| `set-owner` | Update a task's owner |
-| `set-parent` | Update a task's parent ID |
+| `get-attr` | Print a single task attribute value |
+| `set-attr` | Update a single task attribute |
 
 ## Global Flags
 
@@ -157,4 +154,3 @@ ragtag looks for `.ragtag.yaml` or `ragtag.yaml` in the current directory and wa
 ## License
 
 MIT
-

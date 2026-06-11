@@ -173,7 +173,10 @@ impl FileEditor for AtomicFileEditor {
 ///
 /// If the attribute exists, replaces its value. If not, inserts it
 /// before the closing `)`.
-fn modify_tag_attribute(
+///
+/// This is a pure function that operates on an in-memory string,
+/// making it usable both for file editing and for `--no-edit` output.
+pub fn modify_tag_attribute(
     tag_text: &str,
     attr_name: &str,
     new_value: &str,

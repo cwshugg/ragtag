@@ -275,92 +275,97 @@ Columns: ID, Title, Owner, Status, Priority, Time Spent, TTC Est., TTC Act., Tim
 
 Status values are color-coded and priority `0` is shown in red.
 
-#### `task set-status`
+#### `task get-attr`
 
-Update a task's status.
+Get the value of a single task attribute.
 
+```bash
+ragtag task get-attr <ID> <ATTR> [OPTIONS]
 ```
-ragtag task set-status --id <ID> [OPTIONS]
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `ID` | Yes | Task ID or ID prefix |
+| `ATTR` | Yes | Attribute name: `title`, `description`, `owner`, `status`, `priority`, `time_spent`, `ttc_estimate`, `ttc_actual`, `time_units`, `pid`, `id` |
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+
+**Output:**
+
+Prints the raw attribute value with no label or formatting. For `Option` fields that are `None`, prints nothing (empty output).
+
+**Examples:**
+
+```bash
+ragtag task get-attr a1b2c3d4e5f67890 status      # active
+ragtag task get-attr a1b2c3d4e5f67890 priority    # 1
+ragtag task get-attr a1b2c3d4e5f67890 title       # Design API
+ragtag task get-attr a1b2c3 status                # prefix match
 ```
+
+#### `task set-attr`
+
+Set the value of a single task attribute.
+
+```bash
+ragtag task set-attr <ID> <ATTR> <VALUE> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `ID` | Yes | Task ID or ID prefix |
+| `ATTR` | Yes | Attribute name (same as `get-attr`, except `id` which is immutable) |
+| `VALUE` | Yes | New value for the attribute |
 
 **Options:**
 
 | Option | Description |
 | --- | --- |
-| `--id <ID>` | Task ID (required) |
-| `--status <VALUE>` | New status (prompted interactively if omitted) |
 | `--path <PATH>` | Search path (default: `.`) |
+| `--no-edit` | Don't modify the file; print the updated `@task(...)` string to stdout instead |
 
 **Behavior:**
 
 * Finds the task by ID across all scanned files
-* Validates the new status against recognized keywords
+* Validates the new value against attribute-specific rules (e.g., status must be a recognized keyword, priority must be a non-negative integer)
 * Edits the source file in-place (atomic write via temp file)
-* Prints the updated task details
+* Prints a confirmation message: `Updated <ATTR> to "<VALUE>" for task <ID>`
 
-#### `task set-time`
+**With `--no-edit`:**
 
-Update a task's `time_spent`.
+* Does not modify the file
+* Prints the complete reconstructed `@task(...)` string with the attribute changed
+* Useful for editor plugin integration (e.g., Vim plugin injects the string into the buffer)
 
+**Examples:**
+
+```bash
+# Update status
+ragtag task set-attr a1b2c3d4e5f67890 status done
+
+# Update priority
+ragtag task set-attr a1b2c3d4e5f67890 priority 0
+
+# Update owner
+ragtag task set-attr a1b2c3d4e5f67890 owner alice
+
+# Update time spent
+ragtag task set-attr a1b2c3d4e5f67890 time_spent 6.5
+
+# Update parent ID
+ragtag task set-attr a1b2c3d4e5f67890 pid f0e1d2c3b4a59687
+
+# Get updated tag string without modifying the file
+ragtag task set-attr a1b2c3d4e5f67890 status done --no-edit
 ```
-ragtag task set-time --id <ID> [OPTIONS]
-```
-
-**Options:**
-
-| Option | Description |
-| --- | --- |
-| `--id <ID>` | Task ID (required) |
-| `--time <VALUE>` | New `time_spent` value (prompted interactively if omitted) |
-| `--path <PATH>` | Search path (default: `.`) |
-
-#### `task set-owner`
-
-Update a task's owner.
-
-```
-ragtag task set-owner --id <ID> [OPTIONS]
-```
-
-**Options:**
-
-| Option | Description |
-| --- | --- |
-| `--id <ID>` | Task ID (required) |
-| `--owner <VALUE>` | New owner (prompted interactively if omitted) |
-| `--path <PATH>` | Search path (default: `.`) |
-
-#### `task set-parent`
-
-Update a task's parent ID.
-
-```
-ragtag task set-parent --id <ID> [OPTIONS]
-```
-
-**Options:**
-
-| Option | Description |
-| --- | --- |
-| `--id <ID>` | Task ID (required) |
-| `--pid <VALUE>` | New parent task ID (prompted interactively if omitted) |
-| `--path <PATH>` | Search path (default: `.`) |
-
-#### `task set-priority`
-
-Update a task's priority.
-
-```
-ragtag task set-priority --id <ID> [OPTIONS]
-```
-
-**Options:**
-
-| Option | Description |
-| --- | --- |
-| `--id <ID>` | Task ID (required) |
-| `--priority <VALUE>` | New priority (non-negative integer, prompted interactively if omitted) |
-| `--path <PATH>` | Search path (default: `.`) |
 
 ## Exit Codes
 
@@ -399,6 +404,6 @@ ragtag summary              # uses the config at the exported path
 
 ## File Editing Safety
 
-The `set-*` commands modify files using **atomic writes**: the updated content is written to a temporary file first, then moved into place. This prevents data loss from interrupted writes.
+The `set-attr` command modifies files using **atomic writes**: the updated content is written to a temporary file first, then moved into place. This prevents data loss from interrupted writes.
 
 ragtag **refuses to edit symlinked files** — you must resolve the symlink or edit the target file directly.

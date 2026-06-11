@@ -90,12 +90,11 @@ fn format_results(
             format!("{}\n", format_task_detail(task, config, color_mode))
         }
         _ => {
-            let mut output = format!("Multiple tasks found for \"{search}\":\n");
+            let mut output = format!("Multiple tasks found for \"{search}\". Please provide a longer ID string.\n");
             for task in matches {
                 let path = colorize_path(&task.location.file_path, color_mode);
-                output.push_str(&format!("  {}: {} {}\n", path, task.id, task.title));
+                output.push_str(&format!("{} {} {}\n", task.id, path, task.title));
             }
-            output.push_str("Use a more specific search string or the full task ID.\n");
             output
         }
     }
@@ -210,10 +209,11 @@ mod tests {
         let results = vec![&task1, &task2];
         let config = TaskConfig::default();
         let output = format_results(&results, "Task", &config, &ColorMode::Never);
-        assert!(output.contains("Multiple tasks found for \"Task\":"));
-        assert!(output.contains("abc123 Task A"));
-        assert!(output.contains("def456 Task B"));
-        assert!(output.contains("Use a more specific search string"));
+        assert!(output.contains("Multiple tasks found for \"Task\". Please provide a longer ID string."));
+        assert!(output.contains("abc123"));
+        assert!(output.contains("Task A"));
+        assert!(output.contains("def456"));
+        assert!(output.contains("Task B"));
     }
 
     #[test]

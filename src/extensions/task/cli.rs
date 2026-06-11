@@ -2,7 +2,7 @@
 //!
 //! Builds the clap `Command` tree for the `task` subcommand.
 
-use clap::{Arg, Command};
+use clap::{Arg, ArgAction, Command};
 
 /// Builds the complete `task` subcommand tree.
 pub fn build_task_command() -> Command {
@@ -157,64 +157,61 @@ pub fn build_task_command() -> Command {
                         .action(clap::ArgAction::SetTrue),
                 ),
         )
-        .subcommand(build_set_command(
-            "set-status",
-            "Update a task's status",
-            "status",
-            "New status",
-        ))
-        .subcommand(build_set_command(
-            "set-priority",
-            "Update a task's priority",
-            "priority",
-            "New priority (non-negative integer)",
-        ))
-        .subcommand(build_set_command(
-            "set-time",
-            "Update a task's time_spent",
-            "time",
-            "New time_spent value",
-        ))
-        .subcommand(build_set_command(
-            "set-owner",
-            "Update a task's owner",
-            "owner",
-            "New owner",
-        ))
-        .subcommand(build_set_command(
-            "set-parent",
-            "Update a task's parent ID",
-            "pid",
-            "New parent task ID",
-        ))
-}
-
-/// Helper to build a set-* subcommand with common arguments.
-fn build_set_command(
-    name: &'static str,
-    about: &'static str,
-    value_arg: &'static str,
-    value_help: &'static str,
-) -> Command {
-    Command::new(name)
-        .about(about)
-        .arg(
-            Arg::new("id")
-                .long("id")
-                .help("Task ID")
-                .value_name("ID")
-                .required(true),
+        .subcommand(
+            Command::new("get-attr")
+                .about("Get the value of a task attribute")
+                .arg(
+                    Arg::new("id")
+                        .help("Task ID or ID prefix")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("attr")
+                        .help("Attribute name (e.g., status, priority, owner)")
+                        .required(true)
+                        .index(2),
+                )
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
+                ),
         )
-        .arg(
-            Arg::new("path")
-                .long("path")
-                .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
-                .value_name("PATH"),
-        )
-        .arg(
-            Arg::new(value_arg)
-                .long(value_arg)
-                .help(value_help)
-                .value_name("VALUE"),
+        .subcommand(
+            Command::new("set-attr")
+                .about("Set the value of a task attribute")
+                .arg(
+                    Arg::new("id")
+                        .help("Task ID or ID prefix")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("attr")
+                        .help("Attribute name (e.g., status, priority, owner)")
+                        .required(true)
+                        .index(2),
+                )
+                .arg(
+                    Arg::new("value")
+                        .help("New value for the attribute")
+                        .allow_hyphen_values(true)
+                        .required(true)
+                        .index(3),
+                )
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
+                )
+                .arg(
+                    Arg::new("no-edit")
+                        .long("no-edit")
+                        .action(ArgAction::SetTrue)
+                        .help("Don't modify the file; print the updated @task(...) string instead"),
+                ),
         )
 }
