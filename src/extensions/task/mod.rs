@@ -7,6 +7,7 @@
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod filter;
 pub mod models;
 pub mod output;
 pub mod validation;

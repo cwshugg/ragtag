@@ -199,7 +199,7 @@ ragtag task list [OPTIONS]
 | Option | Default | Description |
 | --- | --- | --- |
 | `--path <PATH>` | `.` | Search path (file or directory) |
-| `--filter <EXPR>` | — | Filter tasks by attribute (repeatable) |
+| `--filter <EXPR>` | — | Filter tasks by attribute expression (e.g., `"status=active AND priority<=2"`). Supports `AND`, `OR`, and parentheses |
 | `--sort <FIELD>` | — | Sort by field name |
 | `--reverse` | — | Reverse sort order |
 | `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
@@ -262,14 +262,17 @@ ragtag task summary [OPTIONS]
 | `--path <PATH>` | `.` | Search path (file or directory) |
 | `--group <FIELD>` | `status` | Group tasks by field: `status`, `owner`, or `priority` |
 | `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
-| `--filter <EXPR>` | — | Filter tasks by attribute (e.g., `status=active`). Repeatable |
+| `--filter <EXPR>` | — | Filter tasks by attribute expression (e.g., `"status=active AND priority<=2"`). Supports `AND`, `OR`, and parentheses |
+| `--format <FORMAT>` | `table` | Output format: `table` (aligned columns) or `list` (multi-line per task) |
 | `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
 
 **Output:**
 
-Tasks are displayed in aligned tables, grouped by the specified field. Each group has a header (e.g., `=== Status: active ===`).
+Tasks are displayed in aligned tables, grouped by the specified field. Each group has a header (e.g., `Status: active`).
 
-Columns: ID, Title, Owner, Status, Priority, Time Spent, TTC Est., TTC Act., Time Units.
+With `--format table` (default), columns are: Path, Title, Owner, Status, Priority, Time, ID.
+
+With `--format list`, each task is shown as three lines: file path, truncated title, and a detail line with ID, owner, priority, status, and time. Tasks are separated by blank lines.
 
 Status values are color-coded and priority `0` is shown in red.
 

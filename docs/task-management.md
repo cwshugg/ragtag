@@ -150,8 +150,8 @@ Lists all tasks found in scanned files.
 ```bash
 ragtag task list
 ragtag task list --path ./notes
-ragtag task list --filter status=active
-ragtag task list --filter status!=done --sort priority
+ragtag task list --filter "status=active"
+ragtag task list --filter "status!=done" --sort priority
 ragtag task list --sort title --reverse
 ```
 
@@ -166,7 +166,7 @@ notes/project.md id="a1b2c3d4e5f67890" status="active" title="Write docs" descri
 | Flag | Description |
 | --- | --- |
 | `--path <PATH>` | Search path (file or directory, default: `.`) |
-| `--filter <EXPR>` | Filter tasks (repeatable). Format: `field=value`, `field!=value`, `field>value`, `field<value`, `field>=value`, `field<=value` |
+| `--filter <EXPR>` | Filter expression. Supports `=`, `!=`, `>`, `<`, `>=`, `<=` operators, `AND`/`OR` boolean operators, and parentheses for grouping |
 | `--sort <FIELD>` | Sort results by field name (e.g., `priority`, `status`, `title`) |
 | `--reverse` | Reverse sort order |
 | `--all`, `-a` | Show all tasks, including excluded status categories (done, abandoned) |
@@ -175,16 +175,22 @@ notes/project.md id="a1b2c3d4e5f67890" status="active" title="Write docs" descri
 
 ```bash
 # Only active tasks
-ragtag task list --filter status=active
+ragtag task list --filter "status=active"
 
 # Tasks not done, sorted by priority
-ragtag task list --filter status!=done --sort priority
+ragtag task list --filter "status!=done" --sort priority
 
-# High-priority tasks owned by alice
-ragtag task list --filter priority=0 --filter owner=alice
+# High-priority tasks owned by alice (AND — both must match)
+ragtag task list --filter "priority=0 AND owner=alice"
 
 # Tasks with estimate > 4 hours
-ragtag task list --filter ttc_estimate>4
+ragtag task list --filter "ttc_estimate>4"
+
+# Tasks that are active OR priority 0
+ragtag task list --filter "status=active OR priority=0"
+
+# Parenthesized grouping: active or blocked, AND owned by alice
+ragtag task list --filter "(status=active OR status=blocked) AND owner=alice"
 ```
 
 ### `task summary`
@@ -196,6 +202,7 @@ ragtag task summary
 ragtag task summary --group owner
 ragtag task summary --group priority --sort title
 ragtag task summary --path ./notes
+ragtag task summary --format list
 ```
 
 **Output** shows tasks in grouped tables with headers:
@@ -213,6 +220,20 @@ ID                Title              Owner   Status   Priority  Time Spent  TTC 
 1122334455667788  Setup project      alice   done     2         2           2         2         hours
 ```
 
+With `--format list`, each task is displayed as three compact lines:
+
+```
+Status: active
+
+projects/api/design.md
+Design API endpoints for the new authentication service...
+a1b2c3d4e5f67890 [alice] [0/active] 3.5/- (8) hours
+
+projects/parser/main.md
+Write parser for the tag syntax with proper error recovery
+f0e1d2c3b4a59687 [bob] [1/active] -/- (4) hours
+```
+
 Status values are color-coded (green for done, yellow for active, red for blocked, orange for abandoned, gray for inactive). Priority `0` is displayed in red.
 
 **Flags:**
@@ -222,7 +243,8 @@ Status values are color-coded (green for done, yellow for active, red for blocke
 | `--path <PATH>` | `.` | Search path (file or directory) |
 | `--group <FIELD>` | `status` | Group tasks by field: `status`, `owner`, or `priority` |
 | `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
-| `--filter <EXPR>` | — | Filter tasks by attribute (repeatable) |
+| `--filter <EXPR>` | — | Filter expression. Supports `AND`, `OR`, and parentheses |
+| `--format <FORMAT>` | `table` | Output format: `table` (aligned columns) or `list` (multi-line per task) |
 | `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
 
 ### `task get-attr`
@@ -313,7 +335,7 @@ When `--no-edit` is used, ragtag reconstructs and prints the full `@task(...)` s
 4. **Check progress** across all your notes:
 
     ```bash
-    ragtag task list --filter status!=done --sort priority
+    ragtag task list --filter "status!=done" --sort priority
     ```
 
 5. **View a summary** of all tasks grouped by status:

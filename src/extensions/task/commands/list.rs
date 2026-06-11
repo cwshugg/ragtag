@@ -3,15 +3,15 @@
 //! Discovers and displays all tasks matching filters, with configurable
 //! attribute display and sorting.
 
-use std::borrow::Cow;
 use std::path::Path;
 
 use super::super::config::TaskConfig;
 use super::super::models::TaskTag;
 use super::super::output::format_task_line;
-use super::collect_tasks;
+use super::{collect_tasks, get_task_field_str};
 use crate::cli;
 use crate::error::RagtagError;
+use crate::extensions::task::filter::{evaluate_filter, parse_filter_expr, validate_filter_expr};
 use crate::extensions::ExtensionContext;
 
 /// Runs the list command.
@@ -26,26 +26,23 @@ pub fn run(
     let sort_field = matches.get_one::<String>("sort").cloned();
     let reverse = matches.get_flag("reverse");
 
-    let filters: Vec<String> = matches
-        .get_many::<String>("filter")
-        .map(|vals| vals.cloned().collect())
-        .unwrap_or_default();
+    let filter_expr_str = matches.get_one::<String>("filter").cloned();
 
     // Discover and parse tasks
     let mut tasks = collect_tasks(path, config, ctx)?;
 
-    // Apply filters
-    if !filters.is_empty() {
-        // Validate all filters before applying
-        for f in &filters {
-            validate_task_filter(f)?;
-        }
-        tasks.retain(|task| filters.iter().all(|f| apply_task_filter(task, f)));
+    // Apply filter expression
+    if let Some(ref expr_str) = filter_expr_str {
+        let parsed = parse_filter_expr(expr_str)?;
+        validate_filter_expr(&parsed)?;
+        tasks.retain(|task| evaluate_filter(&parsed, task));
     }
 
     // Apply default status exclusion (exclude done/abandoned by default)
     let show_all = matches.get_flag("all");
-    let filter_mentions_status = filters.iter().any(|f| f.starts_with("status"));
+    let filter_mentions_status = filter_expr_str
+        .as_ref()
+        .is_some_and(|e| e.contains("status"));
     if !show_all && !filter_mentions_status {
         let excluded = config.get_excluded_keywords();
         tasks.retain(|t| !excluded.contains(&t.status));
@@ -62,93 +59,6 @@ pub fn run(
     }
 
     Ok(())
-}
-
-/// Validates that a filter expression is parseable.
-fn validate_task_filter(filter: &str) -> Result<(), RagtagError> {
-    if filter.contains("!=")
-        || filter.contains(">=")
-        || filter.contains("<=")
-        || filter.contains('>')
-        || filter.contains('<')
-        || filter.contains('=')
-    {
-        Ok(())
-    } else {
-        Err(RagtagError::InvalidFilter(format!(
-            "\"{filter}\" — expected format: field=value, field!=value, field>value, etc."
-        )))
-    }
-}
-
-/// Applies a simple filter expression to a task.
-fn apply_task_filter(task: &TaskTag, filter: &str) -> bool {
-    // Parse filter: field=value, field!=value, field>value, field<value
-    if let Some((field, value)) = filter.split_once("!=") {
-        get_task_field_str(task, field.trim()) != value.trim()
-    } else if let Some((field, value)) = filter.split_once(">=") {
-        compare_field(task, field.trim(), value.trim(), |a, b| a >= b)
-    } else if let Some((field, value)) = filter.split_once("<=") {
-        compare_field(task, field.trim(), value.trim(), |a, b| a <= b)
-    } else if let Some((field, value)) = filter.split_once('>') {
-        compare_field(task, field.trim(), value.trim(), |a, b| a > b)
-    } else if let Some((field, value)) = filter.split_once('<') {
-        compare_field(task, field.trim(), value.trim(), |a, b| a < b)
-    } else if let Some((field, value)) = filter.split_once('=') {
-        get_task_field_str(task, field.trim()) == value.trim()
-    } else {
-        // Should not reach here since we validate above
-        false
-    }
-}
-
-/// Gets a task field as a string for comparison.
-///
-/// Returns an empty string for unrecognized field names and logs a warning.
-fn get_task_field_str<'a>(task: &'a TaskTag, field: &str) -> Cow<'a, str> {
-    match field {
-        "id" => Cow::Borrowed(&task.id),
-        "pid" => task
-            .pid
-            .as_deref()
-            .map_or_else(|| Cow::Owned(String::new()), Cow::Borrowed),
-        "title" => Cow::Borrowed(&task.title),
-        "description" => task
-            .description
-            .as_deref()
-            .map_or_else(|| Cow::Owned(String::new()), Cow::Borrowed),
-        "owner" => Cow::Borrowed(&task.owner),
-        "status" => Cow::Borrowed(&task.status),
-        // `None` values produce an empty string, which sorts before any numeric
-        // string in lexicographic fallback (e.g., "" < "0" < "1"). This means
-        // tasks without a priority sort first when sorting by priority.
-        "priority" => Cow::Owned(task.priority.map(|p| p.to_string()).unwrap_or_default()),
-        // Same empty-string-for-None behavior applies to time fields.
-        "time_spent" => Cow::Owned(task.time_spent.map(|t| t.to_string()).unwrap_or_default()),
-        "ttc_estimate" => Cow::Owned(task.ttc_estimate.map(|t| t.to_string()).unwrap_or_default()),
-        "ttc_actual" => Cow::Owned(task.ttc_actual.map(|t| t.to_string()).unwrap_or_default()),
-        "time_units" => Cow::Borrowed(&task.time_units),
-        _ => {
-            log::warn!("unknown task field \"{field}\" in filter/sort expression");
-            Cow::Owned(String::new())
-        }
-    }
-}
-
-/// Compares a task field numerically if possible, otherwise lexicographically.
-fn compare_field(task: &TaskTag, field: &str, value: &str, cmp: fn(f64, f64) -> bool) -> bool {
-    let field_str = get_task_field_str(task, field);
-    if let (Ok(a), Ok(b)) = (field_str.parse::<f64>(), value.parse::<f64>()) {
-        cmp(a, b)
-    } else {
-        // Fall back to lexicographic string comparison for non-numeric values.
-        let ordering = (*field_str).cmp(value);
-        match ordering {
-            std::cmp::Ordering::Less => cmp(-1.0, 0.0),
-            std::cmp::Ordering::Equal => cmp(0.0, 0.0),
-            std::cmp::Ordering::Greater => cmp(1.0, 0.0),
-        }
-    }
 }
 
 /// Sorts tasks by a field name.
@@ -175,6 +85,7 @@ pub fn sort_tasks(tasks: &mut [TaskTag], field: &str, reverse: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extensions::task::commands::{apply_task_filter, validate_task_filter};
     use crate::models::TagLocation;
     use std::path::PathBuf;
 
@@ -296,6 +207,8 @@ mod tests {
 
     #[test]
     fn test_status_filter_overrides_exclusion() {
+        use crate::extensions::task::filter::{evaluate_filter, parse_filter_expr};
+
         let config = TaskConfig::default();
         let tasks = vec![
             make_task("a", "active", Some(1), "Active task"),
@@ -305,8 +218,10 @@ mod tests {
 
         // When filter mentions status, exclusion is disabled
         let show_all = false;
-        let filters = vec!["status=done".to_string()];
-        let filter_mentions_status = filters.iter().any(|f| f.starts_with("status"));
+        let filter_expr_str = Some("status=done".to_string());
+        let filter_mentions_status = filter_expr_str
+            .as_ref()
+            .is_some_and(|e| e.contains("status"));
 
         let mut filtered = tasks.clone();
         if !show_all && !filter_mentions_status {
@@ -314,8 +229,11 @@ mod tests {
             filtered.retain(|t| !excluded.contains(&t.status));
         }
 
-        // Apply the explicit filter
-        filtered.retain(|task| filters.iter().all(|f| apply_task_filter(task, f)));
+        // Apply the explicit filter expression
+        if let Some(ref expr_str) = filter_expr_str {
+            let parsed = parse_filter_expr(expr_str).unwrap();
+            filtered.retain(|task| evaluate_filter(&parsed, task));
+        }
 
         // Should show only the "done" task
         assert_eq!(filtered.len(), 1);

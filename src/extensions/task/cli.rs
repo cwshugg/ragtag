@@ -73,9 +73,8 @@ pub fn build_task_command() -> Command {
                 .arg(
                     Arg::new("filter")
                         .long("filter")
-                        .help("Filter tasks by attribute (e.g., status=active)")
-                        .value_name("EXPR")
-                        .action(clap::ArgAction::Append),
+                        .help("Filter expression (e.g., \"status=active AND priority<=2\")")
+                        .value_name("EXPR"),
                 )
                 .arg(
                     Arg::new("sort")
@@ -145,9 +144,8 @@ pub fn build_task_command() -> Command {
                 .arg(
                     Arg::new("filter")
                         .long("filter")
-                        .help("Filter tasks by attribute (e.g., status=active)")
-                        .value_name("EXPR")
-                        .action(clap::ArgAction::Append),
+                        .help("Filter expression (e.g., \"status=active AND priority<=2\")")
+                        .value_name("EXPR"),
                 )
                 .arg(
                     Arg::new("all")
@@ -155,6 +153,13 @@ pub fn build_task_command() -> Command {
                         .short('a')
                         .help("Show all tasks, including excluded status categories (done, abandoned)")
                         .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .help("Output format (table or list)")
+                        .value_parser(["table", "list"])
+                        .default_value("table"),
                 ),
         )
         .subcommand(

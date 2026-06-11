@@ -826,6 +826,97 @@ fn test_task_summary_group_owner() {
 }
 
 #[test]
+fn test_task_summary_format_table() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    // --format table should produce the same output as the default (table headers)
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "summary",
+            "--format",
+            "table",
+            "--all",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Path"))
+        .stdout(predicate::str::contains("Title"))
+        .stdout(predicate::str::contains("Owner"))
+        .stdout(predicate::str::contains("ID"));
+}
+
+#[test]
+fn test_task_summary_format_list() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "summary",
+            "--format",
+            "list",
+            "--all",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output_str = String::from_utf8(output).unwrap();
+
+    // List format should NOT have table column headers
+    assert!(
+        !output_str.contains("Path  "),
+        "list format should not have table headers"
+    );
+
+    // Should have group headers
+    assert!(
+        output_str.contains("Status: ") || output_str.contains("Owner: "),
+        "list format should have group headers"
+    );
+
+    // Should have task details in bracket format: [owner] [priority/status]
+    assert!(
+        output_str.contains("[alice]") || output_str.contains("[bob]"),
+        "list format should show owner in brackets"
+    );
+}
+
+#[test]
+fn test_task_summary_format_list_grouped() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "summary",
+            "--format",
+            "list",
+            "--group",
+            "owner",
+            "--all",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output_str = String::from_utf8(output).unwrap();
+
+    // Should have owner group headers
+    assert!(output_str.contains("Owner: alice"));
+    assert!(output_str.contains("Owner: bob"));
+}
+
+#[test]
 fn test_set_attr_negative_time_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
@@ -1335,4 +1426,151 @@ fn test_set_attr_value_with_parens_file_edit() {
 
     let content = fs::read_to_string(&file).unwrap();
     assert!(content.contains("Fix bug (urgent)"));
+}
+
+// === Filter Mode Tests ===
+
+#[test]
+fn test_task_list_filter_mode_and_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", ttc_estimate=1, time_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Bob Active\", status=\"active\", owner=\"bob\", ttc_estimate=2, time_units=\"hours\")\n\
+         @task(id=\"ccc1234567890ab\", title=\"Alice Blocked\", status=\"blocked\", owner=\"alice\", ttc_estimate=3, time_units=\"hours\")",
+    ).unwrap();
+
+    // AND expression: must match both status=active AND owner=alice
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--filter",
+            "status=active AND owner=alice",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Alice Active"))
+        .stdout(predicate::str::contains("Bob Active").not())
+        .stdout(predicate::str::contains("Alice Blocked").not());
+}
+
+#[test]
+fn test_task_list_filter_mode_or() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", ttc_estimate=1, time_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Bob Blocked\", status=\"blocked\", owner=\"bob\", ttc_estimate=2, time_units=\"hours\")\n\
+         @task(id=\"ccc1234567890ab\", title=\"Alice Blocked\", status=\"blocked\", owner=\"alice\", ttc_estimate=3, time_units=\"hours\")",
+    ).unwrap();
+
+    // OR expression: match status=active OR owner=alice
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--filter",
+            "status=active OR owner=alice",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Alice Active"))
+        .stdout(predicate::str::contains("Alice Blocked"))
+        .stdout(predicate::str::contains("Bob Blocked").not());
+}
+
+#[test]
+fn test_task_list_filter_mode_and_explicit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", ttc_estimate=1, time_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Bob Active\", status=\"active\", owner=\"bob\", ttc_estimate=2, time_units=\"hours\")",
+    ).unwrap();
+
+    // Parenthesized expression: (status=active OR status=blocked) AND owner=alice
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--filter",
+            "(status=active OR status=blocked) AND owner=alice",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Alice Active"))
+        .stdout(predicate::str::contains("Bob Active").not());
+}
+
+#[test]
+fn test_task_summary_filter_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"aaa1234567890ab\", title=\"Active Task\", status=\"active\", ttc_estimate=1, time_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Blocked Task\", status=\"blocked\", ttc_estimate=2, time_units=\"hours\")",
+    ).unwrap();
+
+    // Filter should be applied in summary (this was the bug)
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "summary",
+            "--format",
+            "table",
+            "--filter",
+            "status=active",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Active Task"))
+        .stdout(predicate::str::contains("Blocked Task").not());
+}
+
+#[test]
+fn test_task_summary_filter_mode_or() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", ttc_estimate=1, time_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Bob Blocked\", status=\"blocked\", owner=\"bob\", ttc_estimate=2, time_units=\"hours\")\n\
+         @task(id=\"ccc1234567890ab\", title=\"Alice Blocked\", status=\"blocked\", owner=\"alice\", ttc_estimate=3, time_units=\"hours\")",
+    ).unwrap();
+
+    // OR expression in summary: match status=active OR owner=alice
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "summary",
+            "--format",
+            "table",
+            "--filter",
+            "status=active OR owner=alice",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Alice Active"))
+        .stdout(predicate::str::contains("Alice Blocked"))
+        .stdout(predicate::str::contains("Bob Blocked").not());
 }
