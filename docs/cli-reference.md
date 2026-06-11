@@ -233,8 +233,6 @@ ragtag task get <SEARCH_STRING> [OPTIONS]
 | --- | --- | --- |
 | `--path <PATH>` | `.` | Search path (file or directory) |
 | `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
-| `--config <PATH>` | — | Path to config file (overrides auto-discovery) |
-| `--no-color` | — | Disable colored output |
 
 **Examples:**
 
@@ -327,10 +325,10 @@ ragtag task set-attr <ID> <ATTR> <VALUE> [OPTIONS]
 
 **Options:**
 
-| Option | Description |
-| --- | --- |
-| `--path <PATH>` | Search path (default: `.`) |
-| `--no-edit` | Don't modify the file; print the updated `@task(...)` string to stdout instead |
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--no-edit` | — | Don't modify the file; print the updated `@task(...)` string to stdout instead |
 
 **Behavior:**
 

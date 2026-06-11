@@ -425,6 +425,26 @@ fn test_tasks_get_no_match() {
         .stdout(predicate::str::contains("No task found for"));
 }
 
+#[test]
+fn test_tasks_get_empty_search_rejected() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args(["--no-color", "task", "get", "", "--path", &path])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("search string must not be empty"));
+}
+
+#[test]
+fn test_tasks_get_whitespace_search_rejected() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args(["--no-color", "task", "get", "   ", "--path", &path])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("search string must not be empty"));
+}
+
 // === Error Cases ===
 
 #[test]
@@ -1211,4 +1231,108 @@ fn test_config_get_with_custom_config() {
         .assert()
         .success()
         .stdout(predicate::str::contains("custom_tag"));
+}
+
+// === Special characters in set-attr values ===
+
+#[test]
+fn test_set_attr_value_with_comma_no_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"Test\", description=\"old\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+    ).unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "description",
+            "First, second",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("First, second"));
+}
+
+#[test]
+fn test_set_attr_value_with_parens_no_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"old\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+    ).unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "title",
+            "Fix bug (urgent)",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Fix bug (urgent)"));
+}
+
+#[test]
+fn test_set_attr_value_with_comma_file_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"Test\", description=\"old\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+    ).unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "description",
+            "First, second",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(content.contains("First, second"));
+}
+
+#[test]
+fn test_set_attr_value_with_parens_file_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"old\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+    ).unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "title",
+            "Fix bug (urgent)",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(content.contains("Fix bug (urgent)"));
 }

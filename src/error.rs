@@ -52,6 +52,10 @@ pub enum RagtagError {
     #[error("error: invalid filter expression: {0}")]
     InvalidFilter(String),
 
+    /// Invalid user input (e.g., empty search string).
+    #[error("error: invalid input: {0}")]
+    InvalidInput(String),
+
     /// Attempted to edit a symlinked file.
     #[error("error: cannot edit symlinked file \"{0}\" — resolve the symlink or edit the target file directly")]
     SymlinkEdit(PathBuf),

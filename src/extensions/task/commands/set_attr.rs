@@ -142,7 +142,14 @@ mod tests {
         TaskConfig::default()
     }
 
-    /// Applies an attribute value to a `TaskTag` in memory (test helper).
+    /// Applies an attribute value to a `TaskTag` in memory.
+    ///
+    /// This is a **test-only helper** — it is not used in production code.
+    /// Production attribute updates go through `modify_tag_attribute` (for
+    /// `--no-edit` output) or `AtomicFileEditor::update_tag_attribute` (for
+    /// in-place file edits). This helper exists solely to verify
+    /// `validate_attr_value` and `format_attr_for_update` behavior in
+    /// isolation, without needing file I/O.
     fn apply_attr_to_task(task: &mut TaskTag, attr: &str, value: &str) {
         match attr {
             "title" => task.title = value.to_string(),

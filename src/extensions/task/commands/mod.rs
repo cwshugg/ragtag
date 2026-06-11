@@ -172,8 +172,9 @@ pub fn find_task_by_id(
             Ok((task, content))
         }
         _ => {
-            let mut details =
-                format!("Multiple tasks match id prefix \"{id}\". Please provide a longer ID string.\n");
+            let mut details = format!(
+                "Multiple tasks match id prefix \"{id}\". Please provide a longer ID string.\n"
+            );
             for &i in &prefix_idx {
                 let (ref t, _) = all_tasks[i];
                 details.push_str(&format!(

@@ -48,9 +48,6 @@ respect_gitignore: true
 # Whether to skip hidden files and directories (those starting with '.').
 skip_hidden: true
 
-# Whether to skip binary files.
-skip_binary: true
-
 # Maximum directory depth for recursive scanning.
 # null (or omitted) means unlimited depth.
 max_depth: null
@@ -123,7 +120,6 @@ tasks:
 | `ignore_patterns` | list of strings | `[]` | Regex patterns matched against file paths to exclude |
 | `respect_gitignore` | boolean | `true` | Honor `.gitignore` files during scanning |
 | `skip_hidden` | boolean | `true` | Skip hidden files/directories (names starting with `.`) |
-| `skip_binary` | boolean | `true` | Skip binary files |
 | `max_depth` | integer or null | `null` | Maximum recursion depth (`null` = unlimited) |
 | `max_file_size` | integer | `10485760` | Maximum file size in bytes to scan |
 
@@ -201,7 +197,6 @@ output:
 max_depth: 10
 max_file_size: 5242880    # 5 MB
 skip_hidden: true
-skip_binary: true
 respect_gitignore: true
 ignore_patterns:
   - "vendor/"

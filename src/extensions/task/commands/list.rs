@@ -3,6 +3,7 @@
 //! Discovers and displays all tasks matching filters, with configurable
 //! attribute display and sorting.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use super::super::config::TaskConfig;
@@ -104,25 +105,32 @@ fn apply_task_filter(task: &TaskTag, filter: &str) -> bool {
 /// Gets a task field as a string for comparison.
 ///
 /// Returns an empty string for unrecognized field names and logs a warning.
-///
-/// TODO: Return `Cow<'_, str>` or `&str` instead of `String` to avoid
-/// unnecessary allocations on every call during filtering and sorting.
-fn get_task_field_str(task: &TaskTag, field: &str) -> String {
+fn get_task_field_str<'a>(task: &'a TaskTag, field: &str) -> Cow<'a, str> {
     match field {
-        "id" => task.id.clone(),
-        "pid" => task.pid.clone().unwrap_or_default(),
-        "title" => task.title.clone(),
-        "description" => task.description.clone().unwrap_or_default(),
-        "owner" => task.owner.clone(),
-        "status" => task.status.clone(),
-        "priority" => task.priority.map(|p| p.to_string()).unwrap_or_default(),
-        "time_spent" => task.time_spent.map(|t| t.to_string()).unwrap_or_default(),
-        "ttc_estimate" => task.ttc_estimate.map(|t| t.to_string()).unwrap_or_default(),
-        "ttc_actual" => task.ttc_actual.map(|t| t.to_string()).unwrap_or_default(),
-        "time_units" => task.time_units.clone(),
+        "id" => Cow::Borrowed(&task.id),
+        "pid" => task
+            .pid
+            .as_deref()
+            .map_or_else(|| Cow::Owned(String::new()), Cow::Borrowed),
+        "title" => Cow::Borrowed(&task.title),
+        "description" => task
+            .description
+            .as_deref()
+            .map_or_else(|| Cow::Owned(String::new()), Cow::Borrowed),
+        "owner" => Cow::Borrowed(&task.owner),
+        "status" => Cow::Borrowed(&task.status),
+        // `None` values produce an empty string, which sorts before any numeric
+        // string in lexicographic fallback (e.g., "" < "0" < "1"). This means
+        // tasks without a priority sort first when sorting by priority.
+        "priority" => Cow::Owned(task.priority.map(|p| p.to_string()).unwrap_or_default()),
+        // Same empty-string-for-None behavior applies to time fields.
+        "time_spent" => Cow::Owned(task.time_spent.map(|t| t.to_string()).unwrap_or_default()),
+        "ttc_estimate" => Cow::Owned(task.ttc_estimate.map(|t| t.to_string()).unwrap_or_default()),
+        "ttc_actual" => Cow::Owned(task.ttc_actual.map(|t| t.to_string()).unwrap_or_default()),
+        "time_units" => Cow::Borrowed(&task.time_units),
         _ => {
             log::warn!("unknown task field \"{field}\" in filter/sort expression");
-            String::new()
+            Cow::Owned(String::new())
         }
     }
 }
@@ -134,7 +142,7 @@ fn compare_field(task: &TaskTag, field: &str, value: &str, cmp: fn(f64, f64) -> 
         cmp(a, b)
     } else {
         // Fall back to lexicographic string comparison for non-numeric values.
-        let ordering = field_str.as_str().cmp(value);
+        let ordering = (*field_str).cmp(value);
         match ordering {
             std::cmp::Ordering::Less => cmp(-1.0, 0.0),
             std::cmp::Ordering::Equal => cmp(0.0, 0.0),

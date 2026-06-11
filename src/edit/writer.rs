@@ -271,6 +271,9 @@ fn replace_attribute_value(
                         while end < tag_text.len() {
                             if tag_text.as_bytes()[end] == b'\\' {
                                 end += 2;
+                                if end >= tag_text.len() {
+                                    break;
+                                }
                                 continue;
                             }
                             if tag_text.as_bytes()[end] == quote {
@@ -338,6 +341,19 @@ mod tests {
         let result = modify_tag_attribute(tag, "status", "\"done\"").unwrap();
         assert!(result.contains("\"done\""));
         assert!(!result.contains("\"old\""));
+    }
+
+    #[test]
+    fn test_trailing_backslash_no_panic() {
+        // Malformed tag with a trailing backslash should not panic.
+        let tag = r#"@task(title="hello\")"#;
+        // The value `"hello\"` has a trailing backslash that escapes the
+        // closing quote, so the parser never finds the end-quote.
+        // This must not panic — returning an error or a best-effort
+        // result is acceptable.
+        let result = modify_tag_attribute(tag, "title", "\"world\"");
+        // We only care that it didn't panic. Either Ok or Err is fine.
+        let _ = result;
     }
 
     #[test]
@@ -479,5 +495,22 @@ mod tests {
         // start > end
         let result = editor.update_tag_attribute(&file, 10..5, "status", "\"new\"");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_modify_value_with_comma() {
+        let tag = r#"@task(id="abc123", description="old")"#;
+        let result = modify_tag_attribute(tag, "description", "\"First, second\"").unwrap();
+        assert!(result.contains("description=\"First, second\""));
+        // Other attributes must remain intact.
+        assert!(result.contains("id=\"abc123\""));
+    }
+
+    #[test]
+    fn test_modify_value_with_parentheses() {
+        let tag = r#"@task(id="abc123", title="old")"#;
+        let result = modify_tag_attribute(tag, "title", "\"Fix bug (urgent)\"").unwrap();
+        assert!(result.contains("title=\"Fix bug (urgent)\""));
+        assert!(result.contains("id=\"abc123\""));
     }
 }

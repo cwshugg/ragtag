@@ -22,8 +22,18 @@ const TASKS_CONFIG_KEY: &str = "tasks";
 /// Returns `RagtagError::InvalidConfig` if the key is unknown or
 /// traversal fails (e.g., indexing through a scalar value).
 pub fn run_get(key: &str, config: &Config) -> Result<String, RagtagError> {
+    // Reject empty or whitespace-only keys.
+    if key.trim().is_empty() {
+        return Err(RagtagError::InvalidConfig(
+            "config key must not be empty".to_string(),
+        ));
+    }
+
     let mut root = serde_yml::to_value(config)
         .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize config: {e}")))?;
+
+    // TODO: When additional extensions are added, iterate over all registered
+    // extensions and merge their resolved configs here.
 
     // Merge resolved task extension config (with defaults applied).
     let task_config = config
@@ -36,12 +46,13 @@ pub fn run_get(key: &str, config: &Config) -> Result<String, RagtagError> {
         .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize task config: {e}")))?;
 
     if let serde_yml::Value::Mapping(ref mut map) = root {
+        for extension_key in config.extension_configs.keys() {
+            map.remove(serde_yml::Value::String(extension_key.clone()));
+        }
         map.insert(
             serde_yml::Value::String(TASKS_CONFIG_KEY.to_string()),
             resolved_tasks,
         );
-        // Remove the raw extension_configs map — we've merged resolved versions.
-        map.remove(serde_yml::Value::String("extension_configs".to_string()));
     }
 
     // Traverse the value tree using dot-notation segments.
@@ -252,6 +263,37 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown config key"));
         assert!(err.contains("tasks.nonexistent"));
+    }
+
+    #[test]
+    fn test_get_empty_key() {
+        let config = default_config();
+        let result = run_get("", &config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("config key must not be empty"));
+    }
+
+    #[test]
+    fn test_get_whitespace_key() {
+        let config = default_config();
+        let result = run_get("   ", &config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("config key must not be empty"));
+    }
+
+    #[test]
+    fn test_get_unknown_extension_key() {
+        let mut config = default_config();
+        config.extension_configs.insert(
+            "custom_thing".to_string(),
+            serde_yml::Value::Mapping(serde_yml::Mapping::new()),
+        );
+        let result = run_get("custom_thing", &config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown config key"));
     }
 
     #[test]
