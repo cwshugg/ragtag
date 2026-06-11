@@ -80,14 +80,6 @@ pub fn colorize_path(path: &Path, color_mode: &ColorMode) -> String {
     result
 }
 
-/// Wraps metadata labels (e.g., `status="`, `"`) in dark gray.
-pub fn dim_metadata(text: &str, color_mode: &ColorMode) -> String {
-    if !should_use_color(color_mode) {
-        return text.to_string();
-    }
-    text.truecolor(100, 100, 100).to_string()
-}
-
 /// Right-pads a string to the specified width.
 pub fn pad_right(s: &str, width: usize) -> String {
     if s.len() >= width {

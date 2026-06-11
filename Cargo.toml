@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "A CLI tool for parsing @tag(attr=value) from plain text files"
 license = "MIT"
-keywords = ["tag", "parser", "cli", "notes", "tasks"]
+keywords = ["tag", "parser", "cli", "notes", "task"]
 categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]

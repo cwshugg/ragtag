@@ -1,11 +1,11 @@
 //! Task extension CLI definitions.
 //!
-//! Builds the clap `Command` tree for the `tasks` subcommand.
+//! Builds the clap `Command` tree for the `task` subcommand.
 
 use clap::{Arg, Command};
 
-/// Builds the complete `tasks` subcommand tree.
-pub fn build_tasks_command() -> Command {
+/// Builds the complete `task` subcommand tree.
+pub fn build_task_command() -> Command {
     Command::new("task")
         .about("Track and manage tasks embedded in plain text files")
         .subcommand_required(true)

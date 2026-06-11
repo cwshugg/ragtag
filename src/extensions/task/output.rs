@@ -198,7 +198,6 @@ mod tests {
             time_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,
-            trailing_text: None,
         }
     }
 

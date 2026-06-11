@@ -67,7 +67,7 @@ impl TagExtension for TaskExtension {
     }
 
     fn cli_command(&self) -> clap::Command {
-        cli::build_tasks_command()
+        cli::build_task_command()
     }
 
     fn execute(
@@ -79,11 +79,7 @@ impl TagExtension for TaskExtension {
     }
 
     fn format_tag(&self, tag: &Tag, color_mode: &ColorMode) -> Option<String> {
-        // TODO: The `format_tag` trait method does not provide file content,
-        // so trailing text extraction cannot work here. Redesign the trait
-        // to pass file content, or accept the limitation that trailing text
-        // is not displayed in query output.
-        match models::TaskTag::from_tag(tag, &self.config, "") {
+        match models::TaskTag::from_tag(tag, &self.config) {
             Ok(task) => Some(output::format_task_line(&task, color_mode, &self.config)),
             Err(_) => None,
         }

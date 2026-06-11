@@ -56,7 +56,6 @@ pub struct TaskTag {
     pub time_units: String,
     pub location: TagLocation,
     pub raw_span: Range<usize>,
-    pub trailing_text: Option<String>,
 }
 
 /// Extracts a string value from a named attribute, with optional default.
@@ -94,13 +93,8 @@ fn get_u32(tag: &Tag, name: &str) -> Option<u32> {
 }
 
 impl TaskTag {
-    /// Creates a `TaskTag` from a `Tag` and `TaskConfig`, with access to
-    /// the source file content for trailing text extraction.
-    pub fn from_tag(
-        tag: &Tag,
-        config: &TaskConfig,
-        file_content: &str,
-    ) -> Result<Self, RagtagError> {
+    /// Creates a `TaskTag` from a `Tag` and `TaskConfig`.
+    pub fn from_tag(tag: &Tag, config: &TaskConfig) -> Result<Self, RagtagError> {
         let ext_err = |msg: String| RagtagError::ExtensionError {
             extension_name: "Task Manager".to_string(),
             message: msg,
@@ -137,9 +131,6 @@ impl TaskTag {
         // id — required for existing tasks, generated for new ones
         let id = get_str(tag, "id").unwrap_or_default();
 
-        // Extract trailing text
-        let trailing_text = extract_trailing_text(file_content, tag.raw_span.end);
-
         Ok(TaskTag {
             id,
             pid: get_str(tag, "pid"),
@@ -154,23 +145,7 @@ impl TaskTag {
             time_units,
             location: tag.location.clone(),
             raw_span: tag.raw_span.clone(),
-            trailing_text,
         })
-    }
-}
-
-/// Extracts trailing text after a tag's closing paren up to the next newline.
-fn extract_trailing_text(content: &str, tag_end: usize) -> Option<String> {
-    if tag_end >= content.len() {
-        return None;
-    }
-    let rest = &content[tag_end..];
-    let line_end = rest.find('\n').unwrap_or(rest.len());
-    let text = rest[..line_end].trim();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text.to_string())
     }
 }
 
@@ -254,7 +229,6 @@ impl TaskTagBuilder {
             time_units,
             location: TagLocation::new(std::path::PathBuf::new(), 0, 0, 0, 0),
             raw_span: 0..0,
-            trailing_text: None,
         })
     }
 }
@@ -284,10 +258,6 @@ mod tests {
         TaskConfig::default()
     }
 
-    fn content_with_tag() -> String {
-        "@task(id=\"abc123\", title=\"Test\", ttc_estimate=4, time_units=\"hours\") trailing desc\nNext".to_string()
-    }
-
     #[test]
     fn test_from_tag_all_fields() {
         let tag = make_tag(vec![
@@ -305,7 +275,7 @@ mod tests {
                 },
             ),
         ]);
-        let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
+        let task = TaskTag::from_tag(&tag, &default_config()).unwrap();
         assert_eq!(task.title, "Test Task");
         assert_eq!(task.ttc_estimate, Some(4.5));
         assert_eq!(task.status, "active");
@@ -324,7 +294,7 @@ mod tests {
                 },
             ),
         ]);
-        let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
+        let task = TaskTag::from_tag(&tag, &default_config()).unwrap();
         assert_eq!(task.owner, "me");
         assert_eq!(task.status, "new");
         assert_eq!(task.time_units, "hours");
@@ -339,7 +309,7 @@ mod tests {
                 base: NumericBase::Decimal,
             },
         )]);
-        assert!(TaskTag::from_tag(&tag, &default_config(), "").is_err());
+        assert!(TaskTag::from_tag(&tag, &default_config()).is_err());
     }
 
     #[test]
@@ -349,7 +319,7 @@ mod tests {
             AttributeValue::Str("Test".to_string()),
         )]);
         // ttc_estimate is now optional — should succeed
-        let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
+        let task = TaskTag::from_tag(&tag, &default_config()).unwrap();
         assert_eq!(task.ttc_estimate, None);
     }
 
@@ -366,7 +336,7 @@ mod tests {
             ),
             TagAttribute::named("time_units", AttributeValue::Str("fortnights".to_string())),
         ]);
-        assert!(TaskTag::from_tag(&tag, &default_config(), "").is_err());
+        assert!(TaskTag::from_tag(&tag, &default_config()).is_err());
     }
 
     #[test]
@@ -382,7 +352,7 @@ mod tests {
             ),
             TagAttribute::named("status", AttributeValue::Str("invalid_status".to_string())),
         ]);
-        assert!(TaskTag::from_tag(&tag, &default_config(), "").is_err());
+        assert!(TaskTag::from_tag(&tag, &default_config()).is_err());
     }
 
     #[test]
@@ -397,7 +367,7 @@ mod tests {
                 },
             ),
         ]);
-        let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
+        let task = TaskTag::from_tag(&tag, &default_config()).unwrap();
         assert_eq!(task.ttc_estimate, Some(4.0));
     }
 
@@ -407,7 +377,7 @@ mod tests {
             TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
             TagAttribute::named("ttc_estimate", AttributeValue::Float(4.5)),
         ]);
-        let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
+        let task = TaskTag::from_tag(&tag, &default_config()).unwrap();
         assert_eq!(task.ttc_estimate, Some(4.5));
     }
 
@@ -423,43 +393,6 @@ mod tests {
         );
         assert_eq!(categorize_status("new", &kw), StatusCategory::Inactive);
         assert_eq!(categorize_status("xyz", &kw), StatusCategory::Unknown);
-    }
-
-    #[test]
-    fn test_trailing_text_capture() {
-        let content = &content_with_tag();
-        let tag = make_tag(vec![
-            TagAttribute::named("id", AttributeValue::Str("abc123".to_string())),
-            TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
-            TagAttribute::named(
-                "ttc_estimate",
-                AttributeValue::Integer {
-                    value: 4,
-                    base: NumericBase::Decimal,
-                },
-            ),
-        ]);
-        let mut tag = tag;
-        tag.raw_span = 0..content.find(')').unwrap() + 1;
-        let task = TaskTag::from_tag(&tag, &default_config(), content).unwrap();
-        assert!(task.trailing_text.is_some());
-        assert_eq!(task.trailing_text.unwrap(), "trailing desc");
-    }
-
-    #[test]
-    fn test_trailing_text_empty() {
-        let tag = make_tag(vec![
-            TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
-            TagAttribute::named(
-                "ttc_estimate",
-                AttributeValue::Integer {
-                    value: 1,
-                    base: NumericBase::Decimal,
-                },
-            ),
-        ]);
-        let task = TaskTag::from_tag(&tag, &default_config(), "@task(...)\n").unwrap();
-        assert!(task.trailing_text.is_none());
     }
 
     #[test]
@@ -500,7 +433,7 @@ mod tests {
                 },
             ),
         ]);
-        let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
+        let task = TaskTag::from_tag(&tag, &default_config()).unwrap();
         assert!(task.priority.is_none());
     }
 
@@ -523,7 +456,7 @@ mod tests {
                 },
             ),
         ]);
-        let task = TaskTag::from_tag(&tag, &default_config(), "").unwrap();
+        let task = TaskTag::from_tag(&tag, &default_config()).unwrap();
         assert!(task.priority.is_none());
     }
 }

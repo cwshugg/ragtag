@@ -80,7 +80,7 @@ pub struct Config {
     /// Output configuration.
     pub output: OutputConfig,
     /// Extension configuration sections (raw YAML values).
-    /// Keys are extension config keys (e.g., "tasks").
+    /// Keys are extension config section names in the YAML file (e.g., "tasks" for the task extension).
     #[serde(flatten)]
     pub extension_configs: HashMap<String, serde_yml::Value>,
 }

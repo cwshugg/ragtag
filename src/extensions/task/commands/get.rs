@@ -7,6 +7,7 @@ use std::path::Path;
 use super::super::config::TaskConfig;
 use super::super::models::TaskTag;
 use super::super::output::format_task_detail;
+use super::collect_tasks;
 use crate::config::ColorMode;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
@@ -50,37 +51,6 @@ pub fn run(
     write!(ctx.stdout, "{output}").map_err(RagtagError::Io)?;
 
     Ok(())
-}
-
-/// Collects all tasks from discovered files.
-fn collect_tasks(
-    path: &Path,
-    config: &TaskConfig,
-    ctx: &mut ExtensionContext,
-) -> Result<Vec<TaskTag>, RagtagError> {
-    let files = ctx.walker.walk(path)?;
-    let mut tasks: Vec<TaskTag> = Vec::new();
-
-    for file_path in &files {
-        let content = match std::fs::read_to_string(file_path) {
-            Ok(c) => c,
-            Err(e) => {
-                log::warn!("skipping unreadable file {}: {}", file_path.display(), e);
-                continue;
-            }
-        };
-        let tags = ctx.parser.parse_file(&content, file_path);
-        for tag in &tags {
-            if tag.name == config.tag_name {
-                match TaskTag::from_tag(tag, config, &content) {
-                    Ok(task) => tasks.push(task),
-                    Err(_) => continue,
-                }
-            }
-        }
-    }
-
-    Ok(tasks)
 }
 
 /// Searches for tasks matching the search string.
@@ -160,7 +130,6 @@ mod tests {
             time_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,
-            trailing_text: None,
         }
     }
 

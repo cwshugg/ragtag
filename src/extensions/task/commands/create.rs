@@ -146,7 +146,11 @@ fn run_interactive(
         ("Owner", "owner", builder.owner.is_some()),
         ("Status", "status", builder.status.is_some()),
         ("Priority", "priority", builder.priority.is_some()),
-        ("TTC Estimate", "ttc_estimate", builder.ttc_estimate.is_some()),
+        (
+            "TTC Estimate",
+            "ttc_estimate",
+            builder.ttc_estimate.is_some(),
+        ),
         ("Time Units", "time_units", builder.time_units.is_some()),
         ("Parent ID", "pid", builder.pid.is_some()),
     ];

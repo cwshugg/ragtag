@@ -1,12 +1,11 @@
 //! Task set-status command.
 
-use std::io::BufRead;
 use std::path::Path;
 
 use super::super::config::TaskConfig;
 use super::super::output::format_task_detail;
 use super::create::escape_for_tag;
-use super::find_task_by_id;
+use super::{find_task_by_id, prompt_for_value};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -35,28 +34,7 @@ pub fn run(
     let new_status = if let Some(status) = matches.get_one::<String>("status") {
         status.clone()
     } else {
-        // Interactive mode
-        writeln!(ctx.stderr, "Current task:").map_err(RagtagError::Io)?;
-        writeln!(
-            ctx.stderr,
-            "{}",
-            format_task_detail(&task, config, &ctx.color_mode)
-        )
-        .map_err(RagtagError::Io)?;
-        write!(ctx.stderr, "New status: ").map_err(RagtagError::Io)?;
-        ctx.stderr.flush().map_err(RagtagError::Io)?;
-
-        let stdin = std::io::stdin();
-        let mut lines = stdin.lock().lines();
-        match lines.next() {
-            Some(Ok(line)) => line.trim().to_string(),
-            _ => {
-                return Err(RagtagError::Io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "no input",
-                )))
-            }
-        }
+        prompt_for_value(ctx, &task, config, "New status: ")?
     };
 
     // Validate status

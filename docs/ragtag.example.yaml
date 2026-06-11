@@ -68,7 +68,7 @@ tasks:
   # Default: "me"
   default_owner: "me"
 
-  # Default time units for `time_estimate` and `time_actual`.
+  # Default time units for `ttc_estimate`, `ttc_actual`, and `time_spent`.
   # Allowed values: "hours", "days", "weeks"
   # Default: "hours"
   default_time_units: "hours"
@@ -104,7 +104,7 @@ tasks:
       - "pending"
       - "new"
 
-  # Status categories to exclude from `tasks list` and `tasks summary` by default.
+  # Status categories to exclude from `task list` and `task summary` by default.
   # Use `--all` or `--filter status=<value>` to override.
   # Default: ["done", "abandoned"]
   exclude_status_categories:

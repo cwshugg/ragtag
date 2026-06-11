@@ -10,10 +10,10 @@ Because tasks live inside your notes, you always have full context — the task 
 
 ## Task Syntax
 
-A task at minimum requires a `title` and `ttc_estimate`:
+A task at minimum requires a `title`:
 
 ```
-@task(title="Fix the bug", ttc_estimate=2, time_units="hours")
+@task(title="Fix the bug")
 ```
 
 A fully-specified task with all attributes:
@@ -34,8 +34,6 @@ A fully-specified task with all attributes:
 )
 ```
 
-Trailing text after the closing `)` on the same line is captured as well.
-
 ## Task Attributes
 
 | Attribute | Type | Required | Default | Description |
@@ -48,7 +46,7 @@ Trailing text after the closing `)` on the same line is captured as well.
 | `status` | string | No | `"new"` | Current status (must be a valid keyword) |
 | `priority` | integer | No | (none) | Priority level; `0` is highest/most urgent; must be a non-negative integer |
 | `time_spent` | float | No | (none) | Time already spent on this task |
-| `ttc_estimate` | float | **Yes** | — | Estimated time to complete |
+| `ttc_estimate` | float | No | (none) | Estimated time to complete |
 | `ttc_actual` | float | No | (none) | Actual time to complete (filled in after) |
 | `time_units` | string | No | `"hours"` | Unit for time values: `hours`, `days`, or `weeks` |
 
@@ -93,7 +91,7 @@ tasks:
 
 All task commands are accessed via `ragtag task <subcommand>`.
 
-### `tasks create`
+### `task create`
 
 Generates a new `@task(...)` string and prints it to stdout. The output is meant to be copied into a note file.
 
@@ -120,7 +118,7 @@ In interactive mode, you are prompted for each field:
 
 ```
 Title (required): Write documentation
-TTC Estimate (required, numeric): 4
+TTC Estimate (leave blank to skip): 4
 Description (leave blank to skip): Write user-facing docs
 Owner (leave blank for default): alice
 Status (leave blank for default):
@@ -129,14 +127,14 @@ Time Units (leave blank for default):
 Parent ID (leave blank to skip):
 ```
 
-Required fields (`title`, `ttc_estimate`) cannot be skipped. Optional fields can be left blank to use defaults or omit.
+Required fields (`title`) cannot be skipped. Optional fields can be left blank to use defaults or omit.
 
 **Flags:**
 
 | Flag | Description |
 | --- | --- |
 | `--title <STR>` | Task title (required unless `-i`) |
-| `--ttc-estimate <NUM>` | Time-to-complete estimate (required unless `-i`) |
+| `--ttc-estimate <NUM>` | Time-to-complete estimate |
 | `--time-units <STR>` | Time units: `hours`, `days`, or `weeks` |
 | `--description <STR>` | Task description |
 | `--owner <STR>` | Task owner |
@@ -145,7 +143,7 @@ Required fields (`title`, `ttc_estimate`) cannot be skipped. Optional fields can
 | `--pid <STR>` | Parent task ID |
 | `-i`, `--interactive` | Launch interactive prompt |
 
-### `tasks list`
+### `task list`
 
 Lists all tasks found in scanned files.
 
@@ -154,7 +152,6 @@ ragtag task list
 ragtag task list --path ./notes
 ragtag task list --filter status=active
 ragtag task list --filter status!=done --sort priority
-ragtag task list --show-attributes id,title,status,priority
 ragtag task list --sort title --reverse
 ```
 
@@ -172,7 +169,7 @@ notes/project.md id="a1b2c3d4e5f67890" status="active" title="Write docs" descri
 | `--filter <EXPR>` | Filter tasks (repeatable). Format: `field=value`, `field!=value`, `field>value`, `field<value`, `field>=value`, `field<=value` |
 | `--sort <FIELD>` | Sort results by field name (e.g., `priority`, `status`, `title`) |
 | `--reverse` | Reverse sort order |
-| `--show-attributes <LIST>` | Comma-separated list of attributes to display |
+| `--all`, `-a` | Show all tasks, including excluded status categories (done, abandoned) |
 
 **Filter examples:**
 
@@ -190,7 +187,7 @@ ragtag task list --filter priority=0 --filter owner=alice
 ragtag task list --filter ttc_estimate>4
 ```
 
-### `tasks summary`
+### `task summary`
 
 Displays a table-like summary of all tasks, grouped by a field and with aligned columns.
 
@@ -225,8 +222,10 @@ Status values are color-coded (green for done, yellow for active, red for blocke
 | `--path <PATH>` | `.` | Search path (file or directory) |
 | `--group <FIELD>` | `status` | Group tasks by field: `status`, `owner`, or `priority` |
 | `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
+| `--filter <EXPR>` | — | Filter tasks by attribute (repeatable) |
+| `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
 
-### `tasks set-status`
+### `task set-status`
 
 Updates a task's status in-place in its source file.
 
@@ -261,7 +260,7 @@ After updating, a multi-line detail listing of the task is printed. Optional fie
 | `--status <VALUE>` | New status value (interactive prompt if omitted) |
 | `--path <PATH>` | Search path (default: `.`) |
 
-### `tasks set-time`
+### `task set-time`
 
 Updates a task's `time_spent` value.
 
@@ -277,7 +276,7 @@ ragtag task set-time --id a1b2c3d4e5f67890 --time 6.5
 | `--time <VALUE>` | New `time_spent` value (interactive prompt if omitted) |
 | `--path <PATH>` | Search path (default: `.`) |
 
-### `tasks set-owner`
+### `task set-owner`
 
 Updates a task's owner.
 
@@ -293,7 +292,7 @@ ragtag task set-owner --id a1b2c3d4e5f67890 --owner bob
 | `--owner <VALUE>` | New owner (interactive prompt if omitted) |
 | `--path <PATH>` | Search path (default: `.`) |
 
-### `tasks set-parent`
+### `task set-parent`
 
 Updates a task's parent ID for hierarchical organization.
 
@@ -307,6 +306,22 @@ ragtag task set-parent --id a1b2c3d4e5f67890 --pid f0e1d2c3b4a59687
 | --- | --- |
 | `--id <ID>` | Task ID (required) |
 | `--pid <VALUE>` | New parent task ID (interactive prompt if omitted) |
+| `--path <PATH>` | Search path (default: `.`) |
+
+### `task set-priority`
+
+Updates a task's priority.
+
+```bash
+ragtag task set-priority --id a1b2c3d4e5f67890 --priority 0
+```
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--id <ID>` | Task ID (required) |
+| `--priority <VALUE>` | New priority (non-negative integer, interactive prompt if omitted) |
 | `--path <PATH>` | Search path (default: `.`) |
 
 ## Workflow Example

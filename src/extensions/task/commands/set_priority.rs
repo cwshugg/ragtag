@@ -1,11 +1,10 @@
 //! Task set-priority command.
 
-use std::io::BufRead;
 use std::path::Path;
 
 use super::super::config::TaskConfig;
 use super::super::output::format_task_detail;
-use super::find_task_by_id;
+use super::{find_task_by_id, prompt_for_value};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -34,28 +33,8 @@ pub fn run(
     let new_priority = if let Some(pri) = matches.get_one::<String>("priority") {
         parse_priority(pri)?
     } else {
-        // Interactive mode
-        writeln!(ctx.stderr, "Current task:").map_err(RagtagError::Io)?;
-        writeln!(
-            ctx.stderr,
-            "{}",
-            format_task_detail(&task, config, &ctx.color_mode)
-        )
-        .map_err(RagtagError::Io)?;
-        write!(ctx.stderr, "New priority: ").map_err(RagtagError::Io)?;
-        ctx.stderr.flush().map_err(RagtagError::Io)?;
-
-        let stdin = std::io::stdin();
-        let mut lines = stdin.lock().lines();
-        match lines.next() {
-            Some(Ok(line)) => parse_priority(line.trim())?,
-            _ => {
-                return Err(RagtagError::Io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "no input",
-                )))
-            }
-        }
+        let input = prompt_for_value(ctx, &task, config, "New priority: ")?;
+        parse_priority(&input)?
     };
 
     // Edit file

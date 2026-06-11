@@ -54,13 +54,6 @@ output:
   # "auto" enables color when stdout is a terminal.
   color: "auto"
 
-  # Default attributes shown in `tasks list` output.
-  default_list_attributes:
-    - "id"
-    - "status"
-    - "title"
-    - "description"
-
 # Task extension configuration.
 tasks:
   # The tag name used for tasks.
@@ -77,6 +70,12 @@ tasks:
   # Default status for new tasks.
   # Must be a recognized status keyword.
   default_status: "new"
+
+  # Status categories to exclude from `task list` and `task summary` by default.
+  # Use --all to include these categories.
+  exclude_status_categories:
+    - "done"
+    - "abandoned"
 
   # Status keyword groups.
   # Each group maps to a color in terminal output.
@@ -122,7 +121,6 @@ tasks:
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `output.color` | string | `"auto"` | Color mode: `"auto"`, `"always"`, or `"never"` |
-| `output.default_list_attributes` | list of strings | `["id", "status", "title", "description"]` | Attributes shown by default in `tasks list` |
 
 ### Task Extension Options
 
@@ -132,6 +130,7 @@ tasks:
 | `tasks.default_owner` | string | `"me"` | Default owner for new tasks |
 | `tasks.default_time_units` | string | `"hours"` | Default time units (`hours`, `days`, or `weeks`) |
 | `tasks.default_status` | string | `"new"` | Default status for new tasks |
+| `tasks.exclude_status_categories` | list of strings | `["done", "abandoned"]` | Status categories to exclude from `task list` and `task summary` output by default |
 | `tasks.status_keywords` | object | (see above) | Status keyword groups by category |
 
 ## Ignore Patterns

@@ -66,13 +66,13 @@ cargo build --release
 4. **List all tasks:**
 
     ```bash
-    ragtag tasks list
+    ragtag task list
     ```
 
 5. **Create a new task:**
 
     ```bash
-    ragtag tasks create --title "Write docs" --ttc-estimate 2 --time-units hours
+    ragtag task create --title "Write docs" --ttc-estimate 2 --time-units hours
     ```
 
     This prints an `@task(...)` string to stdout for you to copy into a note file.
@@ -95,11 +95,10 @@ Searches for tags matching a name and prints their locations.
 ```bash
 ragtag query todo
 ragtag query task --filter status=active --filter priority=0
-ragtag query task --show-attributes id,title,status
 ragtag query task --count
 ```
 
-### `ragtag tasks <subcommand>`
+### `ragtag task <subcommand>`
 
 Task management commands. See the [task management guide](docs/task-management.md) for full details.
 
@@ -107,7 +106,10 @@ Task management commands. See the [task management guide](docs/task-management.m
 | --- | --- |
 | `create` | Generate a new `@task(...)` string |
 | `list` | List tasks found in files |
+| `get` | Look up a task by ID or title |
+| `summary` | Display a grouped summary of tasks |
 | `set-status` | Update a task's status |
+| `set-priority` | Update a task's priority |
 | `set-time` | Update a task's `time_spent` |
 | `set-owner` | Update a task's owner |
 | `set-parent` | Update a task's parent ID |

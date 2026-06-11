@@ -82,7 +82,7 @@ pub trait TagExtension {
     /// Brief description for help text.
     fn description(&self) -> &str;
 
-    /// YAML config key (e.g., "tasks"). `None` if no config needed.
+    /// YAML config section key (e.g., "tasks"). `None` if no config needed.
     fn config_key(&self) -> Option<&str>;
     /// Initialize with config data.
     fn init(&mut self, config_value: Option<&serde_yml::Value>) -> Result<(), RagtagError>;
@@ -263,9 +263,9 @@ mod tests {
     fn test_get_by_command_name() {
         let mut registry = ExtensionRegistry::new();
         registry
-            .register(Box::new(MockExtension::with_names("task", "tasks")))
+            .register(Box::new(MockExtension::with_names("task", "task")))
             .unwrap();
-        assert!(registry.get_by_command_name("tasks").is_some());
+        assert!(registry.get_by_command_name("task").is_some());
     }
 
     #[test]

@@ -13,10 +13,12 @@ pub mod set_status;
 pub mod set_time;
 pub mod summary;
 
+use std::io::BufRead;
 use std::path::Path;
 
 use super::config::TaskConfig;
 use super::models::TaskTag;
+use super::output::format_task_detail;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -42,18 +44,17 @@ pub fn dispatch(
     }
 }
 
-/// Finds a task by ID (exact or prefix) across all discovered files.
+/// Collects all tasks from discovered files.
 ///
-/// Returns the task and the file content it was found in.
-/// Errors if no task is found, or if multiple tasks match the prefix.
-pub fn find_task_by_id(
-    id: &str,
+/// Walks the file tree, parses tags, and returns all valid `TaskTag` instances.
+/// Invalid or unreadable files are skipped with a warning.
+pub fn collect_tasks(
     path: &Path,
     config: &TaskConfig,
     ctx: &mut ExtensionContext,
-) -> Result<(TaskTag, String), RagtagError> {
+) -> Result<Vec<TaskTag>, RagtagError> {
     let files = ctx.walker.walk(path)?;
-    let mut all_tasks: Vec<(TaskTag, String)> = Vec::new();
+    let mut tasks: Vec<TaskTag> = Vec::new();
 
     for file_path in &files {
         let content = match std::fs::read_to_string(file_path) {
@@ -66,8 +67,91 @@ pub fn find_task_by_id(
         let tags = ctx.parser.parse_file(&content, file_path);
         for tag in &tags {
             if tag.name == config.tag_name {
-                match TaskTag::from_tag(tag, config, &content) {
-                    Ok(task) => all_tasks.push((task, content.clone())),
+                match TaskTag::from_tag(tag, config) {
+                    Ok(task) => tasks.push(task),
+                    Err(_) => continue,
+                }
+            }
+        }
+    }
+
+    Ok(tasks)
+}
+
+/// Prompts the user interactively for a new value in a `set-*` command.
+///
+/// Prints the current task detail to stderr, writes the prompt label,
+/// flushes, and reads a line from stdin.
+pub fn prompt_for_value(
+    ctx: &mut ExtensionContext,
+    task: &TaskTag,
+    config: &TaskConfig,
+    label: &str,
+) -> Result<String, RagtagError> {
+    writeln!(ctx.stderr, "Current task:").map_err(RagtagError::Io)?;
+    writeln!(
+        ctx.stderr,
+        "{}",
+        format_task_detail(task, config, &ctx.color_mode)
+    )
+    .map_err(RagtagError::Io)?;
+    write!(ctx.stderr, "{label}").map_err(RagtagError::Io)?;
+    ctx.stderr.flush().map_err(RagtagError::Io)?;
+
+    let stdin = std::io::stdin();
+    let mut lines = stdin.lock().lines();
+    match lines.next() {
+        Some(Ok(line)) => Ok(line.trim().to_string()),
+        _ => Err(RagtagError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "no input",
+        ))),
+    }
+}
+
+/// Finds a task by ID (exact or prefix) across all discovered files.
+///
+/// Returns the task and the file content it was found in.
+/// Errors if no task is found, or if multiple tasks match the prefix.
+///
+/// Title search is intentionally excluded here. Mutation commands
+/// (`set-*`) must operate by ID only for safety — matching by title
+/// substring could inadvertently modify the wrong task when titles
+/// are ambiguous. Read-only lookup by title is available via
+/// `search_tasks` in the `get` module.
+///
+/// NOTE: This function intentionally duplicates the file-walking logic
+/// from `collect_tasks`. The duplication is deliberate because
+/// `find_task_by_id` tracks the source file path for each task and
+/// performs a targeted file re-read when the match is found, whereas
+/// `collect_tasks` only collects `TaskTag` values. The two functions
+/// have different return types and ownership needs, so merging them
+/// would add complexity without meaningful benefit.
+pub fn find_task_by_id(
+    id: &str,
+    path: &Path,
+    config: &TaskConfig,
+    ctx: &mut ExtensionContext,
+) -> Result<(TaskTag, String), RagtagError> {
+    let files = ctx.walker.walk(path)?;
+
+    // Collect tasks with their source file path (not content) to avoid
+    // cloning file content for every task in every file.
+    let mut all_tasks: Vec<(TaskTag, std::path::PathBuf)> = Vec::new();
+
+    for file_path in &files {
+        let content = match std::fs::read_to_string(file_path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("skipping unreadable file {}: {}", file_path.display(), e);
+                continue;
+            }
+        };
+        let tags = ctx.parser.parse_file(&content, file_path);
+        for tag in &tags {
+            if tag.name == config.tag_name {
+                match TaskTag::from_tag(tag, config) {
+                    Ok(task) => all_tasks.push((task, file_path.clone())),
                     Err(e) => {
                         log::warn!(
                             "failed to parse task tag at {}:{}: {}",
@@ -82,34 +166,55 @@ pub fn find_task_by_id(
     }
 
     // Try exact match first
-    let exact: Vec<(TaskTag, String)> = all_tasks
+    let exact_idx: Vec<usize> = all_tasks
         .iter()
-        .filter(|(t, _)| t.id == id)
-        .cloned()
+        .enumerate()
+        .filter(|(_, (t, _))| t.id == id)
+        .map(|(i, _)| i)
         .collect();
-    if exact.len() == 1 {
-        return Ok(exact.into_iter().next().expect("guaranteed by check"));
+    if exact_idx.len() == 1 {
+        let (task, file_path) = all_tasks
+            .into_iter()
+            .nth(exact_idx[0])
+            .expect("guaranteed by check");
+        // Re-read the file to return its content. This is a deliberate
+        // double-read (TOCTOU) to avoid keeping all file contents in memory
+        // during the initial scan. The file is assumed stable between reads,
+        // which is reasonable for a single-user CLI tool.
+        let content = std::fs::read_to_string(&file_path).map_err(RagtagError::Io)?;
+        return Ok((task, content));
     }
 
     // Try prefix match
-    let prefix: Vec<(TaskTag, String)> = all_tasks
-        .into_iter()
-        .filter(|(t, _)| t.id.starts_with(id))
+    let prefix_idx: Vec<usize> = all_tasks
+        .iter()
+        .enumerate()
+        .filter(|(_, (t, _))| t.id.starts_with(id))
+        .map(|(i, _)| i)
         .collect();
 
-    match prefix.len() {
+    match prefix_idx.len() {
         0 => Err(RagtagError::ExtensionError {
             extension_name: "Task Manager".to_string(),
             message: format!(
                 "task not found with id \"{id}\"\nhint: run 'ragtag task list' to see all tasks"
             ),
         }),
-        1 => Ok(prefix.into_iter().next().expect("guaranteed by match arm")),
+        1 => {
+            let (task, file_path) = all_tasks
+                .into_iter()
+                .nth(prefix_idx[0])
+                .expect("guaranteed by match arm");
+            // Re-read the file (same TOCTOU rationale as the exact-match
+            // branch above — avoids holding all file contents in memory).
+            let content = std::fs::read_to_string(&file_path).map_err(RagtagError::Io)?;
+            Ok((task, content))
+        }
         _ => {
-            let mut details = format!(
-                "Multiple tasks match id prefix \"{id}\". Be more specific:\n"
-            );
-            for (t, _) in &prefix {
+            let mut details =
+                format!("Multiple tasks match id prefix \"{id}\". Be more specific:\n");
+            for &i in &prefix_idx {
+                let (ref t, _) = all_tasks[i];
                 details.push_str(&format!(
                     "  {} {} {}\n",
                     t.id,

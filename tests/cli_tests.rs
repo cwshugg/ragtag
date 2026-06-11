@@ -341,6 +341,36 @@ fn test_tasks_set_parent() {
         .stdout(predicate::str::contains("Parent ID: parent123"));
 }
 
+#[test]
+fn test_tasks_set_priority() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+    ).unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "set-priority",
+            "--id",
+            "testid1234567890",
+            "--priority",
+            "2",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Priority: 2"));
+
+    // Verify file was actually modified
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(content.contains("priority=2"));
+}
+
 // === Tasks Get ===
 
 #[test]
@@ -369,6 +399,17 @@ fn test_tasks_get_by_title() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Title: Design API"));
+}
+
+#[test]
+fn test_tasks_get_by_prefix() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args(["--no-color", "task", "get", "a1b2c3", "--path", &path])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Title: Design API"))
+        .stdout(predicate::str::contains("ID: a1b2c3d4e5f67890"));
 }
 
 #[test]
@@ -613,4 +654,187 @@ fn test_full_workflow() {
     let final_content = fs::read_to_string(&file).unwrap();
     assert!(final_content.contains("\"active\""));
     assert!(final_content.contains("\"alice\""));
+}
+
+// === Flag coverage ===
+
+#[test]
+fn test_task_list_all_shows_done() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"done1234567890ab\", title=\"Done Task\", status=\"done\", ttc_estimate=1, time_units=\"hours\")\n\
+         @task(id=\"active12345678ab\", title=\"Active Task\", status=\"active\", ttc_estimate=2, time_units=\"hours\")",
+    ).unwrap();
+
+    // Without --all, done task should be excluded
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Active Task"))
+        .stdout(predicate::str::contains("Done Task").not());
+
+    // With --all, done task should be included
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--all",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Done Task"))
+        .stdout(predicate::str::contains("Active Task"));
+}
+
+#[test]
+fn test_task_list_filter_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"aaa1234567890ab\", title=\"Active Task\", status=\"active\", ttc_estimate=1, time_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Blocked Task\", status=\"blocked\", ttc_estimate=2, time_units=\"hours\")",
+    ).unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--filter",
+            "status=active",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Active Task"))
+        .stdout(predicate::str::contains("Blocked Task").not());
+}
+
+#[test]
+fn test_task_list_sort_title() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"zzz1234567890ab\", title=\"Zebra\", status=\"active\", ttc_estimate=1, time_units=\"hours\")\n\
+         @task(id=\"aaa1234567890ab\", title=\"Apple\", status=\"active\", ttc_estimate=2, time_units=\"hours\")",
+    ).unwrap();
+
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--sort",
+            "title",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    let apple_pos = output_str.find("Apple").expect("should contain Apple");
+    let zebra_pos = output_str.find("Zebra").expect("should contain Zebra");
+    assert!(
+        apple_pos < zebra_pos,
+        "Apple should appear before Zebra when sorted by title"
+    );
+}
+
+#[test]
+fn test_task_list_reverse() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"aaa1234567890ab\", title=\"Apple\", status=\"active\", priority=1, ttc_estimate=1, time_units=\"hours\")\n\
+         @task(id=\"zzz1234567890ab\", title=\"Zebra\", status=\"active\", priority=2, ttc_estimate=2, time_units=\"hours\")",
+    ).unwrap();
+
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--sort",
+            "title",
+            "--reverse",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    let apple_pos = output_str.find("Apple").expect("should contain Apple");
+    let zebra_pos = output_str.find("Zebra").expect("should contain Zebra");
+    assert!(
+        zebra_pos < apple_pos,
+        "Zebra should appear before Apple when sorted by title reversed"
+    );
+}
+
+#[test]
+fn test_task_summary_group_owner() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "summary",
+            "--group",
+            "owner",
+            "--all",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Owner: alice"))
+        .stdout(predicate::str::contains("Owner: bob"));
+}
+
+#[test]
+fn test_set_time_negative_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+    ).unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "set-time",
+            "--id",
+            "testid1234567890",
+            "--time=-5",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("non-negative"));
 }
