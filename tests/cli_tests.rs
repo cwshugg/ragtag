@@ -935,3 +935,93 @@ fn test_ragtag_config_env_var_missing_file() {
         .assert()
         .failure();
 }
+
+// === Config Command ===
+
+#[test]
+fn test_config_help_shown() {
+    ragtag()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("config"));
+}
+
+#[test]
+fn test_config_get_max_file_size() {
+    ragtag()
+        .args(["config", "get", "max_file_size"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("10485760"));
+}
+
+#[test]
+fn test_config_get_respect_gitignore() {
+    ragtag()
+        .args(["config", "get", "respect_gitignore"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("true"));
+}
+
+#[test]
+fn test_config_get_output_color() {
+    ragtag()
+        .args(["config", "get", "output.color"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("auto"));
+}
+
+#[test]
+fn test_config_get_tasks_tag_name() {
+    ragtag()
+        .args(["config", "get", "tasks.tag_name"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("task"));
+}
+
+#[test]
+fn test_config_get_tasks_status_keywords_done() {
+    ragtag()
+        .args(["config", "get", "tasks.status_keywords.done"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("done"))
+        .stdout(predicate::str::contains("finished"))
+        .stdout(predicate::str::contains("complete"))
+        .stdout(predicate::str::contains("completed"));
+}
+
+#[test]
+fn test_config_get_unknown_key() {
+    ragtag()
+        .args(["config", "get", "nonexistent_field"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown config key"));
+}
+
+#[test]
+fn test_config_get_with_custom_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join(".ragtag.yaml");
+    fs::write(
+        &config_path,
+        "tasks:\n  tag_name: \"custom_tag\"\n  default_owner: \"alice\"\n",
+    )
+    .unwrap();
+    ragtag()
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "config",
+            "get",
+            "tasks.tag_name",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("custom_tag"));
+}

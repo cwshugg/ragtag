@@ -97,6 +97,48 @@ notes/bugs.md:42: @todo(priority=0, owner="bob")
 
 Numeric comparisons parse both sides as `f64`. If parsing fails, the comparison returns false.
 
+### `config`
+
+Inspect ragtag configuration. Requires a subcommand.
+
+```
+ragtag config <SUBCOMMAND>
+```
+
+#### `config get`
+
+Print the value of a config field using dot-notation. Useful for external tools and editor plugins that need to read ragtag configuration programmatically.
+
+```
+ragtag config get <KEY>
+```
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `KEY` | Yes | Config key in dot-notation (e.g., `max_depth`, `tasks.tag_name`, `tasks.status_keywords.done`) |
+
+**Output:**
+
+Prints the resolved value to stdout. Strings are printed without quotes, numbers and booleans as-is, sequences in bracket notation, and mappings in brace notation.
+
+**Examples:**
+
+```bash
+ragtag config get max_depth             # null (when unset)
+ragtag config get max_file_size         # 10485760
+ragtag config get respect_gitignore     # true
+ragtag config get output.color          # auto
+ragtag config get tasks.tag_name        # task
+ragtag config get tasks.default_owner   # me
+ragtag config get ignore_patterns       # ["*.git", "node_modules"]
+ragtag config get tasks.status_keywords.done  # ["done", "finished", "complete", "completed"]
+ragtag config get nonexistent_field     # error: unknown config key "nonexistent_field"
+```
+
+Extension configs (like `tasks`) are resolved with defaults applied, so all fields are available even if not explicitly set in the YAML file.
+
 ### `task`
 
 Track and manage tasks embedded in plain text files. Requires a subcommand.

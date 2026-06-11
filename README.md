@@ -98,6 +98,16 @@ ragtag query task --filter status=active --filter priority=0
 ragtag query task --count
 ```
 
+### `ragtag config get <KEY>`
+
+Prints the value of a config field using dot-notation. Useful for scripts and editor plugins that need to read ragtag configuration without parsing YAML.
+
+```bash
+ragtag config get max_depth
+ragtag config get tasks.tag_name
+ragtag config get tasks.status_keywords.done
+```
+
 ### `ragtag task <subcommand>`
 
 Task management commands. See the [task management guide](docs/task-management.md) for full details.

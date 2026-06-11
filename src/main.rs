@@ -57,6 +57,24 @@ fn run() -> Result<(), RagtagError> {
 
     // Dispatch
     match matches.subcommand() {
+        Some(("config", config_matches)) => match config_matches.subcommand() {
+            Some(("get", get_matches)) => {
+                let key = get_matches
+                    .get_one::<String>("key")
+                    .expect("key is required");
+                let value = commands::config::run_get(key, &app_config)?;
+                println!("{value}");
+                Ok(())
+            }
+            _ => {
+                let _ = cli::build_cli(&registry)
+                    .find_subcommand_mut("config")
+                    .expect("config subcommand exists")
+                    .print_help();
+                println!();
+                Ok(())
+            }
+        },
         Some(("summary", sub_m)) => {
             let mut stdout = std::io::stdout();
             commands::summary::run(sub_m, &app_config, &registry, &color_mode, &mut stdout)

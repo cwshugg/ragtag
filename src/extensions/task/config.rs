@@ -3,7 +3,7 @@
 //! Defines `TaskConfig` and `StatusKeywords` with YAML deserialization
 //! and default values matching the project requirements.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::RagtagError;
 
@@ -11,7 +11,7 @@ use crate::error::RagtagError;
 pub const ALLOWED_TIME_UNITS: &[&str] = &["hours", "days", "weeks"];
 
 /// Configuration for the task extension.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TaskConfig {
     /// The tag name used for tasks (default: "task").
@@ -115,7 +115,7 @@ impl TaskConfig {
 /// Status keywords grouped by category.
 ///
 /// Each category maps to a color for output formatting.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct StatusKeywords {
     pub done: Vec<String>,

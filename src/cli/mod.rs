@@ -59,6 +59,22 @@ pub fn build_cli(registry: &ExtensionRegistry) -> Command {
                 .global(true),
         )
         .subcommand(
+            Command::new("config")
+                .about("Inspect ragtag configuration")
+                .subcommand(
+                    Command::new("get")
+                        .about("Print the value of a config field")
+                        .arg(
+                            Arg::new("key")
+                                .help(
+                                    "Config key in dot-notation (e.g., max_depth, tasks.tag_name)",
+                                )
+                                .required(true)
+                                .index(1),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("summary")
                 .about("Show a summary of all tags found")
                 .arg(

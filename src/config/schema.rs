@@ -4,7 +4,7 @@
 //! used for YAML deserialization. All fields have defaults so that
 //! an empty config file is valid.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// The maximum number of ignore patterns allowed.
@@ -17,7 +17,8 @@ const MAX_PATTERN_LENGTH: usize = 1024;
 const DEFAULT_MAX_FILE_SIZE: u64 = 10_485_760;
 
 /// Color mode for output.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ColorMode {
     /// Auto-detect based on terminal capabilities.
     #[default]
@@ -46,7 +47,7 @@ impl<'de> Deserialize<'de> for ColorMode {
 }
 
 /// Output configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct OutputConfig {
     /// Color mode.
@@ -64,7 +65,7 @@ impl Default for OutputConfig {
 /// The core ragtag configuration.
 ///
 /// All fields have defaults, so a minimal or empty YAML file is valid.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     /// Regex patterns for file paths to ignore.
