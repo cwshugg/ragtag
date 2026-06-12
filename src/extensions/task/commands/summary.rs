@@ -18,9 +18,19 @@ use crate::error::RagtagError;
 use crate::extensions::task::filter::{evaluate_filter, parse_filter_expr, validate_filter_expr};
 use crate::extensions::ExtensionContext;
 use crate::output::format::{colorize_path, strip_dot_slash};
+use terminal_size::{terminal_size, Width};
 
 /// Column headers for the summary table.
 const HEADERS: &[&str] = &["Path", "Title", "Owner", "Status", "Priority", "Time", "ID"];
+
+/// Minimum title width before we stop shrinking.
+const MIN_TITLE_WIDTH: usize = 20;
+
+/// Fallback title width when terminal size cannot be detected.
+const FALLBACK_TITLE_WIDTH: usize = 60;
+
+/// Number of spaces between each column.
+const COLUMN_GAP: usize = 2;
 
 /// Runs the summary command.
 pub fn run(
@@ -108,7 +118,26 @@ fn get_group_key(task: &TaskTag, group_by: &str) -> String {
 }
 
 /// Maximum display width for the title column in summary tables.
-const MAX_TITLE_WIDTH: usize = 60;
+/// Computes the maximum title column width by subtracting the widths of all
+/// other columns (plus inter-column gaps) from the terminal width. Falls back
+/// to `FALLBACK_TITLE_WIDTH` when the terminal size cannot be determined.
+fn compute_title_width(non_title_widths: &[usize]) -> usize {
+    let term_width = terminal_size()
+        .map(|(Width(w), _)| w as usize)
+        .unwrap_or(0);
+
+    if term_width == 0 {
+        return FALLBACK_TITLE_WIDTH;
+    }
+
+    // Title is at index 1 in HEADERS. Sum widths of all other columns.
+    let other_width: usize = non_title_widths.iter().sum::<usize>();
+    // Total gaps: (num_columns - 1) * COLUMN_GAP
+    let total_gaps = (non_title_widths.len()) * COLUMN_GAP;
+    let available = term_width.saturating_sub(other_width + total_gaps);
+
+    available.max(MIN_TITLE_WIDTH)
+}
 
 /// Truncates a string to `max_len` characters, appending "..." if truncated.
 fn truncate_title(title: &str, max_len: usize) -> String {
@@ -137,13 +166,7 @@ fn format_summary_table(
     /// A pair of (plain_text, colored_text) cell values for one row.
     type RowPair = (Vec<String>, Vec<String>);
 
-    // Build rows for all groups and compute column widths globally.
-    // Index 0 is Path — excluded from fixed-width padding.
-    let mut all_group_rows: Vec<(&String, Vec<RowPair>)> = Vec::new();
-    let mut global_widths: Vec<usize> = HEADERS.iter().map(|h| h.len()).collect();
-
     // Collect group keys in the appropriate sort order.
-    // For priority, sort numerically; fall back to lexicographic for non-numeric keys.
     let sorted_keys: Vec<&String> = if group_by == "priority" {
         let mut keys: Vec<&String> = groups.keys().collect();
         keys.sort_by(|a, b| match (a.parse::<i64>(), b.parse::<i64>()) {
@@ -155,17 +178,49 @@ fn format_summary_table(
         groups.keys().collect()
     };
 
+    // First pass: build rows WITHOUT title truncation to measure non-title
+    // column widths. Title column index is 1.
+    let title_col: usize = 1;
+    let mut all_group_rows: Vec<(&String, Vec<RowPair>)> = Vec::new();
+    let mut global_widths: Vec<usize> = HEADERS.iter().map(|h| h.len()).collect();
+
     for key in &sorted_keys {
         let tasks = &groups[*key];
-        let rows = build_rows(tasks, config, color_mode);
+        let rows = build_rows(tasks, config, color_mode, usize::MAX);
         for (plain, _) in &rows {
             for (i, val) in plain.iter().enumerate() {
-                if i < global_widths.len() && val.chars().count() > global_widths[i] {
+                if i < global_widths.len() && i != title_col
+                    && val.chars().count() > global_widths[i]
+                {
                     global_widths[i] = val.chars().count();
                 }
             }
         }
         all_group_rows.push((key, rows));
+    }
+
+    // Compute the dynamic title width from terminal width minus all other
+    // columns.
+    let non_title_widths: Vec<usize> = global_widths
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != title_col)
+        .map(|(_, w)| *w)
+        .collect();
+    let max_title = compute_title_width(&non_title_widths);
+
+    // Second pass: truncate titles and recompute the title column width.
+    global_widths[title_col] = HEADERS[title_col].len();
+    for (_, rows) in &mut all_group_rows {
+        for (plain, colored) in rows.iter_mut() {
+            let truncated = truncate_title(&plain[title_col], max_title);
+            plain[title_col] = truncated.clone();
+            colored[title_col] = truncated;
+            let w = plain[title_col].chars().count();
+            if w > global_widths[title_col] {
+                global_widths[title_col] = w;
+            }
+        }
     }
 
     let mut output = String::new();
@@ -293,11 +348,12 @@ fn build_rows(
     tasks: &[&TaskTag],
     config: &TaskConfig,
     color_mode: &ColorMode,
+    max_title_width: usize,
 ) -> Vec<(Vec<String>, Vec<String>)> {
     tasks
         .iter()
         .map(|task| {
-            let title = truncate_title(&task.title, MAX_TITLE_WIDTH);
+            let title = truncate_title(&task.title, max_title_width);
             let time = format_time(task);
             let path_plain = strip_dot_slash(&task.location.file_path.display().to_string());
             let path_colored = colorize_path(&task.location.file_path, color_mode);
