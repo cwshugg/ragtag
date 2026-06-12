@@ -44,6 +44,7 @@ pub fn build_cli(registry: &ExtensionRegistry) -> Command {
         .version(env!("CARGO_PKG_VERSION"))
         .about("A CLI tool for parsing @tag(attr=value) from plain text files")
         .propagate_version(true)
+        .infer_subcommands(true)
         .arg(
             Arg::new("config")
                 .long("config")

@@ -12,6 +12,7 @@ pub mod deactivate;
 pub mod get;
 pub mod get_attr;
 pub mod list;
+pub mod prioritize;
 pub mod set_attr;
 pub mod status_change;
 pub mod summary;
@@ -39,6 +40,7 @@ pub fn dispatch(
         Some(("deactivate", sub_m)) => deactivate::run(sub_m, config, ctx),
         Some(("get", sub_m)) => get::run(sub_m, config, ctx),
         Some(("list", sub_m)) => list::run(sub_m, config, ctx),
+        Some(("prioritize", sub_m)) => prioritize::run(sub_m, config, ctx),
         Some(("summary", sub_m)) => summary::run(sub_m, config, ctx),
         Some(("get-attr", sub_m)) => get_attr::run(sub_m, config, ctx),
         Some(("set-attr", sub_m)) => set_attr::run(sub_m, config, ctx),

@@ -569,6 +569,58 @@ ragtag task abandon a1b2c3d4e5f67890
 ragtag task abandon a1b2c3d4e5f67890 --no-edit
 ```
 
+#### `task prioritize`
+
+Set a task's priority to a specific non-negative integer value in one command.
+
+```bash
+ragtag task prioritize <PRIORITY> <ID> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `PRIORITY` | Yes | New priority value — non-negative integer; `0` is highest/most urgent |
+| `ID` | Yes | Task ID or ID prefix |
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--no-edit` | — | Don't modify the file; print the updated `@task(...)` string to stdout instead |
+
+**Behavior:**
+
+* Finds the task by ID across all scanned files
+* Validates the priority argument is a non-negative integer (`u32`); returns a clear error if not
+* Sets `priority` to the supplied value
+* Automatically sets `time_last_updated` to the current UTC time (ISO 8601); adds the field if it doesn't already exist
+* Edits the source file in-place (atomic write via temp file)
+* Prints a confirmation message: `Prioritized task <ID> (priority → <PRIORITY>)`
+
+**With `--no-edit`:**
+
+* Does not modify the file
+* Prints the complete reconstructed `@task(...)` string with the priority and timestamp updated
+* Useful for editor plugin integration (e.g., Vim plugin injects the string into the buffer)
+
+**Examples:**
+
+```bash
+# Set priority to 0 (highest urgency) for a task
+ragtag task prioritize 0 a1b2c3d4e5f67890
+
+# Set priority using an ID prefix
+ragtag task prioritize 2 a1b2c3
+
+# Print the updated tag string without modifying the file
+ragtag task prioritize 1 a1b2c3d4e5f67890 --no-edit
+```
+
+---
+
 ## Exit Codes
 
 | Code | Meaning |

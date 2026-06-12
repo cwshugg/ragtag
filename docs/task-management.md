@@ -432,6 +432,29 @@ On success, prints: `Abandoned task a1b2c3d4e5f67890 (status → "abandoned")`.
 | `--path <PATH>` | Search path (default: `.`) |
 | `--no-edit` | Do not modify the file; print the updated `@task(...)` string instead |
 
+### `task prioritize`
+
+Sets a task's `priority` to a non-negative integer in one command — no need to use `set-attr priority`.
+
+```bash
+ragtag task prioritize 0 a1b2c3d4e5f67890
+ragtag task prioritize 2 a1b2c3          # prefix match
+ragtag task prioritize 1 a1b2c3d4e5f67890 --no-edit
+```
+
+Note the argument order: **priority first, then ID**.
+
+* Validates the supplied priority is a non-negative integer (`0`, `1`, `2`, …); returns an error for non-numeric or negative values
+* Automatically updates `time_last_updated` to the current UTC time
+* Prints a confirmation: `Prioritized task a1b2c3d4e5f67890 (priority → 0)`
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--path <PATH>` | Search path (default: `.`) |
+| `--no-edit` | Do not modify the file; print the updated `@task(...)` string instead |
+
 ## Workflow Example
 
 1. **Create a task** and paste it into your notes:

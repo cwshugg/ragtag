@@ -2831,3 +2831,228 @@ fn test_interactive_all_fields_valid() {
     assert!(out.contains("worktime_units=\"hours\""), "stdout: {out}");
     assert!(out.contains("pid=\"parent123\""), "stdout: {out}");
 }
+
+// === task prioritize ===
+
+#[test]
+fn test_task_prioritize_sets_priority() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"priotest1234567a\", title=\"Priority Task\", worktime_estimate=2, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "prioritize",
+            "3",
+            "priotest1234567a",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Prioritized task"))
+        .stdout(predicate::str::contains("priotest1234567a"))
+        .stdout(predicate::str::contains("3"));
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("priority=3"),
+        "Expected priority=3 in file after prioritize, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_prioritize_auto_updates_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    // Task does NOT have time_last_updated — it should be added.
+    fs::write(
+        &file,
+        "@task(id=\"priotest2345678b\", title=\"Add timestamp\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "prioritize",
+            "0",
+            "priotest2345678b",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("time_last_updated=\"20"),
+        "Expected time_last_updated to be added, got:\n{content}"
+    );
+    assert!(
+        content.contains("priority=0"),
+        "Expected priority=0 in file, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_prioritize_no_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    let original =
+        "@task(id=\"priotest3456789c\", title=\"No edit\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")";
+    fs::write(&file, original).unwrap();
+
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "prioritize",
+            "5",
+            "priotest3456789c",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    assert!(
+        output_str.contains("priority=5"),
+        "Expected priority=5 in --no-edit output, got:\n{output_str}"
+    );
+    assert!(
+        output_str.contains("time_last_updated=\"20"),
+        "Expected auto-populated time_last_updated in --no-edit output, got:\n{output_str}"
+    );
+
+    let file_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        file_content, original,
+        "File should be unchanged with --no-edit"
+    );
+}
+
+#[test]
+fn test_task_prioritize_invalid_priority_non_numeric() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"priotest4567890d\", title=\"Bad priority\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "prioritize",
+            "abc",
+            "priotest4567890d",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid priority"));
+}
+
+#[test]
+fn test_task_prioritize_invalid_priority_negative() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"priotest5678901e\", title=\"Negative priority\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "prioritize",
+            "-1",
+            "priotest5678901e",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_task_prioritize_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"priotest6789012f\", title=\"Existing\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "prioritize",
+            "1",
+            "nonexistentid999",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("task not found"));
+}
+
+#[test]
+fn test_task_prioritize_prefix_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"priopfx7890123ab\", title=\"Prefix test\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "prioritize",
+            "2",
+            "priopfx",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("priority=2"),
+        "Prefix match should have set priority=2: {content}"
+    );
+}
+
+#[test]
+fn test_tasks_help_includes_prioritize() {
+    ragtag()
+        .args(["task", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("prioritize"));
+}
