@@ -94,6 +94,8 @@ pub fn run(
     config: &TaskConfig,
     ctx: &mut ExtensionContext,
 ) -> Result<(), RagtagError> {
+    // SAFETY: clap enforces that "id" is a required positional argument, so
+    // `get_one` will always return `Some` here; the `.expect` is unreachable.
     let id = matches.get_one::<String>("id").expect("required argument");
     let attr = matches
         .get_one::<String>("attr")

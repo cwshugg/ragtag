@@ -46,7 +46,7 @@ cargo build --release
         title="Refactor parser module",
         status="active",
         worktime_estimate=4,
-        workworktime_units="hours"
+        worktime_units="hours"
     )
     ```
 

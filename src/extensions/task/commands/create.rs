@@ -122,7 +122,14 @@ pub fn run(
 
     let mut builder = TaskTagBuilder::new();
     builder.id = Some(id);
-    builder.title = matches.get_one::<String>("title").cloned();
+    // Treat `--title ""` (empty or whitespace-only) the same as omitting
+    // `--title` — both routes fall through to interactive mode so that the
+    // behavior matches the interactive `prompt_required` which rejects empty
+    // titles.
+    builder.title = matches
+        .get_one::<String>("title")
+        .filter(|s| !s.trim().is_empty())
+        .cloned();
     builder.description = matches.get_one::<String>("description").cloned();
     builder.owner = matches.get_one::<String>("owner").cloned();
     builder.status = matches.get_one::<String>("status").cloned();

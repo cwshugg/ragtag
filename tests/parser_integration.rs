@@ -63,6 +63,10 @@ fn test_edge_cases_multiline() {
 }
 
 #[test]
+// 3.14 in this test is intentional fixture data (a raw literal from the test
+// file), not the mathematical constant π — the approx_constant lint does not
+// apply here.
+#[allow(clippy::approx_constant)]
 fn test_edge_cases_numeric_bases() {
     let tags = parse_fixture("edge_cases.txt");
     let numbers: Vec<_> = tags.iter().filter(|t| t.name == "numbers").collect();

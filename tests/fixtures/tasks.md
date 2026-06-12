@@ -10,12 +10,12 @@
     status="active",
     priority=1,
     worktime_estimate=8,
-    workworktime_units="hours"
+    worktime_units="hours"
 )
 
 Some notes about the design...
 
-@task(id="1234567890abcdef", title="Write tests", status="new", priority=2, worktime_estimate=4, workworktime_units="hours")
+@task(id="1234567890abcdef", title="Write tests", status="new", priority=2, worktime_estimate=4, worktime_units="hours")
 
 ## Sprint 2
 
@@ -28,5 +28,5 @@ Some notes about the design...
     priority=0,
     worktime_estimate=2.5,
     worktime_spent=1.5,
-    workworktime_units="hours"
+    worktime_units="hours"
 )

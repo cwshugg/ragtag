@@ -74,7 +74,7 @@ pub fn validate_task_tag(tag: &Tag, config: &TaskConfig) -> Vec<ValidationMessag
             if val.as_float().is_none() {
                 messages.push(ValidationMessage {
                     level: ValidationLevel::Warning,
-                    message: format!("\"{field}\" should be a numeric value"),
+                    message: format!("\"{field}\" should be a numeric value — current value will be ignored"),
                     location: Some(tag.location.clone()),
                 });
             }

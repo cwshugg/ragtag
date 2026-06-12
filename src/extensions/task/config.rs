@@ -70,6 +70,22 @@ impl TaskConfig {
             });
         }
 
+        // Warn once at config-load time about any unknown category names in
+        // `exclude_status_categories`.  `get_excluded_keywords()` stays silent
+        // so the message is never repeated on every list/summary invocation.
+        const VALID_CATEGORIES: &[&str] =
+            &["done", "active", "blocked", "abandoned", "inactive"];
+        for cat in &self.exclude_status_categories {
+            if !VALID_CATEGORIES.contains(&cat.as_str()) {
+                eprintln!(
+                    "ragtag warning: unknown status category \"{}\" in \
+                     exclude_status_categories (valid values: done, active, blocked, \
+                     abandoned, inactive) — entry will be ignored",
+                    cat
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -87,7 +103,9 @@ impl TaskConfig {
     /// Returns the list of status keywords that belong to excluded categories.
     ///
     /// Looks up each category name in `exclude_status_categories` and collects
-    /// all individual keywords from those categories.
+    /// all individual keywords from those categories.  Unknown category names
+    /// are silently ignored here — they are already reported once by
+    /// `validate()` at config-load time.
     pub fn get_excluded_keywords(&self) -> Vec<String> {
         let mut excluded = Vec::new();
         for cat in &self.exclude_status_categories {
@@ -97,7 +115,7 @@ impl TaskConfig {
                 "blocked" => excluded.extend(self.status_keywords.blocked.iter().cloned()),
                 "abandoned" => excluded.extend(self.status_keywords.abandoned.iter().cloned()),
                 "inactive" => excluded.extend(self.status_keywords.inactive.iter().cloned()),
-                _ => {}
+                _ => {} // unknown categories warned about in validate()
             }
         }
         excluded
@@ -254,9 +272,41 @@ default_owner: "alice"
 
     #[test]
     fn test_get_excluded_keywords_empty() {
-        let mut config = TaskConfig::default();
-        config.exclude_status_categories = vec![];
+        let config = TaskConfig {
+            exclude_status_categories: vec![],
+            ..TaskConfig::default()
+        };
         let excluded = config.get_excluded_keywords();
         assert!(excluded.is_empty());
+    }
+
+    #[test]
+    fn test_get_excluded_keywords_unknown_category_is_silent() {
+        // Unknown categories must be silently skipped by get_excluded_keywords()
+        // (the warning is emitted once, at config-load time, by validate()).
+        let config = TaskConfig {
+            exclude_status_categories: vec!["nonexistent".to_string()],
+            ..TaskConfig::default()
+        };
+        let excluded = config.get_excluded_keywords();
+        assert!(
+            excluded.is_empty(),
+            "unknown categories should produce no keywords"
+        );
+    }
+
+    #[test]
+    fn test_validate_warns_on_unknown_category() {
+        // validate() should succeed (unknown categories are non-fatal) but the
+        // caller would have seen an eprintln warning.  We just verify it
+        // doesn't return an error.
+        let config = TaskConfig {
+            exclude_status_categories: vec!["done".to_string(), "galaxy_brain".to_string()],
+            ..TaskConfig::default()
+        };
+        assert!(
+            config.validate().is_ok(),
+            "unknown exclude category should not cause validate() to fail"
+        );
     }
 }

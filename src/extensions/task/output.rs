@@ -66,7 +66,7 @@ pub fn format_task_detail(task: &TaskTag, config: &TaskConfig, color_mode: &Colo
     if let Some(ref time_last_updated) = task.time_last_updated {
         lines.push(format!("Time Last Updated: {time_last_updated}"));
     }
-    lines.push(format!("Unit of Time: {}", task.worktime_units));
+    lines.push(format!("Worktime Units: {}", task.worktime_units));
     if let Some(ref pid) = task.pid {
         lines.push(format!("Parent ID: {pid}"));
     }

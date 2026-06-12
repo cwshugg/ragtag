@@ -123,6 +123,31 @@ fn test_tasks_create() {
 }
 
 #[test]
+fn test_tasks_create_empty_title_enters_interactive_mode() {
+    // `--title ""` must be treated the same as omitting --title and route to
+    // interactive mode.  We supply the title via stdin to confirm that the
+    // interactive prompt was actually reached and used.
+    ragtag()
+        .args(["task", "create", "--title", ""])
+        // Provide title via stdin; remaining optional fields left blank.
+        .write_stdin("Interactive Title\n\n\n\n\n\n\n\n\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("title=\"Interactive Title\""));
+}
+
+#[test]
+fn test_tasks_create_whitespace_title_enters_interactive_mode() {
+    // `--title "   "` (whitespace-only) must also fall through to interactive mode.
+    ragtag()
+        .args(["task", "create", "--title", "   "])
+        .write_stdin("Whitespace Title\n\n\n\n\n\n\n\n\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("title=\"Whitespace Title\""));
+}
+
+#[test]
 fn test_tasks_create_with_all_fields() {
     ragtag()
         .args([

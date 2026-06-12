@@ -546,13 +546,18 @@ mod tests {
     }
 
     #[test]
+    // Intentionally passes a reversed range (start > end) to verify the editor
+    // rejects it rather than silently misbehaving.  The reversed_empty_ranges
+    // lint is suppressed because the reversed range is the point of the test.
+    #[allow(clippy::reversed_empty_ranges)]
     fn test_invalid_span_reversed() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("test.txt");
         fs::write(&file, "@task(status=\"old\")").unwrap();
 
         let editor = AtomicFileEditor;
-        // start > end
+        // Intentionally passes a reversed range (start > end) to verify that
+        // the editor rejects it with an error rather than silently misbehaving.
         let result = editor.update_tag_attribute(&file, 10..5, "status", "\"new\"");
         assert!(result.is_err());
     }

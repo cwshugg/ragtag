@@ -159,7 +159,7 @@ ragtag task create [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--title <STR>` | Task title (required unless `--interactive`) |
+| `--title <STR>` | Task title; omit to trigger interactive mode |
 | `--description <STR>` | Task description |
 | `--owner <STR>` | Task owner |
 | `--status <STR>` | Task status |
@@ -169,7 +169,6 @@ ragtag task create [OPTIONS]
 | `--worktime-units <STR>` | Time units: `hours`, `days`, or `weeks` |
 | `--pid <STR>` | Parent task ID |
 | `--format <FORMAT>` | Output format: `multiline` (default) or `oneline` |
-| `-i`, `--interactive` | Launch interactive prompt for all fields |
 
 **Output:**
 

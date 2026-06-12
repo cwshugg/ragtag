@@ -31,7 +31,7 @@ A fully-specified task with all attributes:
     worktime_estimate=8,
     time_created="2026-06-12T09:00:00Z",
     time_last_updated="2026-06-12T10:00:00Z",
-    workworktime_units="hours"
+    worktime_units="hours"
 )
 ```
 
@@ -118,11 +118,7 @@ ragtag task create --title "Quick task" --format oneline
 
 **Interactive mode:**
 
-```bash
-ragtag task create -i
-```
-
-In interactive mode, you are prompted for each field. Fields with config defaults show the default value in their prompt; truly optional fields just say `(leave blank to skip)`:
+When `--title` is not provided, `ragtag task create` automatically enters interactive mode. You are prompted for each field. Fields with config defaults show the default value in their prompt; truly optional fields just say `(leave blank to skip)`:
 
 ```
 Title (required): Write documentation
@@ -142,7 +138,7 @@ Required fields (`title`) cannot be skipped. Optional fields can be left blank t
 
 | Flag | Description |
 | --- | --- |
-| `--title <STR>` | Task title (required unless interactive mode) |
+| `--title <STR>` | Task title; omit to trigger interactive mode |
 | `--worktime-estimate <NUM>` | Worktime estimate |
 | `--worktime-spent <NUM>` | Worktime already spent (default: `0`) |
 | `--worktime-units <STR>` | Time units: `hours`, `days`, or `weeks` |
@@ -152,6 +148,8 @@ Required fields (`title`) cannot be skipped. Optional fields can be left blank t
 | `--priority <NUM>` | Priority level (`0` = highest) |
 | `--pid <STR>` | Parent task ID |
 | `--format <FORMAT>` | Output format: `multiline` (default) or `oneline` |
+
+> **Config defaults:** When `--worktime-units`, `--owner`, or `--status` are omitted, ragtag falls back to the values configured in `ragtag.yml` (`default_worktime_units`, `default_owner`, and `default_status`). Out-of-the-box defaults are `hours`, `me`, and `new` respectively.
 
 > **Note:** `time_created` and `time_last_updated` are **not** accepted as flags — they are automatically set at creation time to the current UTC time and are never user-supplied.
 
