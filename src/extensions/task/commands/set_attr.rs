@@ -12,7 +12,7 @@ use super::super::config::{TaskConfig, ALLOWED_WORKTIME_UNITS};
 use super::create::escape_for_tag;
 use super::find_task_by_id;
 use crate::cli;
-use crate::edit::{modify_tag_attribute, write_file_atomically};
+use crate::edit::{edit_task_tag, write_file_atomically};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -117,19 +117,19 @@ pub fn run(
     let original_tag = &content[task.raw_span.clone()];
     let formatted_value = format_attr_for_update(attr, value);
 
-    // Apply the user's attribute change to the in-memory tag text.
-    let modified_tag1 = modify_tag_attribute(original_tag, attr, &formatted_value)?;
-    // Always append the auto-updated timestamp.
-    let modified_tag2 =
-        modify_tag_attribute(&modified_tag1, "time_last_updated", &ts_formatted)?;
+    // Apply both attribute changes in a single format-preserving edit.
+    let modified_tag = edit_task_tag(
+        original_tag,
+        &[(attr, &formatted_value), ("time_last_updated", &ts_formatted)],
+    )?;
 
     if no_edit {
-        writeln!(ctx.stdout, "{modified_tag2}").map_err(RagtagError::Io)?;
+        writeln!(ctx.stdout, "{modified_tag}").map_err(RagtagError::Io)?;
     } else {
         // Reconstruct full file content and write atomically.
         let mut new_content = String::with_capacity(content.len());
         new_content.push_str(&content[..task.raw_span.start]);
-        new_content.push_str(&modified_tag2);
+        new_content.push_str(&modified_tag);
         new_content.push_str(&content[task.raw_span.end..]);
         write_file_atomically(&task.location.file_path, &new_content)?;
         writeln!(

@@ -16,7 +16,7 @@ use super::super::config::TaskConfig;
 use super::create::escape_for_tag;
 use super::find_task_by_id;
 use crate::cli;
-use crate::edit::{modify_tag_attribute, write_file_atomically};
+use crate::edit::{edit_task_tag, write_file_atomically};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -50,20 +50,22 @@ pub fn run_status_change(
 
     let original_tag = &content[task.raw_span.clone()];
 
-    // Apply status change, then always set time_last_updated.
-    // `modify_tag_attribute` inserts the attribute when it doesn't exist,
-    // ensuring backward compatibility with older tasks.
-    let modified_tag1 = modify_tag_attribute(original_tag, "status", &status_formatted)?;
-    let modified_tag2 =
-        modify_tag_attribute(&modified_tag1, "time_last_updated", &ts_formatted)?;
+    // Apply the status change and the auto-managed timestamp in a
+    // single format-preserving edit. New attributes (e.g. an older
+    // task missing `time_last_updated`) are appended, preserving
+    // backward compatibility.
+    let modified_tag = edit_task_tag(
+        original_tag,
+        &[("status", &status_formatted), ("time_last_updated", &ts_formatted)],
+    )?;
 
     if no_edit {
-        writeln!(ctx.stdout, "{modified_tag2}").map_err(RagtagError::Io)?;
+        writeln!(ctx.stdout, "{modified_tag}").map_err(RagtagError::Io)?;
     } else {
         // Reconstruct full file content and write atomically.
         let mut new_content = String::with_capacity(content.len());
         new_content.push_str(&content[..task.raw_span.start]);
-        new_content.push_str(&modified_tag2);
+        new_content.push_str(&modified_tag);
         new_content.push_str(&content[task.raw_span.end..]);
         write_file_atomically(&task.location.file_path, &new_content)?;
         writeln!(

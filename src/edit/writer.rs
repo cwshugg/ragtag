@@ -113,8 +113,10 @@ impl FileEditor for AtomicFileEditor {
         // Extract tag text
         let tag_text = &content[tag_span.clone()];
 
-        // Re-parse tag to find attribute positions
-        let modified_tag_text = modify_tag_attribute(tag_text, attr_name, new_value)?;
+        // Use the high-level edit pipeline (format-preserving) to
+        // regenerate the tag string with the requested change.
+        let modified_tag_text =
+            crate::edit::tag_format::edit_task_tag(tag_text, &[(attr_name, new_value)])?;
 
         // Reconstruct full content
         let mut new_content = String::with_capacity(content.len());
