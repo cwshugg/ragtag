@@ -1,17 +1,18 @@
-# ragtag
+# Ragtag
 
 A Rust CLI tool for parsing, querying, and managing `@tag(attr=value)` annotations embedded in plain text files.
 
-ragtag scans your notes, documentation, and other plain text files for structured `@tag` syntax, then lets you summarize, query, and filter what it finds. It also includes a built-in **task manager** powered by `@task` tags, so you can track tasks right inside your notes.
+I created this to make tagging things in my notes quick and easy, while supporting a drop-in-anywhere structured syntax that is easy to understand.
+Ragtag will:
 
-## Features
+* Scan your notes, documentation, or *any* plain text file, for structured `@tag` syntax
+* Let you search for tags across all your files
+* Summarize the tags found, *where* they were found, *how many* of each there are, etc.
+* Track your tasks/to-dos by providing a rich interface for a custom `@task` tag.
 
-* **Tag discovery** — recursively scans directories for `@tag` and `@tag(attr=value)` syntax
-* **Summary** — shows a table of all unique tags and their counts
-* **Query** — search for specific tags with attribute filtering (`=`, `!=`, `>`, `<`, `>=`, `<=`)
-* **Task management** — create, list, update, and organize `@task` tags with status tracking, priorities, time estimates, and parent-child relationships
-* **Colored output** — status and priority values are color-coded in the terminal
-* **Configurable** — YAML config file with ignore patterns, output settings, and task extension options
+This is all wrapped into an intuitive CLI, configurable by a YAML file.
+
+If you use Vim, check out the [ragtag.vim](https://github.com/cwshugg/ragtag.vim) plugin I created for this.
 
 ## Installation
 
@@ -19,7 +20,7 @@ Build and install from source with [Cargo](https://doc.rust-lang.org/cargo/):
 
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/cwshugg/ragtag.git
 cd ragtag
 
 # Build and install
@@ -35,7 +36,7 @@ cargo build --release
 
 ## Quick Start
 
-1. **Add tags to your notes.** Put `@tag` or `@tag(key=value)` anywhere in your plain text files:
+1. **Add tags to your notes.** Put `@tag` or `@tag(attribute_name=attribute_value)` anywhere in your plain text files:
 
     ```
     Meeting notes for 2026-06-10.
@@ -73,9 +74,13 @@ cargo build --release
 
     ```bash
     ragtag task create --title "Write docs" --worktime-estimate 2 --worktime-units hours
+
+    # Or, enter the fields one-by-one via stdin:
+    ragtag task create
     ```
 
     This prints an `@task(...)` string to stdout for you to copy into a note file.
+    Integrate this with other tools to generate the `@task(...)` string and drop it straight into your other notes.
 
 ## Commands
 
@@ -142,7 +147,8 @@ Task management commands. See the [task management guide](docs/task-management.m
 
 ## Configuration
 
-ragtag looks for `.ragtag.yaml` or `ragtag.yaml` in the current directory and walks up the directory tree until it finds one (stopping at a directory containing a `.git` folder or the filesystem root). See the [configuration reference](docs/configuration.md) for full details.
+Ragtag looks for `.ragtag.yaml` or `ragtag.yaml` in the current directory and walks up the directory tree until it finds one (stopping at a directory containing a `.git` folder or the filesystem root).
+See the [configuration reference](docs/configuration.md) for full details.
 
 ## Documentation
 
@@ -151,6 +157,3 @@ ragtag looks for `.ragtag.yaml` or `ragtag.yaml` in the current directory and wa
 * [Configuration Reference](docs/configuration.md) — YAML config file options
 * [CLI Reference](docs/cli-reference.md) — full command-line reference
 
-## License
-
-MIT
