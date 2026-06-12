@@ -3,11 +3,17 @@
 //! Routes task sub-subcommands (create, list, get-attr, set-attr, etc.)
 //! to their respective implementations.
 
+pub mod abandon;
+pub mod activate;
+pub mod block;
+pub mod complete;
 pub mod create;
+pub mod deactivate;
 pub mod get;
 pub mod get_attr;
 pub mod list;
 pub mod set_attr;
+pub mod status_change;
 pub mod summary;
 
 use std::borrow::Cow;
@@ -25,7 +31,12 @@ pub fn dispatch(
     ctx: &mut ExtensionContext,
 ) -> Result<(), RagtagError> {
     match matches.subcommand() {
+        Some(("abandon", sub_m)) => abandon::run(sub_m, config, ctx),
+        Some(("activate", sub_m)) => activate::run(sub_m, config, ctx),
+        Some(("block", sub_m)) => block::run(sub_m, config, ctx),
+        Some(("complete", sub_m)) => complete::run(sub_m, config, ctx),
         Some(("create", sub_m)) => create::run(sub_m, config, ctx),
+        Some(("deactivate", sub_m)) => deactivate::run(sub_m, config, ctx),
         Some(("get", sub_m)) => get::run(sub_m, config, ctx),
         Some(("list", sub_m)) => list::run(sub_m, config, ctx),
         Some(("summary", sub_m)) => summary::run(sub_m, config, ctx),

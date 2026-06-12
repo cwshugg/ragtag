@@ -110,22 +110,29 @@ ragtag task create \
     --description "Write user-facing docs for ragtag"
 ```
 
+Use `--format oneline` to emit a single-line tag (handy for pasting into dense notes or editor snippets):
+
+```bash
+ragtag task create --title "Quick task" --format oneline
+```
+
 **Interactive mode:**
 
 ```bash
 ragtag task create -i
 ```
 
-In interactive mode, you are prompted for each field:
+In interactive mode, you are prompted for each field. Fields with config defaults show the default value in their prompt; truly optional fields just say `(leave blank to skip)`:
 
 ```
 Title (required): Write documentation
-Worktime Estimate (leave blank to skip): 4
-Description (leave blank to skip): Write user-facing docs
-Owner (leave blank for default): alice
-Status (leave blank for default):
+Description (leave blank to skip):
+Owner (leave blank to skip; default: me):
+Status (leave blank to skip; default: new):
 Priority (leave blank to skip): 1
-Time Units (leave blank for default):
+Worktime Estimate (leave blank to skip): 4
+Worktime Already Spent (leave blank to skip; default: 0):
+Worktime Units (leave blank to skip; default: hours):
 Parent ID (leave blank to skip):
 ```
 
@@ -137,12 +144,14 @@ Required fields (`title`) cannot be skipped. Optional fields can be left blank t
 | --- | --- |
 | `--title <STR>` | Task title (required unless interactive mode) |
 | `--worktime-estimate <NUM>` | Worktime estimate |
+| `--worktime-spent <NUM>` | Worktime already spent (default: `0`) |
 | `--worktime-units <STR>` | Time units: `hours`, `days`, or `weeks` |
 | `--description <STR>` | Task description |
 | `--owner <STR>` | Task owner |
 | `--status <STR>` | Initial status |
 | `--priority <NUM>` | Priority level (`0` = highest) |
 | `--pid <STR>` | Parent task ID |
+| `--format <FORMAT>` | Output format: `multiline` (default) or `oneline` |
 
 > **Note:** `time_created` and `time_last_updated` are **not** accepted as flags — they are automatically set at creation time to the current UTC time and are never user-supplied.
 
@@ -320,6 +329,109 @@ On success, the command prints a confirmation message like `Updated status to "d
 
 When `--no-edit` is used, ragtag reconstructs and prints the full `@task(...)` string with the updated value, leaving the source file unchanged. This is especially useful for editor plugins that want ragtag to handle validation and formatting without writing the buffer directly.
 
+### `task complete`
+
+Marks a task as complete in one command — no need to know the exact done status keyword.
+
+```bash
+ragtag task complete a1b2c3d4e5f67890
+ragtag task complete a1b2c3         # prefix match
+ragtag task complete a1b2c3d4e5f67890 --no-edit
+```
+
+Sets the task's `status` to the **first** configured done keyword (default: `"done"`) and automatically updates `time_last_updated` to the current UTC time. The `time_last_updated` field is added to the tag if it doesn't already exist (for backward compatibility with older tasks).
+
+On success, prints a confirmation message like `Completed task a1b2c3d4e5f67890 (status → "done")`.
+
+**Arguments:**
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | Task ID or ID prefix |
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--path <PATH>` | Search path (default: `.`) |
+| `--no-edit` | Do not modify the file; print the updated `@task(...)` string instead |
+
+### `task activate`
+
+Sets a task's status to the first configured active keyword (default: `"active"`).
+
+```bash
+ragtag task activate a1b2c3d4e5f67890
+ragtag task activate a1b2c3         # prefix match
+ragtag task activate a1b2c3d4e5f67890 --no-edit
+```
+
+On success, prints: `Activated task a1b2c3d4e5f67890 (status → "active")`.
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--path <PATH>` | Search path (default: `.`) |
+| `--no-edit` | Do not modify the file; print the updated `@task(...)` string instead |
+
+### `task deactivate`
+
+Sets a task's status to the first configured inactive keyword (default: `"inactive"`).
+
+```bash
+ragtag task deactivate a1b2c3d4e5f67890
+ragtag task deactivate a1b2c3       # prefix match
+ragtag task deactivate a1b2c3d4e5f67890 --no-edit
+```
+
+On success, prints: `Deactivated task a1b2c3d4e5f67890 (status → "inactive")`.
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--path <PATH>` | Search path (default: `.`) |
+| `--no-edit` | Do not modify the file; print the updated `@task(...)` string instead |
+
+### `task block`
+
+Sets a task's status to the first configured blocked keyword (default: `"blocked"`).
+
+```bash
+ragtag task block a1b2c3d4e5f67890
+ragtag task block a1b2c3            # prefix match
+ragtag task block a1b2c3d4e5f67890 --no-edit
+```
+
+On success, prints: `Blocked task a1b2c3d4e5f67890 (status → "blocked")`.
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--path <PATH>` | Search path (default: `.`) |
+| `--no-edit` | Do not modify the file; print the updated `@task(...)` string instead |
+
+### `task abandon`
+
+Sets a task's status to the first configured abandoned keyword (default: `"abandoned"`).
+
+```bash
+ragtag task abandon a1b2c3d4e5f67890
+ragtag task abandon a1b2c3          # prefix match
+ragtag task abandon a1b2c3d4e5f67890 --no-edit
+```
+
+On success, prints: `Abandoned task a1b2c3d4e5f67890 (status → "abandoned")`.
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--path <PATH>` | Search path (default: `.`) |
+| `--no-edit` | Do not modify the file; print the updated `@task(...)` string instead |
+
 ## Workflow Example
 
 1. **Create a task** and paste it into your notes:
@@ -358,5 +470,7 @@ When `--no-edit` is used, ragtag reconstructs and prints the full `@task(...)` s
 6. **Mark complete** when finished:
 
     ```bash
+    ragtag task complete <task-id>
+    # or equivalently:
     ragtag task set-attr <task-id> status done
     ```

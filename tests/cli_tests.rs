@@ -1855,7 +1855,735 @@ fn test_tasks_list_format_raw_with_filter() {
     assert!(!output_str.contains("id=fedcba0987654321"));
 }
 
-// === Query without TAG_NAME (list all tags) ===
+// === Task Complete ===
+
+#[test]
+fn test_task_complete_marks_done() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"compltest1234567a\", title=\"Finish me\", worktime_estimate=2, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "complete",
+            "compltest1234567a",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Completed task"))
+        .stdout(predicate::str::contains("compltest1234567a"))
+        .stdout(predicate::str::contains("done"));
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("status=\"done\""),
+        "Expected status=\"done\" in file after complete, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_complete_auto_updates_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    // Task does NOT have time_last_updated — it should be added.
+    fs::write(
+        &file,
+        "@task(id=\"compltest2345678b\", title=\"Add timestamp\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "complete",
+            "compltest2345678b",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("time_last_updated=\"20"),
+        "Expected time_last_updated to be added, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_complete_updates_existing_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    // Task already has time_last_updated — it should be updated.
+    fs::write(
+        &file,
+        "@task(id=\"compltest3456789c\", title=\"Update TS\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\", time_last_updated=\"2025-01-01T00:00:00Z\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "complete",
+            "compltest3456789c",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        !content.contains("2025-01-01"),
+        "Old timestamp should have been replaced, got:\n{content}"
+    );
+    assert!(
+        content.contains("time_last_updated=\"20"),
+        "Expected updated time_last_updated, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_complete_no_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    let original =
+        "@task(id=\"compltest4567890d\", title=\"No edit\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")";
+    fs::write(&file, original).unwrap();
+
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "complete",
+            "compltest4567890d",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    assert!(
+        output_str.contains("status=\"done\""),
+        "Expected status=\"done\" in --no-edit output: {output_str}"
+    );
+    assert!(
+        output_str.contains("time_last_updated=\"20"),
+        "Expected time_last_updated in --no-edit output: {output_str}"
+    );
+    // File must be unchanged.
+    let file_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        file_content, original,
+        "File should be unchanged with --no-edit"
+    );
+}
+
+#[test]
+fn test_task_complete_prefix_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"prefixtest567890ef\", title=\"Prefix test\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "complete",
+            "prefixtest",  // prefix only
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("status=\"done\""),
+        "Prefix match should have completed the task: {content}"
+    );
+}
+
+#[test]
+fn test_task_complete_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"existingtask1234\", title=\"Real task\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "complete",
+            "doesnotexist9999",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+}
+
+#[test]
+fn test_tasks_help_includes_complete() {
+    ragtag()
+        .args(["task", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("complete"));
+}
+
+#[test]
+fn test_tasks_help_includes_status_change_commands() {
+    ragtag()
+        .args(["task", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("activate"))
+        .stdout(predicate::str::contains("deactivate"))
+        .stdout(predicate::str::contains("block"))
+        .stdout(predicate::str::contains("abandon"));
+}
+
+// =========================================================================
+// task activate
+// =========================================================================
+
+#[test]
+fn test_task_activate_sets_active_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"acttest1234567aa\", title=\"Activate me\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "activate",
+            "acttest1234567aa",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Activated task"))
+        .stdout(predicate::str::contains("acttest1234567aa"))
+        .stdout(predicate::str::contains("active"));
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("status=\"active\""),
+        "Expected status=\"active\" in file after activate, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_activate_auto_updates_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"acttest2345678bb\", title=\"Add TS\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "activate",
+            "acttest2345678bb",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("time_last_updated=\"20"),
+        "Expected time_last_updated to be added, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_activate_no_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    let original = "@task(id=\"acttest3456789cc\", title=\"No edit\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")";
+    fs::write(&file, original).unwrap();
+
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "activate",
+            "acttest3456789cc",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    assert!(
+        output_str.contains("status=\"active\""),
+        "Expected status=\"active\" in --no-edit output: {output_str}"
+    );
+    assert!(
+        output_str.contains("time_last_updated=\"20"),
+        "Expected time_last_updated in --no-edit output: {output_str}"
+    );
+    let file_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
+}
+
+#[test]
+fn test_task_activate_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"realacttask12345\", title=\"Real\", worktime_estimate=1, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "activate",
+            "doesnotexist9999",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+}
+
+// =========================================================================
+// task deactivate
+// =========================================================================
+
+#[test]
+fn test_task_deactivate_sets_inactive_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"deacttest1234aaa\", title=\"Deactivate me\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "deactivate",
+            "deacttest1234aaa",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Deactivated task"))
+        .stdout(predicate::str::contains("deacttest1234aaa"))
+        .stdout(predicate::str::contains("inactive"));
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("status=\"inactive\""),
+        "Expected status=\"inactive\" in file after deactivate, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_deactivate_auto_updates_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"deacttest2345bbb\", title=\"Add TS\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "deactivate",
+            "deacttest2345bbb",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("time_last_updated=\"20"),
+        "Expected time_last_updated to be added, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_deactivate_no_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    let original = "@task(id=\"deacttest3456ccc\", title=\"No edit\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")";
+    fs::write(&file, original).unwrap();
+
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "deactivate",
+            "deacttest3456ccc",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    assert!(
+        output_str.contains("status=\"inactive\""),
+        "Expected status=\"inactive\" in --no-edit output: {output_str}"
+    );
+    let file_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
+}
+
+#[test]
+fn test_task_deactivate_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"realdeacttask123\", title=\"Real\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "deactivate",
+            "doesnotexist9999",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+}
+
+// =========================================================================
+// task block
+// =========================================================================
+
+#[test]
+fn test_task_block_command_sets_blocked_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"blkcmd12345678aa\", title=\"Block me\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "block",
+            "blkcmd12345678aa",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Blocked task"))
+        .stdout(predicate::str::contains("blkcmd12345678aa"))
+        .stdout(predicate::str::contains("blocked"));
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("status=\"blocked\""),
+        "Expected status=\"blocked\" in file after block, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_block_auto_updates_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"blkcmd23456789bb\", title=\"Add TS\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "block",
+            "blkcmd23456789bb",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("time_last_updated=\"20"),
+        "Expected time_last_updated to be added, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_block_no_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    let original = "@task(id=\"blkcmd3456789ccc\", title=\"No edit\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")";
+    fs::write(&file, original).unwrap();
+
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "block",
+            "blkcmd3456789ccc",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    assert!(
+        output_str.contains("status=\"blocked\""),
+        "Expected status=\"blocked\" in --no-edit output: {output_str}"
+    );
+    let file_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
+}
+
+#[test]
+fn test_task_block_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"realblkcmd123456\", title=\"Real\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "block",
+            "doesnotexist9999",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+}
+
+// =========================================================================
+// task abandon
+// =========================================================================
+
+#[test]
+fn test_task_abandon_sets_abandoned_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"abdtest1234567aa\", title=\"Abandon me\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "abandon",
+            "abdtest1234567aa",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Abandoned task"))
+        .stdout(predicate::str::contains("abdtest1234567aa"))
+        .stdout(predicate::str::contains("abandoned"));
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("status=\"abandoned\""),
+        "Expected status=\"abandoned\" in file after abandon, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_abandon_auto_updates_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"abdtest2345678bb\", title=\"Add TS\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "abandon",
+            "abdtest2345678bb",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("time_last_updated=\"20"),
+        "Expected time_last_updated to be added, got:\n{content}"
+    );
+}
+
+#[test]
+fn test_task_abandon_no_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    let original = "@task(id=\"abdtest3456789cc\", title=\"No edit\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")";
+    fs::write(&file, original).unwrap();
+
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "abandon",
+            "abdtest3456789cc",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    assert!(
+        output_str.contains("status=\"abandoned\""),
+        "Expected status=\"abandoned\" in --no-edit output: {output_str}"
+    );
+    let file_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
+}
+
+#[test]
+fn test_task_abandon_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"realabdtask12345\", title=\"Real\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "abandon",
+            "doesnotexist9999",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+}
+
+#[test]
+fn test_task_abandon_prefix_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"abdprefix567890ef\", title=\"Prefix abandon\", worktime_estimate=1, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "abandon",
+            "abdprefix",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("status=\"abandoned\""),
+        "Prefix match should have abandoned the task: {content}"
+    );
+}
 
 #[test]
 fn test_query_all_tags() {
@@ -1880,4 +2608,226 @@ fn test_query_specific_tag_still_works() {
         // Should NOT contain non-task tags
         .stdout(predicate::str::contains("@note").not())
         .stdout(predicate::str::contains("@todo").not());
+}
+
+// === Interactive mode — piped stdin with validation ===
+//
+// These tests exercise `task create` without a `--title` flag so that the
+// interactive (`run_interactive`) code path is triggered.  stdin is piped, so
+// `PromptSession` uses the plain BufRead path and prompts go to stderr.
+// Each test verifies that:
+//   - Invalid input causes an error message on stderr and re-prompting.
+//   - The subsequent valid value (or blank to skip) is used correctly.
+
+/// Pipes lines as if the user typed them one by one.
+// ---- Title re-prompt -------------------------------------------------------
+
+#[test]
+fn test_interactive_title_blank_reprompt() {
+    // Blank line first → error on stderr → second line accepted as title.
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin("\nMy Task\n\n\n\n\n\n\n\n")
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(out.contains("title=\"My Task\""), "stdout: {out}");
+    assert!(err.contains("Title is required."), "stderr: {err}");
+}
+
+// ---- Priority validation ---------------------------------------------------
+
+#[test]
+fn test_interactive_invalid_priority_reprompt() {
+    // Pipe: title, blank description, blank owner, blank status,
+    //       invalid priority "m", then valid priority "5", then blanks for the rest.
+    let stdin = "My Task\n\n\n\nm\n5\n\n\n\n";
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin(stdin)
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(out.contains("title=\"My Task\""), "stdout: {out}");
+    assert!(out.contains("priority=5"), "stdout should have priority=5: {out}");
+    assert!(
+        err.contains("non-negative whole number"),
+        "stderr should have priority error: {err}"
+    );
+}
+
+#[test]
+fn test_interactive_negative_priority_reprompt() {
+    // "-1" is rejected (not a u32), then "3" is accepted.
+    let stdin = "Neg Priority Task\n\n\n\n-1\n3\n\n\n\n";
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin(stdin)
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(out.contains("priority=3"), "stdout: {out}");
+    assert!(err.contains("non-negative whole number"), "stderr: {err}");
+}
+
+// ---- Worktime estimate validation ------------------------------------------
+
+#[test]
+fn test_interactive_invalid_worktime_estimate_reprompt() {
+    // "abc" rejected; then "2.5" accepted.
+    let stdin = "Estimate Task\n\n\n\n\nabc\n2.5\n\n\n\n";
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin(stdin)
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(out.contains("worktime_estimate=2.5"), "stdout: {out}");
+    assert!(
+        err.contains("non-negative number"),
+        "stderr should have worktime estimate error: {err}"
+    );
+}
+
+#[test]
+fn test_interactive_negative_worktime_estimate_reprompt() {
+    // "-3" rejected; then "1" accepted.
+    let stdin = "Neg Estimate Task\n\n\n\n\n-3\n1\n\n\n\n";
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin(stdin)
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(out.contains("worktime_estimate=1"), "stdout: {out}");
+    assert!(err.contains("non-negative number"), "stderr: {err}");
+}
+
+// ---- Worktime spent validation ---------------------------------------------
+
+#[test]
+fn test_interactive_invalid_worktime_spent_reprompt() {
+    // "oops" rejected; then "0.5" accepted.
+    let stdin = "Spent Task\n\n\n\n\n\noops\n0.5\n\n\n";
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin(stdin)
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(out.contains("worktime_spent=0.5"), "stdout: {out}");
+    assert!(
+        err.contains("non-negative number"),
+        "stderr should have worktime spent error: {err}"
+    );
+}
+
+// ---- Status validation -----------------------------------------------------
+
+#[test]
+fn test_interactive_invalid_status_reprompt() {
+    // "banana" rejected; then "active" accepted.
+    let stdin = "Status Task\n\n\nbanana\nactive\n\n\n\n\n\n";
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin(stdin)
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(out.contains("status=\"active\""), "stdout: {out}");
+    assert!(
+        err.contains("Invalid status"),
+        "stderr should have status error: {err}"
+    );
+    assert!(
+        err.contains("allowed values:"),
+        "stderr should list allowed values: {err}"
+    );
+}
+
+// ---- Worktime units validation ---------------------------------------------
+
+#[test]
+fn test_interactive_invalid_worktime_units_reprompt() {
+    // "fortnights" rejected; then "days" accepted.
+    let stdin = "Units Task\n\n\n\n\n\n\nfortnights\ndays\n\n";
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin(stdin)
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(out.contains("worktime_units=\"days\""), "stdout: {out}");
+    assert!(
+        err.contains("Invalid worktime units"),
+        "stderr should have units error: {err}"
+    );
+    assert!(err.contains("hours"), "stderr should list allowed units: {err}");
+}
+
+// ---- Skip all optional fields (blank) after title --------------------------
+
+#[test]
+fn test_interactive_title_only_all_blanks() {
+    // Provide title, then blank for every optional field.
+    let stdin = "Blank Fields Task\n\n\n\n\n\n\n\n\n";
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin(stdin)
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(out.contains("title=\"Blank Fields Task\""), "stdout: {out}");
+    assert!(out.contains("worktime_spent=0"), "stdout: {out}");
+    assert!(out.contains("worktime_units=\"hours\""), "stdout: {out}");
+}
+
+// ---- Valid input for every field interactively -----------------------------
+
+#[test]
+fn test_interactive_all_fields_valid() {
+    // Supply all fields via piped stdin in order:
+    // title, description, owner, status, priority, wt_estimate, wt_spent, wt_units, pid
+    let stdin = "Interactive Task\nDoes things\nalice\nactive\n2\n4.0\n1.0\nhours\nparent123\n";
+    let assert = ragtag()
+        .args(["task", "create"])
+        .write_stdin(stdin)
+        .assert()
+        .success();
+
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(out.contains("title=\"Interactive Task\""), "stdout: {out}");
+    assert!(out.contains("description=\"Does things\""), "stdout: {out}");
+    assert!(out.contains("owner=\"alice\""), "stdout: {out}");
+    assert!(out.contains("status=\"active\""), "stdout: {out}");
+    assert!(out.contains("priority=2"), "stdout: {out}");
+    assert!(out.contains("worktime_estimate=4"), "stdout: {out}");
+    assert!(out.contains("worktime_spent=1"), "stdout: {out}");
+    assert!(out.contains("worktime_units=\"hours\""), "stdout: {out}");
+    assert!(out.contains("pid=\"parent123\""), "stdout: {out}");
 }

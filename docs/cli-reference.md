@@ -165,13 +165,15 @@ ragtag task create [OPTIONS]
 | `--status <STR>` | Task status |
 | `--priority <NUM>` | Priority (`0` = highest) |
 | `--worktime-estimate <NUM>` | Time-to-complete estimate |
+| `--worktime-spent <NUM>` | Worktime already spent (default: `0`) |
 | `--worktime-units <STR>` | Time units: `hours`, `days`, or `weeks` |
 | `--pid <STR>` | Parent task ID |
+| `--format <FORMAT>` | Output format: `multiline` (default) or `oneline` |
 | `-i`, `--interactive` | Launch interactive prompt for all fields |
 
 **Output:**
 
-Prints a multi-line `@task(...)` string to stdout:
+Prints an `@task(...)` string to stdout. With `--format multiline` (default):
 
 ```
 @task(
@@ -179,9 +181,16 @@ Prints a multi-line `@task(...)` string to stdout:
     title="Write documentation",
     owner="me",
     status="new",
+    worktime_spent=0,
     worktime_estimate=4,
-    workworktime_units="hours"
+    worktime_units="hours"
 )
+```
+
+With `--format oneline`:
+
+```
+@task(id="a1b2c3d4e5f67890", title="Write documentation", owner="me", status="new", worktime_spent=0, worktime_estimate=4, worktime_units="hours")
 ```
 
 The task ID is a randomly-generated 16-character hex string.
@@ -366,6 +375,198 @@ ragtag task set-attr a1b2c3d4e5f67890 pid f0e1d2c3b4a59687
 
 # Get updated tag string without modifying the file
 ragtag task set-attr a1b2c3d4e5f67890 status done --no-edit
+```
+
+#### `task complete`
+
+Mark a task as complete by setting its status to the first configured done keyword (default: `"done"`).
+
+```bash
+ragtag task complete <ID> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `ID` | Yes | Task ID or ID prefix |
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--no-edit` | — | Don't modify the file; print the updated `@task(...)` string to stdout instead |
+
+**Behavior:**
+
+* Finds the task by ID across all scanned files
+* Sets `status` to the first keyword in `config.status_keywords.done` (default: `"done"`)
+* Automatically sets `time_last_updated` to the current UTC time (ISO 8601); adds the field if it doesn't already exist
+* Edits the source file in-place (atomic write via temp file)
+* Prints a confirmation message: `Completed task <ID> (status → "done")`
+
+**With `--no-edit`:**
+
+* Does not modify the file
+* Prints the complete reconstructed `@task(...)` string with the status and timestamp updated
+* Useful for editor plugin integration (e.g., Vim plugin injects the string into the buffer)
+
+**Examples:**
+
+```bash
+# Mark task as complete (modifies file in-place)
+ragtag task complete a1b2c3d4e5f67890
+
+# Mark task using an ID prefix
+ragtag task complete a1b2c3
+
+# Print the updated tag string without modifying the file
+ragtag task complete a1b2c3d4e5f67890 --no-edit
+```
+
+---
+
+#### `task activate`
+
+Set a task's status to the first configured active keyword (default: `"active"`).
+
+```bash
+ragtag task activate <ID> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `ID` | Yes | Task ID or ID prefix |
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--no-edit` | — | Don't modify the file; print the updated `@task(...)` string to stdout instead |
+
+**Behavior:**
+
+* Sets `status` to the first keyword in `config.status_keywords.active` (default: `"active"`)
+* Automatically updates `time_last_updated` to the current UTC time
+* Prints a confirmation: `Activated task <ID> (status → "active")`
+
+**Examples:**
+
+```bash
+ragtag task activate a1b2c3d4e5f67890
+ragtag task activate a1b2c3d4e5f67890 --no-edit
+```
+
+---
+
+#### `task deactivate`
+
+Set a task's status to the first configured inactive keyword (default: `"inactive"`).
+
+```bash
+ragtag task deactivate <ID> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `ID` | Yes | Task ID or ID prefix |
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--no-edit` | — | Don't modify the file; print the updated `@task(...)` string to stdout instead |
+
+**Behavior:**
+
+* Sets `status` to the first keyword in `config.status_keywords.inactive` (default: `"inactive"`)
+* Automatically updates `time_last_updated` to the current UTC time
+* Prints a confirmation: `Deactivated task <ID> (status → "inactive")`
+
+**Examples:**
+
+```bash
+ragtag task deactivate a1b2c3d4e5f67890
+ragtag task deactivate a1b2c3d4e5f67890 --no-edit
+```
+
+---
+
+#### `task block`
+
+Set a task's status to the first configured blocked keyword (default: `"blocked"`).
+
+```bash
+ragtag task block <ID> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `ID` | Yes | Task ID or ID prefix |
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--no-edit` | — | Don't modify the file; print the updated `@task(...)` string to stdout instead |
+
+**Behavior:**
+
+* Sets `status` to the first keyword in `config.status_keywords.blocked` (default: `"blocked"`)
+* Automatically updates `time_last_updated` to the current UTC time
+* Prints a confirmation: `Blocked task <ID> (status → "blocked")`
+
+**Examples:**
+
+```bash
+ragtag task block a1b2c3d4e5f67890
+ragtag task block a1b2c3d4e5f67890 --no-edit
+```
+
+---
+
+#### `task abandon`
+
+Set a task's status to the first configured abandoned keyword (default: `"abandoned"`).
+
+```bash
+ragtag task abandon <ID> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `ID` | Yes | Task ID or ID prefix |
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--no-edit` | — | Don't modify the file; print the updated `@task(...)` string to stdout instead |
+
+**Behavior:**
+
+* Sets `status` to the first keyword in `config.status_keywords.abandoned` (default: `"abandoned"`)
+* Automatically updates `time_last_updated` to the current UTC time
+* Prints a confirmation: `Abandoned task <ID> (status → "abandoned")`
+
+**Examples:**
+
+```bash
+ragtag task abandon a1b2c3d4e5f67890
+ragtag task abandon a1b2c3d4e5f67890 --no-edit
 ```
 
 ## Exit Codes

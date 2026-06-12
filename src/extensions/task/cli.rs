@@ -55,15 +55,138 @@ pub fn build_task_command() -> Command {
                         .value_name("STR"),
                 )
                 .arg(
+                    Arg::new("worktime-spent")
+                        .long("worktime-spent")
+                        .help("Worktime already spent on this task (default: 0)")
+                        .value_name("NUM"),
+                )
+                .arg(
                     Arg::new("pid")
                         .long("pid")
                         .help("Parent task ID")
                         .value_name("STR"),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .help("Output format: multiline (default) or oneline")
+                        .value_parser(["multiline", "oneline"])
+                        .default_value("multiline"),
+                ),
+        )
+        .subcommand(
+            Command::new("complete")
+                .about("Mark a task as complete")
+                .arg(
+                    Arg::new("id")
+                        .help("Task ID or ID prefix")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
+                )
+                .arg(
+                    Arg::new("no-edit")
+                        .long("no-edit")
+                        .action(ArgAction::SetTrue)
+                        .help("Don't modify the file; print the updated @task(...) string instead"),
+                ),
+        )
+        .subcommand(
+            Command::new("activate")
+                .about("Set a task's status to ACTIVE")
+                .arg(
+                    Arg::new("id")
+                        .help("Task ID or ID prefix")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
+                )
+                .arg(
+                    Arg::new("no-edit")
+                        .long("no-edit")
+                        .action(ArgAction::SetTrue)
+                        .help("Don't modify the file; print the updated @task(...) string instead"),
+                ),
+        )
+        .subcommand(
+            Command::new("deactivate")
+                .about("Set a task's status to INACTIVE")
+                .arg(
+                    Arg::new("id")
+                        .help("Task ID or ID prefix")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
+                )
+                .arg(
+                    Arg::new("no-edit")
+                        .long("no-edit")
+                        .action(ArgAction::SetTrue)
+                        .help("Don't modify the file; print the updated @task(...) string instead"),
+                ),
+        )
+        .subcommand(
+            Command::new("block")
+                .about("Set a task's status to BLOCKED")
+                .arg(
+                    Arg::new("id")
+                        .help("Task ID or ID prefix")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
+                )
+                .arg(
+                    Arg::new("no-edit")
+                        .long("no-edit")
+                        .action(ArgAction::SetTrue)
+                        .help("Don't modify the file; print the updated @task(...) string instead"),
+                ),
+        )
+        .subcommand(
+            Command::new("abandon")
+                .about("Set a task's status to ABANDONED")
+                .arg(
+                    Arg::new("id")
+                        .help("Task ID or ID prefix")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
+                )
+                .arg(
+                    Arg::new("no-edit")
+                        .long("no-edit")
+                        .action(ArgAction::SetTrue)
+                        .help("Don't modify the file; print the updated @task(...) string instead"),
                 ),
         )
         .subcommand(
             Command::new("list")
-                .about("List tasks found in files")
+                .about("Display a list of tasks")
                 .arg(
                     Arg::new("path")
                         .long("path")
