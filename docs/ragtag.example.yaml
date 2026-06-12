@@ -69,10 +69,10 @@ tasks:
   # Default: "me"
   default_owner: "me"
 
-  # Default time units for `ttc_estimate`, `ttc_actual`, and `time_spent`.
+  # Default time units for `worktime_estimate` and `worktime_spent`.
   # Allowed values: "hours", "days", "weeks"
   # Default: "hours"
-  default_time_units: "hours"
+  default_worktime_units: "hours"
 
   # Default status for newly created tasks.
   # Must be one of the recognized status keywords below.

@@ -23,9 +23,7 @@ pub fn run(
     color_mode: &ColorMode,
     stdout: &mut dyn Write,
 ) -> Result<(), RagtagError> {
-    let tag_name = matches
-        .get_one::<String>("TAG_NAME")
-        .ok_or_else(|| RagtagError::UnknownCommand("missing tag name argument".to_string()))?;
+    let tag_name = matches.get_one::<String>("TAG_NAME");
 
     let path_str = cli::resolve_path(matches);
     let path = Path::new(&path_str);
@@ -49,7 +47,8 @@ pub fn run(
         };
         let tags = parser::scan_file(&content, file_path);
         for tag in tags {
-            if tag.name == *tag_name {
+            let name_matches = tag_name.is_none_or(|name| tag.name == *name);
+            if name_matches {
                 // Apply filters
                 let mut passes = true;
                 for f in &filters {
@@ -72,8 +71,8 @@ pub fn run(
 
     for tag in &matching_tags {
         // Check if an extension provides custom formatting
-        let formatted = registry
-            .get_by_tag_name(tag_name)
+        let formatted = tag_name
+            .and_then(|name| registry.get_by_tag_name(name))
             .and_then(|ext| ext.format_tag(tag, color_mode));
 
         if let Some(line) = formatted {

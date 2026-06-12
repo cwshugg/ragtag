@@ -52,12 +52,88 @@ pub fn run(
     let effective_sort = sort_field.as_deref().unwrap_or("priority");
     sort_tasks(&mut tasks, effective_sort, reverse);
 
+    // Determine output format
+    let format = matches
+        .get_one::<String>("format")
+        .map(|s| s.as_str())
+        .unwrap_or("default");
+
     // Output
-    for task in &tasks {
-        let line = format_task_line(task, &ctx.color_mode, config);
-        writeln!(ctx.stdout, "{line}").map_err(RagtagError::Io)?;
+    match format {
+        "raw" => {
+            for (i, task) in tasks.iter().enumerate() {
+                if i > 0 {
+                    writeln!(ctx.stdout).map_err(RagtagError::Io)?;
+                }
+                format_task_raw(task, ctx)?;
+            }
+        }
+        _ => {
+            for task in &tasks {
+                let line = format_task_line(task, &ctx.color_mode, config);
+                writeln!(ctx.stdout, "{line}").map_err(RagtagError::Io)?;
+            }
+        }
     }
 
+    Ok(())
+}
+
+/// Outputs a task in raw key=value format for machine consumption.
+///
+/// Each attribute is on its own line. No color codes are applied.
+fn format_task_raw(task: &TaskTag, ctx: &mut ExtensionContext) -> Result<(), RagtagError> {
+    let file_path = task.location.file_path.display();
+    let line_num = task.location.line;
+
+    writeln!(ctx.stdout, "id={}", task.id).map_err(RagtagError::Io)?;
+    writeln!(ctx.stdout, "title={}", task.title).map_err(RagtagError::Io)?;
+    writeln!(ctx.stdout, "owner={}", task.owner).map_err(RagtagError::Io)?;
+    writeln!(ctx.stdout, "status={}", task.status).map_err(RagtagError::Io)?;
+    writeln!(
+        ctx.stdout,
+        "priority={}",
+        task.priority.map(|p| p.to_string()).unwrap_or_default()
+    )
+    .map_err(RagtagError::Io)?;
+    writeln!(
+        ctx.stdout,
+        "description={}",
+        task.description.as_deref().unwrap_or("")
+    )
+    .map_err(RagtagError::Io)?;
+    writeln!(ctx.stdout, "file={file_path}").map_err(RagtagError::Io)?;
+    writeln!(ctx.stdout, "line={line_num}").map_err(RagtagError::Io)?;
+    writeln!(
+        ctx.stdout,
+        "worktime_spent={}",
+        task.worktime_spent
+            .map(|t| t.to_string())
+            .unwrap_or_default()
+    )
+    .map_err(RagtagError::Io)?;
+    writeln!(
+        ctx.stdout,
+        "worktime_estimate={}",
+        task.worktime_estimate
+            .map(|t| t.to_string())
+            .unwrap_or_default()
+    )
+    .map_err(RagtagError::Io)?;
+    writeln!(
+        ctx.stdout,
+        "time_created={}",
+        task.time_created.as_deref().unwrap_or("")
+    )
+    .map_err(RagtagError::Io)?;
+    writeln!(
+        ctx.stdout,
+        "time_last_updated={}",
+        task.time_last_updated.as_deref().unwrap_or("")
+    )
+    .map_err(RagtagError::Io)?;
+    writeln!(ctx.stdout, "worktime_units={}", task.worktime_units).map_err(RagtagError::Io)?;
+    writeln!(ctx.stdout, "pid={}", task.pid.as_deref().unwrap_or("")).map_err(RagtagError::Io)?;
     Ok(())
 }
 
@@ -98,10 +174,11 @@ mod tests {
             owner: "me".to_string(),
             status: status.to_string(),
             priority,
-            time_spent: None,
-            ttc_estimate: Some(4.0),
-            ttc_actual: None,
-            time_units: "hours".to_string(),
+            worktime_spent: None,
+            worktime_estimate: Some(4.0),
+            time_created: None,
+            time_last_updated: None,
+            worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,
         }
@@ -238,5 +315,74 @@ mod tests {
         // Should show only the "done" task
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].status, "done");
+    }
+
+    #[test]
+    fn test_format_task_raw_output() {
+        use crate::config::{ColorMode, Config};
+        use crate::discovery::FileWalker;
+        use crate::edit::FileEditor;
+        use crate::extensions::{DefaultTagParser, ExtensionContext};
+        use std::ops::Range;
+
+        // Minimal stub implementations for ExtensionContext dependencies.
+        struct StubWalker;
+        impl FileWalker for StubWalker {
+            fn walk(&self, _path: &Path) -> Result<Vec<PathBuf>, RagtagError> {
+                Ok(vec![])
+            }
+        }
+
+        struct StubEditor;
+        impl FileEditor for StubEditor {
+            fn update_tag_attribute(
+                &self,
+                _file_path: &Path,
+                _tag_span: Range<usize>,
+                _attr_name: &str,
+                _new_value: &str,
+            ) -> Result<(), RagtagError> {
+                Ok(())
+            }
+        }
+
+        let walker = StubWalker;
+        let parser = DefaultTagParser;
+        let editor = StubEditor;
+        let config = Config::default();
+        let mut output = Vec::new();
+        let mut stderr = Vec::new();
+
+        let mut ctx = ExtensionContext {
+            walker: &walker,
+            parser: &parser,
+            editor: &editor,
+            color_mode: ColorMode::Never,
+            config: &config,
+            stdout: &mut output,
+            stderr: &mut stderr,
+        };
+
+        let task = make_task("abc123", "active", Some(1), "Test task");
+        format_task_raw(&task, &mut ctx).unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+
+        assert_eq!(lines[0], "id=abc123");
+        assert_eq!(lines[1], "title=Test task");
+        assert_eq!(lines[2], "owner=me");
+        assert_eq!(lines[3], "status=active");
+        assert_eq!(lines[4], "priority=1");
+        assert_eq!(lines[5], "description=");
+        assert_eq!(lines[6], "file=test.md");
+        assert_eq!(lines[7], "line=1");
+        assert_eq!(lines[8], "worktime_spent=");
+        assert_eq!(lines[9], "worktime_estimate=4");
+        assert_eq!(lines[10], "time_created=");
+        assert_eq!(lines[11], "time_last_updated=");
+        assert_eq!(lines[12], "worktime_units=hours");
+        assert_eq!(lines[13], "pid=");
+        assert_eq!(lines.len(), 14);
     }
 }

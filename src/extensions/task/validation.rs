@@ -3,7 +3,7 @@
 //! Validates that tags matching the task extension have the required
 //! attributes and valid values.
 
-use super::config::{TaskConfig, ALLOWED_TIME_UNITS};
+use super::config::{TaskConfig, ALLOWED_WORKTIME_UNITS};
 use crate::extensions::{ValidationLevel, ValidationMessage};
 use crate::models::Tag;
 
@@ -22,16 +22,16 @@ pub fn validate_task_tag(tag: &Tag, config: &TaskConfig) -> Vec<ValidationMessag
         });
     }
 
-    // Validate time_units if present
-    if let Some(val) = tag.get_named_attribute("time_units") {
+    // Validate worktime_units if present
+    if let Some(val) = tag.get_named_attribute("worktime_units") {
         if let Some(s) = val.as_str() {
-            if !ALLOWED_TIME_UNITS.contains(&s) {
+            if !ALLOWED_WORKTIME_UNITS.contains(&s) {
                 messages.push(ValidationMessage {
                     level: ValidationLevel::Error,
                     message: format!(
-                        "invalid time_units \"{}\" — allowed values: {}",
+                        "invalid worktime_units \"{}\" — allowed values: {}",
                         s,
-                        ALLOWED_TIME_UNITS.join(", ")
+                        ALLOWED_WORKTIME_UNITS.join(", ")
                     ),
                     location: Some(tag.location.clone()),
                 });
@@ -39,7 +39,7 @@ pub fn validate_task_tag(tag: &Tag, config: &TaskConfig) -> Vec<ValidationMessag
         } else {
             messages.push(ValidationMessage {
                 level: ValidationLevel::Error,
-                message: "time_units must be a string value".to_string(),
+                message: "worktime_units must be a string value".to_string(),
                 location: Some(tag.location.clone()),
             });
         }
@@ -69,7 +69,7 @@ pub fn validate_task_tag(tag: &Tag, config: &TaskConfig) -> Vec<ValidationMessag
     }
 
     // Validate time fields are numeric
-    for field in &["time_spent", "ttc_estimate", "ttc_actual"] {
+    for field in &["worktime_spent", "worktime_estimate"] {
         if let Some(val) = tag.get_named_attribute(field) {
             if val.as_float().is_none() {
                 messages.push(ValidationMessage {
@@ -96,7 +96,7 @@ mod tests {
             attributes: vec![
                 TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
                 TagAttribute::named(
-                    "ttc_estimate",
+                    "worktime_estimate",
                     AttributeValue::Integer {
                         value: 4,
                         base: NumericBase::Decimal,
@@ -125,7 +125,7 @@ mod tests {
         let tag = Tag {
             name: "task".to_string(),
             attributes: vec![TagAttribute::named(
-                "ttc_estimate",
+                "worktime_estimate",
                 AttributeValue::Integer {
                     value: 4,
                     base: NumericBase::Decimal,
@@ -145,7 +145,7 @@ mod tests {
             attributes: vec![
                 TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
                 TagAttribute::named(
-                    "ttc_estimate",
+                    "worktime_estimate",
                     AttributeValue::Integer {
                         value: 4,
                         base: NumericBase::Decimal,
@@ -161,25 +161,25 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_time_units() {
+    fn test_invalid_worktime_units() {
         let tag = Tag {
             name: "task".to_string(),
             attributes: vec![
                 TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
                 TagAttribute::named(
-                    "ttc_estimate",
+                    "worktime_estimate",
                     AttributeValue::Integer {
                         value: 4,
                         base: NumericBase::Decimal,
                     },
                 ),
-                TagAttribute::named("time_units", AttributeValue::Str("fortnights".to_string())),
+                TagAttribute::named("worktime_units", AttributeValue::Str("fortnights".to_string())),
             ],
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,
         };
         let msgs = validate_task_tag(&tag, &TaskConfig::default());
-        assert!(msgs.iter().any(|m| m.message.contains("time_units")));
+        assert!(msgs.iter().any(|m| m.message.contains("worktime_units")));
     }
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
             attributes: vec![
                 TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
                 TagAttribute::named(
-                    "ttc_estimate",
+                    "worktime_estimate",
                     AttributeValue::Integer {
                         value: 4,
                         base: NumericBase::Decimal,
@@ -213,19 +213,19 @@ mod tests {
     }
 
     #[test]
-    fn test_non_string_time_units_rejected() {
+    fn test_non_string_worktime_units_rejected() {
         let tag = Tag {
             name: "task".to_string(),
             attributes: vec![
                 TagAttribute::named("title", AttributeValue::Str("Test".to_string())),
                 TagAttribute::named(
-                    "ttc_estimate",
+                    "worktime_estimate",
                     AttributeValue::Integer {
                         value: 4,
                         base: NumericBase::Decimal,
                     },
                 ),
-                TagAttribute::named("time_units", AttributeValue::Float(3.5)),
+                TagAttribute::named("worktime_units", AttributeValue::Float(3.5)),
             ],
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,
@@ -233,6 +233,6 @@ mod tests {
         let msgs = validate_task_tag(&tag, &TaskConfig::default());
         assert!(msgs
             .iter()
-            .any(|m| m.message.contains("time_units must be a string")));
+            .any(|m| m.message.contains("worktime_units must be a string")));
     }
 }

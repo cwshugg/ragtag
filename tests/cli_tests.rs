@@ -110,16 +110,16 @@ fn test_tasks_create() {
             "create",
             "--title",
             "Test Task",
-            "--ttc-estimate",
+            "--worktime-estimate",
             "4",
-            "--time-units",
+            "--worktime-units",
             "hours",
         ])
         .assert()
         .success()
         .stdout(predicate::str::contains("@task("))
         .stdout(predicate::str::contains("title=\"Test Task\""))
-        .stdout(predicate::str::contains("ttc_estimate=4"));
+        .stdout(predicate::str::contains("worktime_estimate=4"));
 }
 
 #[test]
@@ -138,9 +138,9 @@ fn test_tasks_create_with_all_fields() {
             "active",
             "--priority",
             "1",
-            "--ttc-estimate",
+            "--worktime-estimate",
             "8.5",
-            "--time-units",
+            "--worktime-units",
             "days",
             "--pid",
             "parent123",
@@ -150,6 +150,120 @@ fn test_tasks_create_with_all_fields() {
         .stdout(predicate::str::contains("owner=\"alice\""))
         .stdout(predicate::str::contains("status=\"active\""))
         .stdout(predicate::str::contains("priority=1"));
+}
+
+#[test]
+fn test_tasks_create_includes_timestamps() {
+    // Newly created tasks must include auto-generated time_created and time_last_updated.
+    let output = ragtag()
+        .args([
+            "task",
+            "create",
+            "--title",
+            "Timestamped Task",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    // Both fields must appear in the output tag string.
+    assert!(
+        output_str.contains("time_created="),
+        "Expected time_created in output, got:\n{output_str}"
+    );
+    assert!(
+        output_str.contains("time_last_updated="),
+        "Expected time_last_updated in output, got:\n{output_str}"
+    );
+    // Values should look like an ISO 8601 UTC timestamp (basic pattern check).
+    assert!(
+        output_str.contains("time_created=\"20"),
+        "Expected time_created to be an ISO-like timestamp"
+    );
+    assert!(
+        output_str.contains("time_last_updated=\"20"),
+        "Expected time_last_updated to be an ISO-like timestamp"
+    );
+}
+
+#[test]
+fn test_tasks_set_attr_auto_updates_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    // After set-attr, time_last_updated must be present in the file.
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "status",
+            "active",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&file).unwrap();
+    assert!(
+        content.contains("time_last_updated=\"20"),
+        "Expected auto-populated time_last_updated after set-attr, file content:\n{content}"
+    );
+    assert!(
+        content.contains("status=\"active\""),
+        "Expected updated status in file content:\n{content}"
+    );
+}
+
+#[test]
+fn test_tasks_set_attr_no_edit_auto_updates_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    let original =
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")";
+    fs::write(&file, original).unwrap();
+
+    // --no-edit should print the tag with both the new attr value AND updated time_last_updated.
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "status",
+            "active",
+            "--no-edit",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    assert!(
+        output_str.contains("status=\"active\""),
+        "Expected updated status in --no-edit output"
+    );
+    assert!(
+        output_str.contains("time_last_updated=\"20"),
+        "Expected auto-populated time_last_updated in --no-edit output"
+    );
+    // The original file must NOT be modified.
+    let file_content = fs::read_to_string(&file).unwrap();
+    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
 }
 
 // === Tasks List ===
@@ -240,7 +354,7 @@ fn test_tasks_set_attr_status() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -264,12 +378,12 @@ fn test_tasks_set_attr_status() {
 }
 
 #[test]
-fn test_tasks_set_attr_time_spent() {
+fn test_tasks_set_attr_worktime_spent() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -278,14 +392,70 @@ fn test_tasks_set_attr_time_spent() {
             "task",
             "set-attr",
             "testid1234567890",
-            "time_spent",
+            "worktime_spent",
             "2.5",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Updated time_spent to \"2.5\""));
+        .stdout(predicate::str::contains(
+            "Updated worktime_spent to \"2.5\"",
+        ));
+}
+
+#[test]
+fn test_tasks_set_attr_time_created_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    // time_created is automatically managed — manual set-attr must be rejected.
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "time_created",
+            "2026-06-12T09:00:00Z",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("automatically managed"));
+}
+
+#[test]
+fn test_tasks_set_attr_time_last_updated_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    // time_last_updated is automatically managed — manual set-attr must be rejected.
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "set-attr",
+            "testid1234567890",
+            "time_last_updated",
+            "2026-06-12T10:00:00Z",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("automatically managed"));
 }
 
 #[test]
@@ -294,7 +464,7 @@ fn test_tasks_set_attr_owner() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -319,7 +489,7 @@ fn test_tasks_set_attr_parent() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -344,7 +514,7 @@ fn test_tasks_set_attr_priority() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -460,7 +630,7 @@ fn test_nonexistent_path() {
 fn test_invalid_status() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
-    let original_content = "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")";
+    let original_content = "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")";
     fs::write(&file, original_content).unwrap();
 
     ragtag()
@@ -577,9 +747,9 @@ fn test_full_workflow() {
             "create",
             "--title",
             "Workflow Test",
-            "--ttc-estimate",
+            "--worktime-estimate",
             "4",
-            "--time-units",
+            "--worktime-units",
             "hours",
         ])
         .assert()
@@ -635,14 +805,16 @@ fn test_full_workflow() {
             "task",
             "set-attr",
             task_id,
-            "time_spent",
+            "worktime_spent",
             "2.5",
             "--path",
             file.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Updated time_spent to \"2.5\""));
+        .stdout(predicate::str::contains(
+            "Updated worktime_spent to \"2.5\"",
+        ));
 
     // Set owner
     ragtag()
@@ -674,8 +846,8 @@ fn test_task_list_all_shows_done() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"done1234567890ab\", title=\"Done Task\", status=\"done\", ttc_estimate=1, time_units=\"hours\")\n\
-         @task(id=\"active12345678ab\", title=\"Active Task\", status=\"active\", ttc_estimate=2, time_units=\"hours\")",
+        "@task(id=\"done1234567890ab\", title=\"Done Task\", status=\"done\", worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"active12345678ab\", title=\"Active Task\", status=\"active\", worktime_estimate=2, worktime_units=\"hours\")",
     ).unwrap();
 
     // Without --all, done task should be excluded
@@ -714,8 +886,8 @@ fn test_task_list_filter_status() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"aaa1234567890ab\", title=\"Active Task\", status=\"active\", ttc_estimate=1, time_units=\"hours\")\n\
-         @task(id=\"bbb1234567890ab\", title=\"Blocked Task\", status=\"blocked\", ttc_estimate=2, time_units=\"hours\")",
+        "@task(id=\"aaa1234567890ab\", title=\"Active Task\", status=\"active\", worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Blocked Task\", status=\"blocked\", worktime_estimate=2, worktime_units=\"hours\")",
     ).unwrap();
 
     ragtag()
@@ -740,8 +912,8 @@ fn test_task_list_sort_title() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"zzz1234567890ab\", title=\"Zebra\", status=\"active\", ttc_estimate=1, time_units=\"hours\")\n\
-         @task(id=\"aaa1234567890ab\", title=\"Apple\", status=\"active\", ttc_estimate=2, time_units=\"hours\")",
+        "@task(id=\"zzz1234567890ab\", title=\"Zebra\", status=\"active\", worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"aaa1234567890ab\", title=\"Apple\", status=\"active\", worktime_estimate=2, worktime_units=\"hours\")",
     ).unwrap();
 
     let output = ragtag()
@@ -775,8 +947,8 @@ fn test_task_list_reverse() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"aaa1234567890ab\", title=\"Apple\", status=\"active\", priority=1, ttc_estimate=1, time_units=\"hours\")\n\
-         @task(id=\"zzz1234567890ab\", title=\"Zebra\", status=\"active\", priority=2, ttc_estimate=2, time_units=\"hours\")",
+        "@task(id=\"aaa1234567890ab\", title=\"Apple\", status=\"active\", priority=1, worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"zzz1234567890ab\", title=\"Zebra\", status=\"active\", priority=2, worktime_estimate=2, worktime_units=\"hours\")",
     ).unwrap();
 
     let output = ragtag()
@@ -803,6 +975,24 @@ fn test_task_list_reverse() {
         zebra_pos < apple_pos,
         "Zebra should appear before Apple when sorted by title reversed"
     );
+}
+
+#[test]
+fn test_task_summary_default_group_by_priority() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    // Without --group, the default grouping should be by priority (shows "Priority:" headers)
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "summary",
+            "--all",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Priority:"));
 }
 
 #[test]
@@ -877,7 +1067,7 @@ fn test_task_summary_format_list() {
 
     // Should have group headers
     assert!(
-        output_str.contains("Status: ") || output_str.contains("Owner: "),
+        output_str.contains("Priority: ") || output_str.contains("Owner: "),
         "list format should have group headers"
     );
 
@@ -922,7 +1112,7 @@ fn test_set_attr_negative_time_rejected() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -930,7 +1120,7 @@ fn test_set_attr_negative_time_rejected() {
             "task",
             "set-attr",
             "testid1234567890",
-            "time_spent",
+            "worktime_spent",
             "-5",
             "--path",
             file.to_str().unwrap(),
@@ -1021,11 +1211,35 @@ fn test_get_attr_by_prefix() {
 }
 
 #[test]
+fn test_get_attr_time_last_updated() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, time_last_updated=\"2026-06-12T10:00:00Z\", worktime_units=\"hours\", status=\"new\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "get-attr",
+            "testid1234567890",
+            "time_last_updated",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2026-06-12T10:00:00Z"));
+}
+
+#[test]
 fn test_set_attr_no_edit() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
     let original_content =
-        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")";
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")";
     fs::write(&file, original_content).unwrap();
 
     let output = ragtag()
@@ -1068,7 +1282,7 @@ fn test_set_attr_no_edit() {
 fn test_set_attr_no_edit_multiline_preserves_layout() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("test.md");
-    let original_content = "@task(\n    id=\"testid1234567890\",\n    title=\"Test\",\n    ttc_estimate=4,\n    time_units=\"hours\",\n    status=\"new\"\n)";
+    let original_content = "@task(\n    id=\"testid1234567890\",\n    title=\"Test\",\n    worktime_estimate=4,\n    worktime_units=\"hours\",\n    status=\"new\"\n)";
     fs::write(&file, original_content).unwrap();
 
     let output = ragtag()
@@ -1118,7 +1332,7 @@ fn test_set_attr_id_immutable() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     )
     .unwrap();
 
@@ -1332,7 +1546,7 @@ fn test_set_attr_value_with_comma_no_edit() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", description=\"old\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"Test\", description=\"old\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -1357,7 +1571,7 @@ fn test_set_attr_value_with_parens_no_edit() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"old\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"old\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -1382,7 +1596,7 @@ fn test_set_attr_value_with_comma_file_edit() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"Test\", description=\"old\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"Test\", description=\"old\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -1408,7 +1622,7 @@ fn test_set_attr_value_with_parens_file_edit() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"testid1234567890\", title=\"old\", ttc_estimate=4, time_units=\"hours\", status=\"new\")",
+        "@task(id=\"testid1234567890\", title=\"old\", worktime_estimate=4, worktime_units=\"hours\", status=\"new\")",
     ).unwrap();
 
     ragtag()
@@ -1436,9 +1650,9 @@ fn test_task_list_filter_mode_and_default() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", ttc_estimate=1, time_units=\"hours\")\n\
-         @task(id=\"bbb1234567890ab\", title=\"Bob Active\", status=\"active\", owner=\"bob\", ttc_estimate=2, time_units=\"hours\")\n\
-         @task(id=\"ccc1234567890ab\", title=\"Alice Blocked\", status=\"blocked\", owner=\"alice\", ttc_estimate=3, time_units=\"hours\")",
+        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Bob Active\", status=\"active\", owner=\"bob\", worktime_estimate=2, worktime_units=\"hours\")\n\
+         @task(id=\"ccc1234567890ab\", title=\"Alice Blocked\", status=\"blocked\", owner=\"alice\", worktime_estimate=3, worktime_units=\"hours\")",
     ).unwrap();
 
     // AND expression: must match both status=active AND owner=alice
@@ -1465,9 +1679,9 @@ fn test_task_list_filter_mode_or() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", ttc_estimate=1, time_units=\"hours\")\n\
-         @task(id=\"bbb1234567890ab\", title=\"Bob Blocked\", status=\"blocked\", owner=\"bob\", ttc_estimate=2, time_units=\"hours\")\n\
-         @task(id=\"ccc1234567890ab\", title=\"Alice Blocked\", status=\"blocked\", owner=\"alice\", ttc_estimate=3, time_units=\"hours\")",
+        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Bob Blocked\", status=\"blocked\", owner=\"bob\", worktime_estimate=2, worktime_units=\"hours\")\n\
+         @task(id=\"ccc1234567890ab\", title=\"Alice Blocked\", status=\"blocked\", owner=\"alice\", worktime_estimate=3, worktime_units=\"hours\")",
     ).unwrap();
 
     // OR expression: match status=active OR owner=alice
@@ -1494,8 +1708,8 @@ fn test_task_list_filter_mode_and_explicit() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", ttc_estimate=1, time_units=\"hours\")\n\
-         @task(id=\"bbb1234567890ab\", title=\"Bob Active\", status=\"active\", owner=\"bob\", ttc_estimate=2, time_units=\"hours\")",
+        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Bob Active\", status=\"active\", owner=\"bob\", worktime_estimate=2, worktime_units=\"hours\")",
     ).unwrap();
 
     // Parenthesized expression: (status=active OR status=blocked) AND owner=alice
@@ -1521,8 +1735,8 @@ fn test_task_summary_filter_applied() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"aaa1234567890ab\", title=\"Active Task\", status=\"active\", ttc_estimate=1, time_units=\"hours\")\n\
-         @task(id=\"bbb1234567890ab\", title=\"Blocked Task\", status=\"blocked\", ttc_estimate=2, time_units=\"hours\")",
+        "@task(id=\"aaa1234567890ab\", title=\"Active Task\", status=\"active\", worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Blocked Task\", status=\"blocked\", worktime_estimate=2, worktime_units=\"hours\")",
     ).unwrap();
 
     // Filter should be applied in summary (this was the bug)
@@ -1550,9 +1764,9 @@ fn test_task_summary_filter_mode_or() {
     let file = dir.path().join("test.md");
     fs::write(
         &file,
-        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", ttc_estimate=1, time_units=\"hours\")\n\
-         @task(id=\"bbb1234567890ab\", title=\"Bob Blocked\", status=\"blocked\", owner=\"bob\", ttc_estimate=2, time_units=\"hours\")\n\
-         @task(id=\"ccc1234567890ab\", title=\"Alice Blocked\", status=\"blocked\", owner=\"alice\", ttc_estimate=3, time_units=\"hours\")",
+        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Bob Blocked\", status=\"blocked\", owner=\"bob\", worktime_estimate=2, worktime_units=\"hours\")\n\
+         @task(id=\"ccc1234567890ab\", title=\"Alice Blocked\", status=\"blocked\", owner=\"alice\", worktime_estimate=3, worktime_units=\"hours\")",
     ).unwrap();
 
     // OR expression in summary: match status=active OR owner=alice
@@ -1573,4 +1787,97 @@ fn test_task_summary_filter_mode_or() {
         .stdout(predicate::str::contains("Alice Active"))
         .stdout(predicate::str::contains("Alice Blocked"))
         .stdout(predicate::str::contains("Bob Blocked").not());
+}
+
+// === Task List --format raw ===
+
+#[test]
+fn test_tasks_list_format_raw() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--format",
+            "raw",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    // Verify key=value format
+    assert!(output_str.contains("id=a1b2c3d4e5f67890"));
+    assert!(output_str.contains("title=Design API"));
+    assert!(output_str.contains("owner=alice"));
+    assert!(output_str.contains("status=active"));
+    assert!(output_str.contains("priority=1"));
+    // Verify multiple tasks are separated by blank lines
+    let blocks: Vec<&str> = output_str.split("\n\n").collect();
+    assert!(
+        blocks.len() >= 2,
+        "Expected multiple task blocks separated by blank lines, got {}",
+        blocks.len()
+    );
+}
+
+#[test]
+fn test_tasks_list_format_raw_with_filter() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    let output = ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "list",
+            "--format",
+            "raw",
+            "--path",
+            &path,
+            "--filter",
+            "status=active",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    // Should only contain the active task
+    assert!(output_str.contains("id=a1b2c3d4e5f67890"));
+    assert!(output_str.contains("status=active"));
+    // Should NOT contain blocked task
+    assert!(!output_str.contains("id=fedcba0987654321"));
+}
+
+// === Query without TAG_NAME (list all tags) ===
+
+#[test]
+fn test_query_all_tags() {
+    ragtag()
+        .args(["--no-color", "query", "--path", &fixtures_dir()])
+        .assert()
+        .success()
+        // Should contain tags from multiple files/types
+        .stdout(predicate::str::contains("@task"))
+        .stdout(predicate::str::contains("@note"))
+        .stdout(predicate::str::contains("@todo"));
+}
+
+#[test]
+fn test_query_specific_tag_still_works() {
+    ragtag()
+        .args(["--no-color", "query", "task", "--path", &fixtures_dir()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Design API"))
+        .stdout(predicate::str::contains("Write tests"))
+        // Should NOT contain non-task tags
+        .stdout(predicate::str::contains("@note").not())
+        .stdout(predicate::str::contains("@todo").not());
 }

@@ -73,7 +73,7 @@ tasks:
 
   # Default time units for new tasks.
   # Allowed values: "hours", "days", "weeks".
-  default_time_units: "hours"
+  default_worktime_units: "hours"
 
   # Default status for new tasks.
   # Must be a recognized status keyword.
@@ -135,7 +135,7 @@ tasks:
 | --- | --- | --- | --- |
 | `tasks.tag_name` | string | `"task"` | Tag name used for tasks |
 | `tasks.default_owner` | string | `"me"` | Default owner for new tasks |
-| `tasks.default_time_units` | string | `"hours"` | Default time units (`hours`, `days`, or `weeks`) |
+| `tasks.default_worktime_units` | string | `"hours"` | Default time units (`hours`, `days`, or `weeks`) |
 | `tasks.default_status` | string | `"new"` | Default status for new tasks |
 | `tasks.exclude_status_categories` | list of strings | `["done", "abandoned"]` | Status categories to exclude from `task list` and `task summary` output by default |
 | `tasks.status_keywords` | object | (see above) | Status keyword groups by category |
@@ -177,7 +177,7 @@ ignore_patterns:
 tasks:
   tag_name: "todo"
   default_owner: "alice"
-  default_time_units: "days"
+  default_worktime_units: "days"
   default_status: "pending"
   status_keywords:
     done: ["done", "shipped"]

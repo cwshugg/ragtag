@@ -89,8 +89,8 @@ pub fn build_cli(registry: &ExtensionRegistry) -> Command {
                 .about("Search for specific tags")
                 .arg(
                     Arg::new("TAG_NAME")
-                        .help("Tag name to search for (without @)")
-                        .required(true)
+                        .help("Tag name to search for (without @); omit to list all tags")
+                        .required(false)
                         .index(1),
                 )
                 .arg(

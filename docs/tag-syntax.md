@@ -230,8 +230,10 @@ If multiple named attributes share the same key, **the first one wins** when acc
     owner="alice",
     status="active",
     priority=1,
-    ttc_estimate=8,
-    time_units="hours"
+    worktime_estimate=8,
+    time_created="2026-06-12T09:00:00Z",
+    time_last_updated="2026-06-12T10:00:00Z",
+    workworktime_units="hours"
 )
 ```
 

@@ -5,4 +5,4 @@
 
 pub mod writer;
 
-pub use writer::{modify_tag_attribute, AtomicFileEditor, FileEditor};
+pub use writer::{modify_tag_attribute, write_file_atomically, AtomicFileEditor, FileEditor};

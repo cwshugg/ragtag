@@ -5,10 +5,17 @@
 
 use std::io::BufRead;
 
+use chrono::Utc;
+
 use super::super::config::TaskConfig;
 use super::super::models::{TaskTag, TaskTagBuilder};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
+
+/// Returns the current UTC time formatted as ISO 8601 (e.g. `2026-06-12T13:29:44Z`).
+pub fn now_utc() -> String {
+    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
 
 /// Generates a 16-character hex task ID using `getrandom`.
 pub fn generate_task_id() -> Result<String, RagtagError> {
@@ -50,21 +57,31 @@ pub fn format_task_string(task: &TaskTag, config: &TaskConfig) -> String {
         attrs.push(format!("    priority={priority}"));
     }
 
-    if let Some(time_spent) = task.time_spent {
-        attrs.push(format!("    time_spent={time_spent}"));
+    if let Some(worktime_spent) = task.worktime_spent {
+        attrs.push(format!("    worktime_spent={worktime_spent}"));
     }
 
-    if let Some(ttc_estimate) = task.ttc_estimate {
-        attrs.push(format!("    ttc_estimate={ttc_estimate}"));
+    if let Some(worktime_estimate) = task.worktime_estimate {
+        attrs.push(format!("    worktime_estimate={worktime_estimate}"));
     }
 
-    if let Some(ttc_actual) = task.ttc_actual {
-        attrs.push(format!("    ttc_actual={ttc_actual}"));
+    if let Some(ref time_created) = task.time_created {
+        attrs.push(format!(
+            "    time_created=\"{}\"",
+            escape_for_tag(time_created)
+        ));
+    }
+
+    if let Some(ref time_last_updated) = task.time_last_updated {
+        attrs.push(format!(
+            "    time_last_updated=\"{}\"",
+            escape_for_tag(time_last_updated)
+        ));
     }
 
     attrs.push(format!(
-        "    time_units=\"{}\"",
-        escape_for_tag(&task.time_units)
+        "    worktime_units=\"{}\"",
+        escape_for_tag(&task.worktime_units)
     ));
 
     format!("@{}(\n{}\n)", config.tag_name, attrs.join(",\n"))
@@ -87,11 +104,16 @@ pub fn run(
     builder.priority = matches
         .get_one::<String>("priority")
         .and_then(|s| s.parse().ok());
-    builder.ttc_estimate = matches
-        .get_one::<String>("ttc-estimate")
+    builder.worktime_estimate = matches
+        .get_one::<String>("worktime-estimate")
         .and_then(|s| s.parse().ok());
-    builder.time_units = matches.get_one::<String>("time-units").cloned();
+    builder.worktime_units = matches.get_one::<String>("worktime-units").cloned();
     builder.pid = matches.get_one::<String>("pid").cloned();
+
+    // Auto-set timestamps — never user-supplied.
+    let ts = now_utc();
+    builder.time_created = Some(ts.clone());
+    builder.time_last_updated = Some(ts);
 
     // If title is missing, fall back to interactive mode for remaining fields
     if builder.title.is_none() {
@@ -114,6 +136,11 @@ fn run_interactive(
     if builder.id.is_none() {
         builder.id = Some(generate_task_id()?);
     }
+
+    // Auto-set timestamps — never user-supplied.
+    let ts = now_utc();
+    builder.time_created = Some(ts.clone());
+    builder.time_last_updated = Some(ts);
 
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
@@ -147,11 +174,15 @@ fn run_interactive(
         ("Status", "status", builder.status.is_some()),
         ("Priority", "priority", builder.priority.is_some()),
         (
-            "TTC Estimate",
-            "ttc_estimate",
-            builder.ttc_estimate.is_some(),
+            "Worktime Estimate",
+            "worktime_estimate",
+            builder.worktime_estimate.is_some(),
         ),
-        ("Time Units", "time_units", builder.time_units.is_some()),
+        (
+            "Worktime Units",
+            "worktime_units",
+            builder.worktime_units.is_some(),
+        ),
         ("Parent ID", "pid", builder.pid.is_some()),
     ];
 
@@ -173,12 +204,12 @@ fn run_interactive(
                             builder.priority = Some(p);
                         }
                     }
-                    "ttc_estimate" => {
+                    "worktime_estimate" => {
                         if let Ok(v) = trimmed.parse::<f64>() {
-                            builder.ttc_estimate = Some(v);
+                            builder.worktime_estimate = Some(v);
                         }
                     }
-                    "time_units" => builder.time_units = Some(trimmed),
+                    "worktime_units" => builder.worktime_units = Some(trimmed),
                     "pid" => builder.pid = Some(trimmed),
                     _ => {}
                 }
@@ -217,15 +248,15 @@ mod tests {
         let mut builder = TaskTagBuilder::new();
         builder.id = Some("abc123def456789a".to_string());
         builder.title = Some("Test Task".to_string());
-        builder.ttc_estimate = Some(4.5);
+        builder.worktime_estimate = Some(4.5);
         let task = builder.build(&config).unwrap();
 
         let output = format_task_string(&task, &config);
         assert!(output.starts_with("@task("));
         assert!(output.contains("id=\"abc123def456789a\""));
         assert!(output.contains("title=\"Test Task\""));
-        assert!(output.contains("ttc_estimate=4.5"));
-        assert!(output.contains("time_units=\"hours\""));
+        assert!(output.contains("worktime_estimate=4.5"));
+        assert!(output.contains("worktime_units=\"hours\""));
         assert!(output.ends_with(")\n") || output.ends_with(')'));
     }
 
@@ -235,14 +266,18 @@ mod tests {
         let mut builder = TaskTagBuilder::new();
         builder.id = Some("abc123def456789a".to_string());
         builder.title = Some("Test".to_string());
-        builder.ttc_estimate = Some(2.0);
+        builder.worktime_estimate = Some(2.0);
         builder.description = Some("A description".to_string());
         builder.priority = Some(0);
+        builder.time_created = Some("2026-06-12T09:00:00Z".to_string());
+        builder.time_last_updated = Some("2026-06-12T10:00:00Z".to_string());
         let task = builder.build(&config).unwrap();
 
         let output = format_task_string(&task, &config);
         assert!(output.contains("description=\"A description\""));
         assert!(output.contains("priority=0"));
+        assert!(output.contains("time_created=\"2026-06-12T09:00:00Z\""));
+        assert!(output.contains("time_last_updated=\"2026-06-12T10:00:00Z\""));
     }
 
     #[test]
@@ -251,7 +286,7 @@ mod tests {
         let mut builder = TaskTagBuilder::new();
         builder.id = Some("abc123def456789a".to_string());
         builder.title = Some("Child Task".to_string());
-        builder.ttc_estimate = Some(2.0);
+        builder.worktime_estimate = Some(2.0);
         builder.pid = Some("parent0000000000".to_string());
         let task = builder.build(&config).unwrap();
 
@@ -280,7 +315,7 @@ mod tests {
         let mut builder = TaskTagBuilder::new();
         builder.id = Some("abc123def456789a".to_string());
         builder.title = Some("Say \"hello\"".to_string());
-        builder.ttc_estimate = Some(1.0);
+        builder.worktime_estimate = Some(1.0);
         let task = builder.build(&config).unwrap();
 
         let output = format_task_string(&task, &config);

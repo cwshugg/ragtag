@@ -187,9 +187,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_tasks_default_time_units() {
+    fn test_get_tasks_default_worktime_units() {
         let config = default_config();
-        let result = run_get("tasks.default_time_units", &config).unwrap();
+        let result = run_get("tasks.default_worktime_units", &config).unwrap();
         assert_eq!(result, "hours");
     }
 
@@ -308,7 +308,7 @@ tasks:
         assert_eq!(run_get("tasks.default_owner", &config).unwrap(), "alice");
         // Defaults should still apply for unspecified fields.
         assert_eq!(
-            run_get("tasks.default_time_units", &config).unwrap(),
+            run_get("tasks.default_worktime_units", &config).unwrap(),
             "hours"
         );
     }

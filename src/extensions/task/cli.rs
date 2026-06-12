@@ -43,15 +43,15 @@ pub fn build_task_command() -> Command {
                         .value_name("NUM"),
                 )
                 .arg(
-                    Arg::new("ttc-estimate")
-                        .long("ttc-estimate")
+                    Arg::new("worktime-estimate")
+                        .long("worktime-estimate")
                         .help("Estimated time to complete")
                         .value_name("NUM"),
                 )
                 .arg(
-                    Arg::new("time-units")
-                        .long("time-units")
-                        .help("Time units (hours, days, weeks)")
+                    Arg::new("worktime-units")
+                        .long("worktime-units")
+                        .help("Worktime units (hours, days, weeks)")
                         .value_name("STR"),
                 )
                 .arg(
@@ -94,6 +94,13 @@ pub fn build_task_command() -> Command {
                         .short('a')
                         .help("Show all tasks, including excluded status categories (done, abandoned)")
                         .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .help("Output format (default or raw)")
+                        .value_parser(["default", "raw"])
+                        .default_value("default"),
                 ),
         )
         .subcommand(
@@ -133,7 +140,7 @@ pub fn build_task_command() -> Command {
                         .long("group")
                         .help("Group tasks by field (status, owner, priority)")
                         .value_name("FIELD")
-                        .default_value("status"),
+                        .default_value("priority"),
                 )
                 .arg(
                     Arg::new("sort")

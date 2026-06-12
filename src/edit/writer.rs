@@ -169,6 +169,64 @@ impl FileEditor for AtomicFileEditor {
     }
 }
 
+/// Writes `content` to `file_path` atomically using a tempfile + rename strategy.
+///
+/// Preserves the original file's permissions. Refuses to write to symlinks.
+pub fn write_file_atomically(file_path: &Path, content: &str) -> Result<(), RagtagError> {
+    // Reject symlinks
+    let meta = std::fs::symlink_metadata(file_path).map_err(|e| RagtagError::FileRead {
+        path: file_path.to_path_buf(),
+        source: e,
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err(RagtagError::SymlinkEdit(file_path.to_path_buf()));
+    }
+
+    let original_perms = meta.permissions();
+
+    let parent = file_path.parent().ok_or_else(|| RagtagError::FileWrite {
+        path: file_path.to_path_buf(),
+        source: std::io::Error::other("cannot determine parent directory"),
+    })?;
+
+    let mut tmpfile =
+        tempfile::NamedTempFile::new_in(parent).map_err(|e| RagtagError::FileWrite {
+            path: file_path.to_path_buf(),
+            source: e,
+        })?;
+
+    tmpfile
+        .write_all(content.as_bytes())
+        .map_err(|e| RagtagError::FileWrite {
+            path: file_path.to_path_buf(),
+            source: e,
+        })?;
+
+    tmpfile
+        .as_file()
+        .sync_all()
+        .map_err(|e| RagtagError::FileWrite {
+            path: file_path.to_path_buf(),
+            source: e,
+        })?;
+
+    std::fs::set_permissions(tmpfile.path(), original_perms).map_err(|e| {
+        RagtagError::FileWrite {
+            path: file_path.to_path_buf(),
+            source: e,
+        }
+    })?;
+
+    tmpfile
+        .persist(file_path)
+        .map_err(|e| RagtagError::FileWrite {
+            path: file_path.to_path_buf(),
+            source: e.error,
+        })?;
+
+    Ok(())
+}
+
 /// Modifies a tag attribute within the tag text.
 ///
 /// If the attribute exists, replaces its value. If not, inserts it

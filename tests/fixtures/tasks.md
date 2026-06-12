@@ -9,13 +9,13 @@
     owner="alice",
     status="active",
     priority=1,
-    ttc_estimate=8,
-    time_units="hours"
+    worktime_estimate=8,
+    workworktime_units="hours"
 )
 
 Some notes about the design...
 
-@task(id="1234567890abcdef", title="Write tests", status="new", priority=2, ttc_estimate=4, time_units="hours")
+@task(id="1234567890abcdef", title="Write tests", status="new", priority=2, worktime_estimate=4, workworktime_units="hours")
 
 ## Sprint 2
 
@@ -26,7 +26,7 @@ Some notes about the design...
     owner="bob",
     status="blocked",
     priority=0,
-    ttc_estimate=2.5,
-    time_spent=1.5,
-    time_units="hours"
+    worktime_estimate=2.5,
+    worktime_spent=1.5,
+    workworktime_units="hours"
 )

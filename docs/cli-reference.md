@@ -91,9 +91,9 @@ notes/bugs.md:42: @todo(priority=0, owner="bob")
 | `=` | `status=active` | Equal |
 | `!=` | `status!=done` | Not equal |
 | `>` | `priority>0` | Greater than (numeric) |
-| `<` | `ttc_estimate<8` | Less than (numeric) |
+| `<` | `worktime_estimate<8` | Less than (numeric) |
 | `>=` | `priority>=1` | Greater than or equal (numeric) |
-| `<=` | `ttc_estimate<=4` | Less than or equal (numeric) |
+| `<=` | `worktime_estimate<=4` | Less than or equal (numeric) |
 
 Numeric comparisons parse both sides as `f64`. If parsing fails, the comparison returns false.
 
@@ -164,8 +164,8 @@ ragtag task create [OPTIONS]
 | `--owner <STR>` | Task owner |
 | `--status <STR>` | Task status |
 | `--priority <NUM>` | Priority (`0` = highest) |
-| `--ttc-estimate <NUM>` | Time-to-complete estimate |
-| `--time-units <STR>` | Time units: `hours`, `days`, or `weeks` |
+| `--worktime-estimate <NUM>` | Time-to-complete estimate |
+| `--worktime-units <STR>` | Time units: `hours`, `days`, or `weeks` |
 | `--pid <STR>` | Parent task ID |
 | `-i`, `--interactive` | Launch interactive prompt for all fields |
 
@@ -179,8 +179,8 @@ Prints a multi-line `@task(...)` string to stdout:
     title="Write documentation",
     owner="me",
     status="new",
-    ttc_estimate=4,
-    time_units="hours"
+    worktime_estimate=4,
+    workworktime_units="hours"
 )
 ```
 
@@ -260,7 +260,7 @@ ragtag task summary [OPTIONS]
 | Option | Default | Description |
 | --- | --- | --- |
 | `--path <PATH>` | `.` | Search path (file or directory) |
-| `--group <FIELD>` | `status` | Group tasks by field: `status`, `owner`, or `priority` |
+| `--group <FIELD>` | `priority` | Group tasks by field: `status`, `owner`, or `priority` |
 | `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
 | `--filter <EXPR>` | — | Filter tasks by attribute expression (e.g., `"status=active AND priority<=2"`). Supports `AND`, `OR`, and parentheses |
 | `--format <FORMAT>` | `table` | Output format: `table` (aligned columns) or `list` (multi-line per task) |
@@ -289,7 +289,7 @@ ragtag task get-attr <ID> <ATTR> [OPTIONS]
 | Argument | Required | Description |
 | --- | --- | --- |
 | `ID` | Yes | Task ID or ID prefix |
-| `ATTR` | Yes | Attribute name: `title`, `description`, `owner`, `status`, `priority`, `time_spent`, `ttc_estimate`, `ttc_actual`, `time_units`, `pid`, `id` |
+| `ATTR` | Yes | Attribute name: `title`, `description`, `owner`, `status`, `priority`, `worktime_spent`, `worktime_estimate`, `time_created`, `time_last_updated`, `worktime_units`, `pid`, `id` |
 
 **Options:**
 
@@ -359,7 +359,7 @@ ragtag task set-attr a1b2c3d4e5f67890 priority 0
 ragtag task set-attr a1b2c3d4e5f67890 owner alice
 
 # Update time spent
-ragtag task set-attr a1b2c3d4e5f67890 time_spent 6.5
+ragtag task set-attr a1b2c3d4e5f67890 worktime_spent 6.5
 
 # Update parent ID
 ragtag task set-attr a1b2c3d4e5f67890 pid f0e1d2c3b4a59687

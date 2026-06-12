@@ -34,10 +34,11 @@ fn get_task_attr_value(task: &TaskTag, attr: &str) -> Result<String, RagtagError
         "owner" => Ok(task.owner.clone()),
         "status" => Ok(task.status.clone()),
         "priority" => Ok(task.priority.map(|p| p.to_string()).unwrap_or_default()),
-        "time_spent" => Ok(task.time_spent.map(format_float).unwrap_or_default()),
-        "ttc_estimate" => Ok(task.ttc_estimate.map(format_float).unwrap_or_default()),
-        "ttc_actual" => Ok(task.ttc_actual.map(format_float).unwrap_or_default()),
-        "time_units" => Ok(task.time_units.clone()),
+        "worktime_spent" => Ok(task.worktime_spent.map(format_float).unwrap_or_default()),
+        "worktime_estimate" => Ok(task.worktime_estimate.map(format_float).unwrap_or_default()),
+        "time_created" => Ok(task.time_created.clone().unwrap_or_default()),
+        "time_last_updated" => Ok(task.time_last_updated.clone().unwrap_or_default()),
+        "worktime_units" => Ok(task.worktime_units.clone()),
         "pid" => Ok(task.pid.clone().unwrap_or_default()),
         _ => Err(RagtagError::ExtensionError {
             extension_name: "Task Manager".to_string(),
@@ -85,10 +86,11 @@ mod tests {
             owner: "alice".to_string(),
             status: "active".to_string(),
             priority: Some(1),
-            time_spent: Some(2.5),
-            ttc_estimate: Some(4.0),
-            ttc_actual: None,
-            time_units: "hours".to_string(),
+            worktime_spent: Some(2.5),
+            worktime_estimate: Some(4.0),
+            time_created: Some("2026-06-12T09:00:00Z".to_string()),
+            time_last_updated: Some("2026-06-12T10:00:00Z".to_string()),
+            worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,
         }
@@ -122,21 +124,36 @@ mod tests {
     }
 
     #[test]
-    fn test_get_attr_time_spent_float() {
+    fn test_get_attr_worktime_spent_float() {
         let task = make_task();
-        assert_eq!(get_task_attr_value(&task, "time_spent").unwrap(), "2.5");
+        assert_eq!(get_task_attr_value(&task, "worktime_spent").unwrap(), "2.5");
     }
 
     #[test]
-    fn test_get_attr_ttc_estimate_whole() {
+    fn test_get_attr_worktime_estimate_whole() {
         let task = make_task();
-        assert_eq!(get_task_attr_value(&task, "ttc_estimate").unwrap(), "4");
+        assert_eq!(
+            get_task_attr_value(&task, "worktime_estimate").unwrap(),
+            "4"
+        );
     }
 
     #[test]
-    fn test_get_attr_ttc_actual_none() {
+    fn test_get_attr_time_created() {
         let task = make_task();
-        assert_eq!(get_task_attr_value(&task, "ttc_actual").unwrap(), "");
+        assert_eq!(
+            get_task_attr_value(&task, "time_created").unwrap(),
+            "2026-06-12T09:00:00Z"
+        );
+    }
+
+    #[test]
+    fn test_get_attr_time_last_updated() {
+        let task = make_task();
+        assert_eq!(
+            get_task_attr_value(&task, "time_last_updated").unwrap(),
+            "2026-06-12T10:00:00Z"
+        );
     }
 
     #[test]

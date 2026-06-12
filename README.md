@@ -45,8 +45,8 @@ cargo build --release
         id="a1b2c3d4e5f67890",
         title="Refactor parser module",
         status="active",
-        ttc_estimate=4,
-        time_units="hours"
+        worktime_estimate=4,
+        workworktime_units="hours"
     )
     ```
 
@@ -72,7 +72,7 @@ cargo build --release
 5. **Create a new task:**
 
     ```bash
-    ragtag task create --title "Write docs" --ttc-estimate 2 --time-units hours
+    ragtag task create --title "Write docs" --worktime-estimate 2 --worktime-units hours
     ```
 
     This prints an `@task(...)` string to stdout for you to copy into a note file.

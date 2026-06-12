@@ -54,16 +54,19 @@ pub fn format_task_detail(task: &TaskTag, config: &TaskConfig, color_mode: &Colo
             colorize_priority(priority, color_mode)
         ));
     }
-    if let Some(ts) = task.time_spent {
-        lines.push(format!("Time Spent: {ts}"));
+    if let Some(worktime_spent) = task.worktime_spent {
+        lines.push(format!("Worktime Spent: {worktime_spent}"));
     }
-    if let Some(ta) = task.ttc_actual {
-        lines.push(format!("Time-to-Completion Actual: {ta}"));
+    if let Some(worktime_estimate) = task.worktime_estimate {
+        lines.push(format!("Worktime Estimate: {worktime_estimate}"));
     }
-    if let Some(te) = task.ttc_estimate {
-        lines.push(format!("Time-to-Completion Estimate: {te}"));
+    if let Some(ref time_created) = task.time_created {
+        lines.push(format!("Time Created: {time_created}"));
     }
-    lines.push(format!("Unit of Time: {}", task.time_units));
+    if let Some(ref time_last_updated) = task.time_last_updated {
+        lines.push(format!("Time Last Updated: {time_last_updated}"));
+    }
+    lines.push(format!("Unit of Time: {}", task.worktime_units));
     if let Some(ref pid) = task.pid {
         lines.push(format!("Parent ID: {pid}"));
     }
@@ -205,10 +208,11 @@ mod tests {
             owner: "me".to_string(),
             status: "active".to_string(),
             priority: Some(1),
-            time_spent: Some(2.0),
-            ttc_estimate: Some(4.5),
-            ttc_actual: None,
-            time_units: "hours".to_string(),
+            worktime_spent: Some(2.0),
+            worktime_estimate: Some(4.5),
+            time_created: Some("2026-06-12T09:00:00Z".to_string()),
+            time_last_updated: Some("2026-06-12T10:00:00Z".to_string()),
+            worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,
         }
@@ -236,6 +240,10 @@ mod tests {
         assert!(detail.contains("ID: abc123"));
         assert!(detail.contains("Owner: me"));
         assert!(detail.contains("Status: active"));
+        assert!(detail.contains("Worktime Spent: 2"));
+        assert!(detail.contains("Worktime Estimate: 4.5"));
+        assert!(detail.contains("Time Created: 2026-06-12T09:00:00Z"));
+        assert!(detail.contains("Time Last Updated: 2026-06-12T10:00:00Z"));
     }
 
     #[test]

@@ -137,10 +137,25 @@ pub fn get_task_field_str<'a>(task: &'a TaskTag, field: &str) -> Cow<'a, str> {
         // tasks without a priority sort first when sorting by priority.
         "priority" => Cow::Owned(task.priority.map(|p| p.to_string()).unwrap_or_default()),
         // Same empty-string-for-None behavior applies to time fields.
-        "time_spent" => Cow::Owned(task.time_spent.map(|t| t.to_string()).unwrap_or_default()),
-        "ttc_estimate" => Cow::Owned(task.ttc_estimate.map(|t| t.to_string()).unwrap_or_default()),
-        "ttc_actual" => Cow::Owned(task.ttc_actual.map(|t| t.to_string()).unwrap_or_default()),
-        "time_units" => Cow::Borrowed(&task.time_units),
+        "worktime_spent" => Cow::Owned(
+            task.worktime_spent
+                .map(|t| t.to_string())
+                .unwrap_or_default(),
+        ),
+        "worktime_estimate" => Cow::Owned(
+            task.worktime_estimate
+                .map(|t| t.to_string())
+                .unwrap_or_default(),
+        ),
+        "time_created" => task
+            .time_created
+            .as_deref()
+            .map_or_else(|| Cow::Owned(String::new()), Cow::Borrowed),
+        "time_last_updated" => task
+            .time_last_updated
+            .as_deref()
+            .map_or_else(|| Cow::Owned(String::new()), Cow::Borrowed),
+        "worktime_units" => Cow::Borrowed(&task.worktime_units),
         _ => {
             log::warn!("unknown task field \"{field}\" in filter/sort expression");
             Cow::Owned(String::new())
@@ -301,10 +316,11 @@ mod tests {
             owner: owner.to_string(),
             status: status.to_string(),
             priority,
-            time_spent: None,
-            ttc_estimate: Some(4.0),
-            ttc_actual: None,
-            time_units: "hours".to_string(),
+            worktime_spent: None,
+            worktime_estimate: Some(4.0),
+            time_created: None,
+            time_last_updated: None,
+            worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,
         }
@@ -359,7 +375,7 @@ mod tests {
         assert_eq!(&*get_task_field_str(&task, "status"), "active");
         assert_eq!(&*get_task_field_str(&task, "owner"), "alice");
         assert_eq!(&*get_task_field_str(&task, "priority"), "1");
-        assert_eq!(&*get_task_field_str(&task, "time_units"), "hours");
+        assert_eq!(&*get_task_field_str(&task, "worktime_units"), "hours");
     }
 
     #[test]

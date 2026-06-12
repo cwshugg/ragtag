@@ -34,7 +34,7 @@ pub fn run(
     let group_by = matches
         .get_one::<String>("group")
         .map(|s| s.as_str())
-        .unwrap_or("status");
+        .unwrap_or("priority");
 
     let sort_by = matches.get_one::<String>("sort").cloned();
 
@@ -311,22 +311,18 @@ fn build_rows(
 
 /// Formats the combined time column.
 ///
-/// Format: `TIME_SPENT/TTC_ACTUAL (~TTC_ESTIMATE) TIME_UNIT`
+/// Format: `WORKTIME_SPENT/WORKTIME_ESTIMATE TIME_UNIT`
 /// If a value is `None`, shows `-`.
 fn format_time(task: &TaskTag) -> String {
     let spent = task
-        .time_spent
-        .map(format_float)
-        .unwrap_or_else(|| "-".to_string());
-    let actual = task
-        .ttc_actual
+        .worktime_spent
         .map(format_float)
         .unwrap_or_else(|| "-".to_string());
     let estimate = task
-        .ttc_estimate
+        .worktime_estimate
         .map(format_float)
         .unwrap_or_else(|| "-".to_string());
-    format!("{}/{} ({}) {}", spent, actual, estimate, task.time_units)
+    format!("{spent}/{estimate} {}", task.worktime_units)
 }
 
 /// Formats a row with all columns padded to fixed widths.
@@ -391,9 +387,8 @@ mod tests {
         owner: &str,
         status: &str,
         priority: Option<u32>,
-        time_spent: Option<f64>,
-        ttc_estimate: Option<f64>,
-        ttc_actual: Option<f64>,
+        worktime_spent: Option<f64>,
+        worktime_estimate: Option<f64>,
     ) -> TaskTag {
         make_task_with_desc(
             id,
@@ -402,9 +397,8 @@ mod tests {
             owner,
             status,
             priority,
-            time_spent,
-            ttc_estimate,
-            ttc_actual,
+            worktime_spent,
+            worktime_estimate,
         )
     }
 
@@ -415,9 +409,8 @@ mod tests {
         owner: &str,
         status: &str,
         priority: Option<u32>,
-        time_spent: Option<f64>,
-        ttc_estimate: Option<f64>,
-        ttc_actual: Option<f64>,
+        worktime_spent: Option<f64>,
+        worktime_estimate: Option<f64>,
     ) -> TaskTag {
         TaskTag {
             id: id.to_string(),
@@ -427,10 +420,11 @@ mod tests {
             owner: owner.to_string(),
             status: status.to_string(),
             priority,
-            time_spent,
-            ttc_estimate,
-            ttc_actual,
-            time_units: "hours".to_string(),
+            worktime_spent,
+            worktime_estimate,
+            time_created: None,
+            time_last_updated: None,
+            worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,
         }
@@ -446,7 +440,6 @@ mod tests {
                 Some(1),
                 Some(2.0),
                 Some(8.0),
-                None,
             ),
             make_task(
                 "bbb2",
@@ -456,7 +449,6 @@ mod tests {
                 Some(2),
                 Some(4.0),
                 Some(4.0),
-                Some(5.0),
             ),
             make_task(
                 "ccc3",
@@ -466,18 +458,8 @@ mod tests {
                 Some(0),
                 None,
                 Some(6.0),
-                None,
             ),
-            make_task(
-                "ddd4",
-                "Task D",
-                "bob",
-                "blocked",
-                None,
-                None,
-                Some(10.0),
-                None,
-            ),
+            make_task("ddd4", "Task D", "bob", "blocked", None, None, Some(10.0)),
         ]
     }
 
@@ -553,8 +535,8 @@ mod tests {
         assert!(output.contains("alice"));
         assert!(output.contains("Task B"));
         // Check combined time column format
-        assert!(output.contains("2/- (8) hours")); // Task A: spent=2, actual=None, est=8
-        assert!(output.contains("4/5 (4) hours")); // Task B: spent=4, actual=5, est=4
+        assert!(output.contains("2/8 hours")); // Task A: spent=2, estimate=8
+        assert!(output.contains("4/4 hours")); // Task B: spent=4, estimate=4
     }
 
     #[test]
@@ -600,28 +582,19 @@ mod tests {
 
     #[test]
     fn test_get_group_key_status() {
-        let task = make_task("a", "Test", "me", "active", Some(1), None, Some(4.0), None);
+        let task = make_task("a", "Test", "me", "active", Some(1), None, Some(4.0));
         assert_eq!(get_group_key(&task, "status"), "active");
     }
 
     #[test]
     fn test_get_group_key_owner() {
-        let task = make_task(
-            "a",
-            "Test",
-            "alice",
-            "active",
-            Some(1),
-            None,
-            Some(4.0),
-            None,
-        );
+        let task = make_task("a", "Test", "alice", "active", Some(1), None, Some(4.0));
         assert_eq!(get_group_key(&task, "owner"), "alice");
     }
 
     #[test]
     fn test_get_group_key_priority_none() {
-        let task = make_task("a", "Test", "me", "active", None, None, Some(4.0), None);
+        let task = make_task("a", "Test", "me", "active", None, None, Some(4.0));
         assert_eq!(get_group_key(&task, "priority"), "(none)");
     }
 
@@ -662,9 +635,8 @@ mod tests {
                 Some(1),
                 Some(2.0),
                 Some(8.0),
-                None,
             ),
-            make_task("bbb2", "Task B", "bob", "active", Some(0), None, None, None),
+            make_task("bbb2", "Task B", "bob", "active", Some(0), None, None),
         ];
         let groups = group_tasks(&tasks, "status");
         let config = TaskConfig::default();
@@ -676,9 +648,9 @@ mod tests {
         // Each task should show 3 lines: path, title, details
         assert!(output.contains("test.md"));
         assert!(output.contains("Task A"));
-        assert!(output.contains("aaa1 [alice] [1/active] 2/- (8) hours"));
+        assert!(output.contains("aaa1 [alice] [1/active] 2/8 hours"));
         assert!(output.contains("Task B"));
-        assert!(output.contains("bbb2 [bob] [0/active] -/- (-) hours"));
+        assert!(output.contains("bbb2 [bob] [0/active] -/- hours"));
     }
 
     #[test]
@@ -705,17 +677,8 @@ mod tests {
     #[test]
     fn test_format_summary_list_blank_line_between_tasks() {
         let tasks = vec![
-            make_task(
-                "aaa1",
-                "Task A",
-                "alice",
-                "active",
-                Some(1),
-                None,
-                None,
-                None,
-            ),
-            make_task("bbb2", "Task B", "bob", "active", Some(2), None, None, None),
+            make_task("aaa1", "Task A", "alice", "active", Some(1), None, None),
+            make_task("bbb2", "Task B", "bob", "active", Some(2), None, None),
         ];
         let groups = group_tasks(&tasks, "status");
         let config = TaskConfig::default();
@@ -749,7 +712,6 @@ mod tests {
             Some(1),
             None,
             None,
-            None,
         )];
         let groups = group_tasks(&tasks, "status");
         let config = TaskConfig::default();
@@ -771,7 +733,6 @@ mod tests {
             Some(0),
             None,
             None,
-            None,
         )];
         let groups = group_tasks(&tasks, "status");
         let config = TaskConfig::default();
@@ -789,7 +750,6 @@ mod tests {
             "alice",
             "active",
             Some(0),
-            None,
             None,
             None,
         )];
@@ -812,7 +772,6 @@ mod tests {
             Some(1),
             None,
             None,
-            None,
         )];
         let groups = group_tasks(&tasks, "status");
         let config = TaskConfig::default();
@@ -830,7 +789,6 @@ mod tests {
             "alice",
             "active",
             Some(1),
-            None,
             None,
             None,
         )];
@@ -851,7 +809,6 @@ mod tests {
             "alice",
             "active",
             Some(1),
-            None,
             None,
             None,
         )];

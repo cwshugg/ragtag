@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::RagtagError;
 
-/// Allowed time unit values (fixed set, not user-configurable).
-pub const ALLOWED_TIME_UNITS: &[&str] = &["hours", "days", "weeks"];
+/// Allowed worktime unit values (fixed set, not user-configurable).
+pub const ALLOWED_WORKTIME_UNITS: &[&str] = &["hours", "days", "weeks"];
 
 /// Configuration for the task extension.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -18,8 +18,8 @@ pub struct TaskConfig {
     pub tag_name: String,
     /// Default owner for new tasks (default: "me").
     pub default_owner: String,
-    /// Default time units (default: "hours").
-    pub default_time_units: String,
+    /// Default worktime units (default: "hours").
+    pub default_worktime_units: String,
     /// Default status for new tasks (default: "new").
     pub default_status: String,
     /// Status keywords grouped by category.
@@ -35,7 +35,7 @@ impl Default for TaskConfig {
         Self {
             tag_name: "task".to_string(),
             default_owner: "me".to_string(),
-            default_time_units: "hours".to_string(),
+            default_worktime_units: "hours".to_string(),
             default_status: "new".to_string(),
             status_keywords: StatusKeywords::default(),
             exclude_status_categories: vec!["done".to_string(), "abandoned".to_string()],
@@ -46,13 +46,13 @@ impl Default for TaskConfig {
 impl TaskConfig {
     /// Validates the configuration.
     pub fn validate(&self) -> Result<(), RagtagError> {
-        if !ALLOWED_TIME_UNITS.contains(&self.default_time_units.as_str()) {
+        if !ALLOWED_WORKTIME_UNITS.contains(&self.default_worktime_units.as_str()) {
             return Err(RagtagError::ExtensionError {
                 extension_name: "Task Manager".to_string(),
                 message: format!(
-                    "invalid default_time_units \"{}\" — allowed values: {}",
-                    self.default_time_units,
-                    ALLOWED_TIME_UNITS.join(", ")
+                    "invalid default_worktime_units \"{}\" — allowed values: {}",
+                    self.default_worktime_units,
+                    ALLOWED_WORKTIME_UNITS.join(", ")
                 ),
             });
         }
@@ -165,7 +165,7 @@ mod tests {
         let config = TaskConfig::default();
         assert_eq!(config.tag_name, "task");
         assert_eq!(config.default_owner, "me");
-        assert_eq!(config.default_time_units, "hours");
+        assert_eq!(config.default_worktime_units, "hours");
         assert_eq!(config.default_status, "new");
     }
 
@@ -176,9 +176,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_bad_time_units() {
+    fn test_validate_bad_worktime_units() {
         let mut config = TaskConfig::default();
-        config.default_time_units = "fortnights".to_string();
+        config.default_worktime_units = "fortnights".to_string();
         assert!(config.validate().is_err());
     }
 
