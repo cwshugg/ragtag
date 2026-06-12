@@ -19,6 +19,23 @@ ragtag [OPTIONS] <COMMAND>
 
 These options are global and can be placed before any subcommand.
 
+## Subcommand Prefix Matching
+
+ragtag enables unambiguous prefix matching for *every* subcommand and sub-subcommand via clap's `infer_subcommands`. You may type any leading prefix of a subcommand name as long as it resolves to exactly one command at that level:
+
+```bash
+ragtag su                  # → ragtag summary
+ragtag q task              # → ragtag query task
+ragtag t li                # → ragtag task list
+ragtag t cr --title "X"    # → ragtag task create
+ragtag t sum               # → ragtag task summary
+ragtag t comp <ID>         # → ragtag task complete
+ragtag t pr 0 <ID>         # → ragtag task prioritize
+ragtag t ab <ID>           # → ragtag task abandon
+```
+
+Ambiguous prefixes (e.g., `ragtag t c`, which could be `complete` or `create`) are rejected with a list of candidate subcommands. Add one more character to disambiguate.
+
 ## Commands
 
 ### `summary`
@@ -182,6 +199,8 @@ Prints an `@task(...)` string to stdout. With `--format multiline` (default):
     status="new",
     worktime_spent=0,
     worktime_estimate=4,
+    time_created="2026-06-12T16:00:00Z",
+    time_last_updated="2026-06-12T16:00:00Z",
     worktime_units="hours"
 )
 ```
@@ -189,10 +208,21 @@ Prints an `@task(...)` string to stdout. With `--format multiline` (default):
 With `--format oneline`:
 
 ```
-@task(id="a1b2c3d4e5f67890", title="Write documentation", owner="me", status="new", worktime_spent=0, worktime_estimate=4, worktime_units="hours")
+@task(id="a1b2c3d4e5f67890", title="Write documentation", owner="me", status="new", worktime_spent=0, worktime_estimate=4, time_created="2026-06-12T16:00:00Z", time_last_updated="2026-06-12T16:00:00Z", worktime_units="hours")
 ```
 
-The task ID is a randomly-generated 16-character hex string.
+The task ID is a randomly-generated 16-character hex string. `worktime_spent` defaults to `0` and is always emitted. The `time_created` and `time_last_updated` fields are auto-populated with the current UTC timestamp (ISO 8601) at creation; they are never user-supplied and cannot be passed as flags.
+
+**Interactive mode:**
+
+If `--title` is omitted (or supplied as an empty string `--title ""`), `task create` enters interactive mode. ragtag prompts for each field on stdin using a `rustyline`-backed line editor (arrow keys, line editing, and history work as expected). Each prompt:
+
+* Shows the field name in a gray-blue color and the hint in dark gray
+* Shows the effective default in brackets when one exists, e.g., `Owner (leave blank to skip; default: me):`
+* Validates input on the spot — invalid entries print a red error and re-prompt the same field
+* Leaves the field unset (or uses the config default) when blank
+
+`time_created` and `time_last_updated` are **never** prompted — they are filled in automatically.
 
 #### `task list`
 
@@ -657,6 +687,16 @@ ragtag summary              # uses the config at the exported path
 
 ## File Editing Safety
 
-The `set-attr` command modifies files using **atomic writes**: the updated content is written to a temporary file first, then moved into place. This prevents data loss from interrupted writes.
+The `set-attr` command (and all status-change commands: `complete`, `activate`, `deactivate`, `block`, `abandon`, and `prioritize`) modify files using **atomic writes**: the updated content is written to a temporary file first, then moved into place. This prevents data loss from interrupted writes.
 
 ragtag **refuses to edit symlinked files** — you must resolve the symlink or edit the target file directly.
+
+### Tag Regeneration & Formatting Preservation
+
+When a task is edited in-place, ragtag does **not** perform a surgical text patch — it regenerates the entire `@task(...)` tag string from the parsed model and substitutes the result back into the source file. During regeneration, ragtag preserves:
+
+* The original indentation of the tag (leading whitespace on each line)
+* The original attribute order
+* Multi-line vs. single-line formatting (multi-line tags stay multi-line; one-line tags stay one-line)
+
+If a tag being modified does not already contain a `time_last_updated` attribute (for example, because it was created with an older version of ragtag), the field is **appended** to the tag automatically and set to the current UTC time. `time_created` is never changed after the initial creation.

@@ -119,12 +119,20 @@ Task management commands. See the [task management guide](docs/task-management.m
 
 | Subcommand | Description |
 | --- | --- |
-| `create` | Generate a new `@task(...)` string |
+| `create` | Generate a new `@task(...)` string (interactive when `--title` is omitted) |
 | `list` | List tasks found in files |
 | `get` | Look up a task by ID or title |
-| `summary` | Display a grouped summary of tasks |
+| `summary` | Display a grouped summary of tasks (default grouping: priority) |
 | `get-attr` | Print a single task attribute value |
 | `set-attr` | Update a single task attribute |
+| `complete` | Mark a task as done |
+| `activate` | Set a task's status to active |
+| `deactivate` | Set a task's status to inactive |
+| `block` | Set a task's status to blocked |
+| `abandon` | Set a task's status to abandoned |
+| `prioritize` | Set a task's priority (`prioritize <PRIORITY> <ID>`) |
+
+> **Subcommand prefix matching:** ragtag accepts any unambiguous prefix of every subcommand. For example, `ragtag su` resolves to `ragtag summary`, and `ragtag t li` resolves to `ragtag task list`. See the [CLI Reference](docs/cli-reference.md#subcommand-prefix-matching) for details.
 
 ## Global Flags
 

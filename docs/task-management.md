@@ -151,7 +151,11 @@ Required fields (`title`) cannot be skipped. Optional fields can be left blank t
 
 > **Config defaults:** When `--worktime-units`, `--owner`, or `--status` are omitted, ragtag falls back to the values configured in `ragtag.yml` (`default_worktime_units`, `default_owner`, and `default_status`). Out-of-the-box defaults are `hours`, `me`, and `new` respectively.
 
-> **Note:** `time_created` and `time_last_updated` are **not** accepted as flags — they are automatically set at creation time to the current UTC time and are never user-supplied.
+> **Note:** `time_created` and `time_last_updated` are **not** accepted as flags — they are automatically set at creation time to the current UTC time (ISO 8601) and are always included in the emitted `@task(...)` string. They are never user-supplied.
+
+> **Note:** `worktime_spent` defaults to `0` when not provided and is always included in the output. Pass `--worktime-spent <N>` to start a task with non-zero progress.
+
+> **Interactive prompts:** Interactive mode uses a `rustyline`-backed editor (arrow keys, line editing, history). Prompts are colored — field names in gray-blue, hints in dark gray, and validation errors in red. Each prompt shows the default value when one is configured (e.g., `Owner (leave blank to skip; default: me):`) and re-prompts on invalid input. Passing `--title ""` (empty string) also enters interactive mode.
 
 ### `task list`
 
