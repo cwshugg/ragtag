@@ -279,9 +279,9 @@ fn wrap_ansi_for_rustyline(s: &str) -> String {
 ///
 /// * `field`  — the field name (e.g. `"Title"`).
 /// * `hint`   — optional hint text shown after the field name in parentheses
-///              (e.g. `"(leave blank to skip)"`).
+///   (e.g. `"(leave blank to skip)"`).
 /// * `is_tty` — when `true`, emits ANSI colour codes and rustyline-safe wrappers;
-///              when `false`, produces a plain-text prompt suitable for piped input.
+///   when `false`, produces a plain-text prompt suitable for piped input.
 fn make_prompt(field: &str, hint: Option<&str>, is_tty: bool) -> String {
     if !is_tty {
         return match hint {
@@ -373,7 +373,7 @@ impl PromptSession {
                 Ok(line) => Ok(Some(line)),
                 Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => {
                     // Ensure the next output starts on a fresh line.
-                    writeln!(stderr, "").map_err(RagtagError::Io)?;
+                    writeln!(stderr).map_err(RagtagError::Io)?;
                     self.cancelled = true;
                     Ok(None)
                 }

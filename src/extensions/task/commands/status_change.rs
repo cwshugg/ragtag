@@ -27,7 +27,7 @@ use crate::extensions::ExtensionContext;
 /// * `ctx`           – extension context (stdout / walker / parser).
 /// * `target_status` – the exact status string to set (e.g., `"active"`).
 /// * `verb`          – past-tense verb used in the confirmation message
-///                     (e.g., `"Activated"`, `"Completed"`).
+///   (e.g., `"Activated"`, `"Completed"`).
 pub fn run_status_change(
     matches: &clap::ArgMatches,
     config: &TaskConfig,
