@@ -73,8 +73,7 @@ impl TaskConfig {
         // Warn once at config-load time about any unknown category names in
         // `exclude_status_categories`.  `get_excluded_keywords()` stays silent
         // so the message is never repeated on every list/summary invocation.
-        const VALID_CATEGORIES: &[&str] =
-            &["done", "active", "blocked", "abandoned", "inactive"];
+        const VALID_CATEGORIES: &[&str] = &["done", "active", "blocked", "abandoned", "inactive"];
         for cat in &self.exclude_status_categories {
             if !VALID_CATEGORIES.contains(&cat.as_str()) {
                 eprintln!(

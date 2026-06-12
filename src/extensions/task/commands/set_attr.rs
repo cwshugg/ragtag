@@ -80,8 +80,8 @@ fn validate_attr_value(attr: &str, value: &str, config: &TaskConfig) -> Result<(
 /// String attributes are wrapped in quotes; numeric attributes are bare.
 fn format_attr_for_update(attr: &str, value: &str) -> String {
     match attr {
-        "title" | "description" | "owner" | "status" | "worktime_units" | "pid" | "time_created"
-        | "time_last_updated" => {
+        "title" | "description" | "owner" | "status" | "worktime_units" | "pid"
+        | "time_created" | "time_last_updated" => {
             format!("\"{}\"", escape_for_tag(value))
         }
         _ => value.to_string(),
@@ -122,7 +122,10 @@ pub fn run(
     // Apply both attribute changes in a single format-preserving edit.
     let modified_tag = edit_task_tag(
         original_tag,
-        &[(attr, &formatted_value), ("time_last_updated", &ts_formatted)],
+        &[
+            (attr, &formatted_value),
+            ("time_last_updated", &ts_formatted),
+        ],
     )?;
 
     if no_edit {

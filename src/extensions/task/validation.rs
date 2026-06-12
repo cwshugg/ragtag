@@ -74,7 +74,9 @@ pub fn validate_task_tag(tag: &Tag, config: &TaskConfig) -> Vec<ValidationMessag
             if val.as_float().is_none() {
                 messages.push(ValidationMessage {
                     level: ValidationLevel::Warning,
-                    message: format!("\"{field}\" should be a numeric value — current value will be ignored"),
+                    message: format!(
+                        "\"{field}\" should be a numeric value — current value will be ignored"
+                    ),
                     location: Some(tag.location.clone()),
                 });
             }
@@ -173,7 +175,10 @@ mod tests {
                         base: NumericBase::Decimal,
                     },
                 ),
-                TagAttribute::named("worktime_units", AttributeValue::Str("fortnights".to_string())),
+                TagAttribute::named(
+                    "worktime_units",
+                    AttributeValue::Str("fortnights".to_string()),
+                ),
             ],
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
             raw_span: 0..50,

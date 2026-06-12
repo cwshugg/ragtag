@@ -352,7 +352,10 @@ mod tests {
                     base: NumericBase::Decimal,
                 },
             ),
-            TagAttribute::named("worktime_units", AttributeValue::Str("fortnights".to_string())),
+            TagAttribute::named(
+                "worktime_units",
+                AttributeValue::Str("fortnights".to_string()),
+            ),
         ]);
         assert!(TaskTag::from_tag(&tag, &default_config()).is_err());
     }

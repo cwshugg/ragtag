@@ -32,9 +32,7 @@ pub fn scan_file(input: &str, file_path: &Path) -> Vec<Tag> {
         // after punctuation such as `(`, `[`, `<`, `"`, etc.
         if cursor.pos > 0 {
             let prev_byte = input.as_bytes()[cursor.pos - 1];
-            if prev_byte.is_ascii_alphanumeric()
-                || matches!(prev_byte, b'.' | b'_' | b'-')
-            {
+            if prev_byte.is_ascii_alphanumeric() || matches!(prev_byte, b'.' | b'_' | b'-') {
                 cursor.advance();
                 continue;
             }

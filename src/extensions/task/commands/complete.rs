@@ -69,7 +69,8 @@ mod tests {
     /// Verifies that time_last_updated is updated when it already exists.
     #[test]
     fn test_complete_updates_time_last_updated_when_present() {
-        let tag = "@task(id=\"abc123\", status=\"active\", time_last_updated=\"2025-01-01T00:00:00Z\")";
+        let tag =
+            "@task(id=\"abc123\", status=\"active\", time_last_updated=\"2025-01-01T00:00:00Z\")";
 
         let ts = "\"2026-06-12T10:00:00Z\"";
         let result = modify_tag_attribute(tag, "time_last_updated", ts).unwrap();

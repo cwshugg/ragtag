@@ -29,12 +29,14 @@ pub fn run(
     let no_edit = matches.get_flag("no-edit");
 
     // Validate: priority must be a non-negative integer (u32).
-    let priority: u32 = priority_str.parse().map_err(|_| RagtagError::ExtensionError {
-        extension_name: "Task Manager".to_string(),
-        message: format!(
+    let priority: u32 = priority_str
+        .parse()
+        .map_err(|_| RagtagError::ExtensionError {
+            extension_name: "Task Manager".to_string(),
+            message: format!(
             "invalid priority \"{priority_str}\" — expected a non-negative integer (e.g., 0, 1, 2)"
         ),
-    })?;
+        })?;
 
     let path_str = cli::resolve_path(matches);
     let path = Path::new(&path_str);

@@ -176,8 +176,7 @@ fn find_attr_value_span(tag_text: &str, attr_name: &str) -> Option<Range<usize>>
                 while vs < tag_text.len() && bytes[vs].is_ascii_whitespace() {
                     vs += 1;
                 }
-                let value_end = if vs < tag_text.len()
-                    && (bytes[vs] == b'"' || bytes[vs] == b'\'')
+                let value_end = if vs < tag_text.len() && (bytes[vs] == b'"' || bytes[vs] == b'\'')
                 {
                     let quote = bytes[vs];
                     let mut end = vs + 1;
@@ -365,7 +364,10 @@ mod tests {
             ("id".into(), "\"abc\"".into()),
             ("status".into(), "\"new\"".into()),
         ];
-        assert_eq!(regenerate_tag(&info, &attrs), r#"@task(id="abc", status="new")"#);
+        assert_eq!(
+            regenerate_tag(&info, &attrs),
+            r#"@task(id="abc", status="new")"#
+        );
     }
 
     #[test]
@@ -422,7 +424,10 @@ mod tests {
         let tag = r#"@task(id="abc", status="new")"#;
         let out = edit_task_tag(
             tag,
-            &[("status", "\"active\""), ("time_last_updated", "\"2026-06-12T00:00:00Z\"")],
+            &[
+                ("status", "\"active\""),
+                ("time_last_updated", "\"2026-06-12T00:00:00Z\""),
+            ],
         )
         .unwrap();
         assert_eq!(

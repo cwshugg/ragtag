@@ -181,12 +181,7 @@ fn test_tasks_create_with_all_fields() {
 fn test_tasks_create_includes_timestamps() {
     // Newly created tasks must include auto-generated time_created and time_last_updated.
     let output = ragtag()
-        .args([
-            "task",
-            "create",
-            "--title",
-            "Timestamped Task",
-        ])
+        .args(["task", "create", "--title", "Timestamped Task"])
         .assert()
         .success()
         .get_output()
@@ -288,7 +283,10 @@ fn test_tasks_set_attr_no_edit_auto_updates_time_last_updated() {
     );
     // The original file must NOT be modified.
     let file_content = fs::read_to_string(&file).unwrap();
-    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
+    assert_eq!(
+        file_content, original,
+        "File should be unchanged with --no-edit"
+    );
 }
 
 // === Tasks List ===
@@ -1007,14 +1005,7 @@ fn test_task_summary_default_group_by_priority() {
     let path = format!("{}/tasks.md", fixtures_dir());
     // Without --group, the default grouping should be by priority (shows "Priority:" headers)
     ragtag()
-        .args([
-            "--no-color",
-            "task",
-            "summary",
-            "--all",
-            "--path",
-            &path,
-        ])
+        .args(["--no-color", "task", "summary", "--all", "--path", &path])
         .assert()
         .success()
         .stdout(predicate::str::contains("Priority:"));
@@ -2034,7 +2025,7 @@ fn test_task_complete_prefix_match() {
             "--no-color",
             "task",
             "complete",
-            "prefixtest",  // prefix only
+            "prefixtest", // prefix only
             "--path",
             file.to_str().unwrap(),
         ])
@@ -2069,7 +2060,9 @@ fn test_task_complete_not_found() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+        .stderr(
+            predicate::str::contains("task not found").or(predicate::str::contains("not found")),
+        );
 }
 
 #[test]
@@ -2191,7 +2184,10 @@ fn test_task_activate_no_edit() {
         "Expected time_last_updated in --no-edit output: {output_str}"
     );
     let file_content = fs::read_to_string(&file).unwrap();
-    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
+    assert_eq!(
+        file_content, original,
+        "File should be unchanged with --no-edit"
+    );
 }
 
 #[test]
@@ -2215,7 +2211,9 @@ fn test_task_activate_not_found() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+        .stderr(
+            predicate::str::contains("task not found").or(predicate::str::contains("not found")),
+        );
 }
 
 // =========================================================================
@@ -2312,7 +2310,10 @@ fn test_task_deactivate_no_edit() {
         "Expected status=\"inactive\" in --no-edit output: {output_str}"
     );
     let file_content = fs::read_to_string(&file).unwrap();
-    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
+    assert_eq!(
+        file_content, original,
+        "File should be unchanged with --no-edit"
+    );
 }
 
 #[test]
@@ -2336,7 +2337,9 @@ fn test_task_deactivate_not_found() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+        .stderr(
+            predicate::str::contains("task not found").or(predicate::str::contains("not found")),
+        );
 }
 
 // =========================================================================
@@ -2433,7 +2436,10 @@ fn test_task_block_no_edit() {
         "Expected status=\"blocked\" in --no-edit output: {output_str}"
     );
     let file_content = fs::read_to_string(&file).unwrap();
-    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
+    assert_eq!(
+        file_content, original,
+        "File should be unchanged with --no-edit"
+    );
 }
 
 #[test]
@@ -2457,7 +2463,9 @@ fn test_task_block_not_found() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+        .stderr(
+            predicate::str::contains("task not found").or(predicate::str::contains("not found")),
+        );
 }
 
 // =========================================================================
@@ -2554,7 +2562,10 @@ fn test_task_abandon_no_edit() {
         "Expected status=\"abandoned\" in --no-edit output: {output_str}"
     );
     let file_content = fs::read_to_string(&file).unwrap();
-    assert_eq!(file_content, original, "File should be unchanged with --no-edit");
+    assert_eq!(
+        file_content, original,
+        "File should be unchanged with --no-edit"
+    );
 }
 
 #[test]
@@ -2578,7 +2589,9 @@ fn test_task_abandon_not_found() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("task not found").or(predicate::str::contains("not found")));
+        .stderr(
+            predicate::str::contains("task not found").or(predicate::str::contains("not found")),
+        );
 }
 
 #[test]
@@ -2680,7 +2693,10 @@ fn test_interactive_invalid_priority_reprompt() {
     let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
 
     assert!(out.contains("title=\"My Task\""), "stdout: {out}");
-    assert!(out.contains("priority=5"), "stdout should have priority=5: {out}");
+    assert!(
+        out.contains("priority=5"),
+        "stdout should have priority=5: {out}"
+    );
     assert!(
         err.contains("non-negative whole number"),
         "stderr should have priority error: {err}"
@@ -2811,7 +2827,10 @@ fn test_interactive_invalid_worktime_units_reprompt() {
         err.contains("Invalid worktime units"),
         "stderr should have units error: {err}"
     );
-    assert!(err.contains("hours"), "stderr should list allowed units: {err}");
+    assert!(
+        err.contains("hours"),
+        "stderr should list allowed units: {err}"
+    );
 }
 
 // ---- Skip all optional fields (blank) after title --------------------------
@@ -3125,10 +3144,7 @@ fn test_prefix_task_su_resolves_to_task_summary() {
 /// It requires arguments so we just verify the error is about missing args, not unknown subcommand.
 #[test]
 fn test_prefix_task_p_resolves_to_prioritize_not_unknown() {
-    let output = ragtag()
-        .args(["task", "p"])
-        .output()
-        .unwrap();
+    let output = ragtag().args(["task", "p"]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Should not say "unknown subcommand" — clap resolved it but found missing required args.
     assert!(
@@ -3140,31 +3156,26 @@ fn test_prefix_task_p_resolves_to_prioritize_not_unknown() {
 /// `ragtag task c` is ambiguous between `create` and `complete` — clap should error.
 #[test]
 fn test_prefix_task_c_is_ambiguous() {
-    ragtag()
-        .args(["task", "c"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("ambiguous").or(predicate::str::contains("create").and(predicate::str::contains("complete"))));
+    ragtag().args(["task", "c"]).assert().failure().stderr(
+        predicate::str::contains("ambiguous")
+            .or(predicate::str::contains("create").and(predicate::str::contains("complete"))),
+    );
 }
 
 /// `ragtag task a` is ambiguous between `activate` and `abandon` — clap should error.
 #[test]
 fn test_prefix_task_a_is_ambiguous() {
-    ragtag()
-        .args(["task", "a"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("ambiguous").or(predicate::str::contains("activate").and(predicate::str::contains("abandon"))));
+    ragtag().args(["task", "a"]).assert().failure().stderr(
+        predicate::str::contains("ambiguous")
+            .or(predicate::str::contains("activate").and(predicate::str::contains("abandon"))),
+    );
 }
 
 /// `ragtag config g` should resolve unambiguously to `ragtag config get`.
 /// It requires a key argument, so verify the error is about missing args, not unknown subcommand.
 #[test]
 fn test_prefix_config_g_resolves_to_get_not_unknown() {
-    let output = ragtag()
-        .args(["config", "g"])
-        .output()
-        .unwrap();
+    let output = ragtag().args(["config", "g"]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("unrecognized subcommand") && !stderr.contains("unknown subcommand"),

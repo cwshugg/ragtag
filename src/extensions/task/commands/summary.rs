@@ -122,9 +122,7 @@ fn get_group_key(task: &TaskTag, group_by: &str) -> String {
 /// other columns (plus inter-column gaps) from the terminal width. Falls back
 /// to `FALLBACK_TITLE_WIDTH` when the terminal size cannot be determined.
 fn compute_title_width(non_title_widths: &[usize]) -> usize {
-    let term_width = terminal_size()
-        .map(|(Width(w), _)| w as usize)
-        .unwrap_or(0);
+    let term_width = terminal_size().map(|(Width(w), _)| w as usize).unwrap_or(0);
 
     if term_width == 0 {
         return FALLBACK_TITLE_WIDTH;
@@ -189,7 +187,8 @@ fn format_summary_table(
         let rows = build_rows(tasks, config, color_mode, usize::MAX);
         for (plain, _) in &rows {
             for (i, val) in plain.iter().enumerate() {
-                if i < global_widths.len() && i != title_col
+                if i < global_widths.len()
+                    && i != title_col
                     && val.chars().count() > global_widths[i]
                 {
                     global_widths[i] = val.chars().count();
@@ -593,8 +592,7 @@ mod tests {
         let config = TaskConfig::default();
 
         // Check table output
-        let table_output =
-            format_summary_table(&groups, "priority", &config, &ColorMode::Never);
+        let table_output = format_summary_table(&groups, "priority", &config, &ColorMode::Never);
         let pos_2 = table_output
             .find("Priority: 2")
             .expect("should contain 'Priority: 2'");
@@ -607,8 +605,7 @@ mod tests {
         );
 
         // Check list output
-        let list_output =
-            format_summary_list(&groups, "priority", &config, &ColorMode::Never);
+        let list_output = format_summary_list(&groups, "priority", &config, &ColorMode::Never);
         let pos_2 = list_output
             .find("Priority: 2")
             .expect("should contain 'Priority: 2'");

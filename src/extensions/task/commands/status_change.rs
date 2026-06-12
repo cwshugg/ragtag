@@ -56,7 +56,10 @@ pub fn run_status_change(
     // backward compatibility.
     let modified_tag = edit_task_tag(
         original_tag,
-        &[("status", &status_formatted), ("time_last_updated", &ts_formatted)],
+        &[
+            ("status", &status_formatted),
+            ("time_last_updated", &ts_formatted),
+        ],
     )?;
 
     if no_edit {

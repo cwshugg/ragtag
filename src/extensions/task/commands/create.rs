@@ -77,10 +77,7 @@ pub fn format_task_string(task: &TaskTag, config: &TaskConfig, fmt: TagFormat) -
     }
 
     if let Some(ref time_created) = task.time_created {
-        attrs.push(format!(
-            "time_created=\"{}\"",
-            escape_for_tag(time_created)
-        ));
+        attrs.push(format!("time_created=\"{}\"", escape_for_tag(time_created)));
     }
 
     if let Some(ref time_last_updated) = task.time_last_updated {
@@ -168,9 +165,9 @@ pub fn run(
 
 /// Validates a priority string — must parse as a non-negative integer (`u32`).
 pub(crate) fn validate_priority(v: &str) -> Result<(), String> {
-    v.parse::<u32>().map(|_| ()).map_err(|_| {
-        "Invalid priority \u{2014} must be a non-negative whole number.".to_string()
-    })
+    v.parse::<u32>()
+        .map(|_| ())
+        .map_err(|_| "Invalid priority \u{2014} must be a non-negative whole number.".to_string())
 }
 
 /// Validates a worktime estimate string — must parse as a non-negative `f64`.
@@ -183,8 +180,7 @@ pub(crate) fn validate_worktime_estimate(v: &str) -> Result<(), String> {
             if f >= 0.0 {
                 Ok(())
             } else {
-                Err("Invalid worktime estimate \u{2014} must be a non-negative number."
-                    .to_string())
+                Err("Invalid worktime estimate \u{2014} must be a non-negative number.".to_string())
             }
         })
 }
@@ -192,9 +188,7 @@ pub(crate) fn validate_worktime_estimate(v: &str) -> Result<(), String> {
 /// Validates a worktime spent string — must parse as a non-negative `f64`.
 pub(crate) fn validate_worktime_spent(v: &str) -> Result<(), String> {
     v.parse::<f64>()
-        .map_err(|_| {
-            "Invalid worktime spent \u{2014} must be a non-negative number.".to_string()
-        })
+        .map_err(|_| "Invalid worktime spent \u{2014} must be a non-negative number.".to_string())
         .and_then(|f| {
             if f >= 0.0 {
                 Ok(())
@@ -335,7 +329,11 @@ impl PromptSession {
             None
         };
         let is_tty = tty.is_some();
-        Ok(Self { tty, is_tty, cancelled: false })
+        Ok(Self {
+            tty,
+            is_tty,
+            cancelled: false,
+        })
     }
 
     /// Writes a coloured error line to `stderr`.
@@ -531,12 +529,16 @@ fn run_interactive(
 
     // Status (must be a recognised keyword)
     if builder.status.is_none() {
-        let all_statuses: Vec<String> =
-            config.all_status_keywords().iter().map(|s| s.to_string()).collect();
+        let all_statuses: Vec<String> = config
+            .all_status_keywords()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let hint = format!("(leave blank to skip; default: {status_default})");
         let prompt = make_prompt("Status", Some(&hint), session.is_tty);
-        builder.status =
-            session.prompt_optional(&prompt, ctx.stderr, move |v| validate_status(v, &all_statuses))?;
+        builder.status = session.prompt_optional(&prompt, ctx.stderr, move |v| {
+            validate_status(v, &all_statuses)
+        })?;
         check_cancelled!();
     }
 
@@ -550,8 +552,11 @@ fn run_interactive(
 
     // Worktime Estimate (non-negative float)
     if builder.worktime_estimate.is_none() {
-        let prompt =
-            make_prompt("Worktime Estimate", Some("(leave blank to skip)"), session.is_tty);
+        let prompt = make_prompt(
+            "Worktime Estimate",
+            Some("(leave blank to skip)"),
+            session.is_tty,
+        );
         let raw = session.prompt_optional(&prompt, ctx.stderr, validate_worktime_estimate)?;
         check_cancelled!();
         builder.worktime_estimate = raw.and_then(|v| v.parse().ok());
@@ -807,7 +812,10 @@ mod tests {
     #[test]
     fn test_validate_worktime_estimate_invalid() {
         let err = validate_worktime_estimate("abc").unwrap_err();
-        assert!(err.contains("non-negative number"), "unexpected message: {err}");
+        assert!(
+            err.contains("non-negative number"),
+            "unexpected message: {err}"
+        );
         assert!(validate_worktime_estimate("-1").is_err());
         assert!(validate_worktime_estimate("-0.5").is_err());
         assert!(validate_worktime_estimate("").is_err());
@@ -823,7 +831,10 @@ mod tests {
     #[test]
     fn test_validate_worktime_spent_invalid() {
         let err = validate_worktime_spent("oops").unwrap_err();
-        assert!(err.contains("non-negative number"), "unexpected message: {err}");
+        assert!(
+            err.contains("non-negative number"),
+            "unexpected message: {err}"
+        );
         assert!(validate_worktime_spent("-1").is_err());
         assert!(validate_worktime_spent("").is_err());
     }
@@ -831,8 +842,11 @@ mod tests {
     #[test]
     fn test_validate_status_valid() {
         let config = TaskConfig::default();
-        let allowed: Vec<String> =
-            config.all_status_keywords().iter().map(|s| s.to_string()).collect();
+        let allowed: Vec<String> = config
+            .all_status_keywords()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(validate_status("new", &allowed).is_ok());
         assert!(validate_status("active", &allowed).is_ok());
         assert!(validate_status("done", &allowed).is_ok());
@@ -842,11 +856,17 @@ mod tests {
     #[test]
     fn test_validate_status_invalid() {
         let config = TaskConfig::default();
-        let allowed: Vec<String> =
-            config.all_status_keywords().iter().map(|s| s.to_string()).collect();
+        let allowed: Vec<String> = config
+            .all_status_keywords()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let err = validate_status("banana", &allowed).unwrap_err();
         assert!(err.contains("Invalid status"), "unexpected message: {err}");
-        assert!(err.contains("allowed values:"), "expected allowed list: {err}");
+        assert!(
+            err.contains("allowed values:"),
+            "expected allowed list: {err}"
+        );
         // Spot-check that actual keywords appear in the error
         assert!(err.contains("new"), "expected 'new' in: {err}");
     }
@@ -861,7 +881,10 @@ mod tests {
     #[test]
     fn test_validate_worktime_units_invalid() {
         let err = validate_worktime_units("fortnights").unwrap_err();
-        assert!(err.contains("Invalid worktime units"), "unexpected message: {err}");
+        assert!(
+            err.contains("Invalid worktime units"),
+            "unexpected message: {err}"
+        );
         assert!(err.contains("hours"), "expected 'hours' in: {err}");
         assert!(validate_worktime_units("minutes").is_err());
         assert!(validate_worktime_units("").is_err());
