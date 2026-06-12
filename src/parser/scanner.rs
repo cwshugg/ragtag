@@ -26,10 +26,15 @@ pub fn scan_file(input: &str, file_path: &Path) -> Vec<Tag> {
             continue;
         }
 
-        // Pre-check: '@' must be at start of input or preceded by whitespace
+        // Pre-check: reject '@' only when preceded by an identifier-like
+        // character (alphanumeric, '.', '_', '-'). This blocks email-like
+        // patterns such as `email@address.com` while still allowing '@'
+        // after punctuation such as `(`, `[`, `<`, `"`, etc.
         if cursor.pos > 0 {
             let prev_byte = input.as_bytes()[cursor.pos - 1];
-            if !matches!(prev_byte, b' ' | b'\t' | b'\n' | b'\r') {
+            if prev_byte.is_ascii_alphanumeric()
+                || matches!(prev_byte, b'.' | b'_' | b'-')
+            {
                 cursor.advance();
                 continue;
             }
@@ -175,5 +180,70 @@ mod tests {
     fn test_tag_at_eof() {
         let tags = scan("@tag");
         assert_eq!(tags.len(), 1);
+    }
+
+    #[test]
+    fn test_tag_inside_outer_parens() {
+        // Real-world example: a @task tag wrapped in outer parentheses.
+        let input = r#"Questions for Danny (@task(id="1cf64879b0cbd244", status="done", priority=0, title="Send these to Danny")):"#;
+        let tags = scan(input);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "task");
+        assert_eq!(
+            tags[0].get_named_attribute("id").unwrap().as_str(),
+            Some("1cf64879b0cbd244")
+        );
+        assert_eq!(
+            tags[0].get_named_attribute("title").unwrap().as_str(),
+            Some("Send these to Danny")
+        );
+    }
+
+    #[test]
+    fn test_tag_after_open_paren_with_text() {
+        let tags = scan(r#"(see @task(id="x", title="Y"))"#);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "task");
+        assert_eq!(
+            tags[0].get_named_attribute("id").unwrap().as_str(),
+            Some("x")
+        );
+    }
+
+    #[test]
+    fn test_tag_with_trailing_extra_close_paren() {
+        let tags = scan(r#"@task(id="x", title="Y"))"#);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "task");
+        assert_eq!(
+            tags[0].get_named_attribute("id").unwrap().as_str(),
+            Some("x")
+        );
+    }
+
+    #[test]
+    fn test_multiple_tags_with_surrounding_parens() {
+        let input = r#"(@task(id="a", title="A")) and (@task(id="b", title="B"))"#;
+        let tags = scan(input);
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].name, "task");
+        assert_eq!(
+            tags[0].get_named_attribute("id").unwrap().as_str(),
+            Some("a")
+        );
+        assert_eq!(tags[1].name, "task");
+        assert_eq!(
+            tags[1].get_named_attribute("id").unwrap().as_str(),
+            Some("b")
+        );
+    }
+
+    #[test]
+    fn test_tag_after_bracket_or_quote() {
+        let tags = scan(r#"[@a] "@b" <@c>"#);
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags[0].name, "a");
+        assert_eq!(tags[1].name, "b");
+        assert_eq!(tags[2].name, "c");
     }
 }
