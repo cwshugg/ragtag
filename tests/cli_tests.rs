@@ -3056,3 +3056,93 @@ fn test_tasks_help_includes_prioritize() {
         .success()
         .stdout(predicate::str::contains("prioritize"));
 }
+
+// === Infer Subcommands (Prefix Matching) ===
+
+/// `ragtag su` should resolve unambiguously to `ragtag summary`.
+#[test]
+fn test_prefix_ragtag_su_resolves_to_summary() {
+    ragtag()
+        .args(["su", "--path", &fixtures_dir()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("task")); // summary output always lists tags
+}
+
+/// `ragtag q` should resolve unambiguously to `ragtag query`.
+#[test]
+fn test_prefix_ragtag_q_resolves_to_query() {
+    ragtag()
+        .args(["q", "--path", &fixtures_dir()])
+        .assert()
+        .success();
+}
+
+/// `ragtag t l` should resolve to `ragtag task list`.
+#[test]
+fn test_prefix_ragtag_t_l_resolves_to_task_list() {
+    ragtag()
+        .args(["--no-color", "t", "l", "--path", &fixtures_dir()])
+        .assert()
+        .success();
+}
+
+/// `ragtag task su` should resolve unambiguously to `ragtag task summary`.
+#[test]
+fn test_prefix_task_su_resolves_to_task_summary() {
+    ragtag()
+        .args(["--no-color", "task", "su", "--path", &fixtures_dir()])
+        .assert()
+        .success();
+}
+
+/// `ragtag task p` should resolve unambiguously to `ragtag task prioritize`.
+/// It requires arguments so we just verify the error is about missing args, not unknown subcommand.
+#[test]
+fn test_prefix_task_p_resolves_to_prioritize_not_unknown() {
+    let output = ragtag()
+        .args(["task", "p"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Should not say "unknown subcommand" — clap resolved it but found missing required args.
+    assert!(
+        !stderr.contains("unrecognized subcommand") && !stderr.contains("unknown subcommand"),
+        "Expected prefix 'p' to resolve to 'prioritize', but got: {stderr}"
+    );
+}
+
+/// `ragtag task c` is ambiguous between `create` and `complete` — clap should error.
+#[test]
+fn test_prefix_task_c_is_ambiguous() {
+    ragtag()
+        .args(["task", "c"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ambiguous").or(predicate::str::contains("create").and(predicate::str::contains("complete"))));
+}
+
+/// `ragtag task a` is ambiguous between `activate` and `abandon` — clap should error.
+#[test]
+fn test_prefix_task_a_is_ambiguous() {
+    ragtag()
+        .args(["task", "a"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ambiguous").or(predicate::str::contains("activate").and(predicate::str::contains("abandon"))));
+}
+
+/// `ragtag config g` should resolve unambiguously to `ragtag config get`.
+/// It requires a key argument, so verify the error is about missing args, not unknown subcommand.
+#[test]
+fn test_prefix_config_g_resolves_to_get_not_unknown() {
+    let output = ragtag()
+        .args(["config", "g"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unrecognized subcommand") && !stderr.contains("unknown subcommand"),
+        "Expected prefix 'g' to resolve to 'get', but got: {stderr}"
+    );
+}

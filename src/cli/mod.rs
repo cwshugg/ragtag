@@ -62,6 +62,7 @@ pub fn build_cli(registry: &ExtensionRegistry) -> Command {
         .subcommand(
             Command::new("config")
                 .about("Inspect ragtag configuration")
+                .infer_subcommands(true)
                 .subcommand(
                     Command::new("get")
                         .about("Print the value of a config field")

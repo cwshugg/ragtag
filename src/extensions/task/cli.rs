@@ -9,6 +9,7 @@ pub fn build_task_command() -> Command {
     Command::new("task")
         .about("Track and manage tasks embedded in plain text files")
         .subcommand_required(true)
+        .infer_subcommands(true)
         .subcommand(
             Command::new("create")
                 .about("Create a new task and print the @task(...) string to stdout")

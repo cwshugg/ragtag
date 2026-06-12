@@ -142,7 +142,21 @@ fn format_summary_table(
     let mut all_group_rows: Vec<(&String, Vec<RowPair>)> = Vec::new();
     let mut global_widths: Vec<usize> = HEADERS.iter().map(|h| h.len()).collect();
 
-    for (key, tasks) in groups {
+    // Collect group keys in the appropriate sort order.
+    // For priority, sort numerically; fall back to lexicographic for non-numeric keys.
+    let sorted_keys: Vec<&String> = if group_by == "priority" {
+        let mut keys: Vec<&String> = groups.keys().collect();
+        keys.sort_by(|a, b| match (a.parse::<i64>(), b.parse::<i64>()) {
+            (Ok(na), Ok(nb)) => na.cmp(&nb),
+            _ => a.cmp(b),
+        });
+        keys
+    } else {
+        groups.keys().collect()
+    };
+
+    for key in &sorted_keys {
+        let tasks = &groups[*key];
         let rows = build_rows(tasks, config, color_mode);
         for (plain, _) in &rows {
             for (i, val) in plain.iter().enumerate() {
@@ -211,7 +225,21 @@ fn format_summary_list(
     let mut output = String::new();
     let mut first_group = true;
 
-    for (group_key, tasks) in groups {
+    // Collect group keys in the appropriate sort order.
+    // For priority, sort numerically; fall back to lexicographic for non-numeric keys.
+    let sorted_keys: Vec<&String> = if group_by == "priority" {
+        let mut keys: Vec<&String> = groups.keys().collect();
+        keys.sort_by(|a, b| match (a.parse::<i64>(), b.parse::<i64>()) {
+            (Ok(na), Ok(nb)) => na.cmp(&nb),
+            _ => a.cmp(b),
+        });
+        keys
+    } else {
+        groups.keys().collect()
+    };
+
+    for group_key in &sorted_keys {
+        let tasks = &groups[*group_key];
         if !first_group {
             output.push('\n');
         }
@@ -494,6 +522,47 @@ mod tests {
         assert!(groups.contains_key("1"));
         assert!(groups.contains_key("2"));
         assert!(groups.contains_key("(none)"));
+    }
+
+    /// Priority groups must be sorted numerically so that `2` appears before `11`.
+    /// A lexicographic sort would put `"11"` before `"2"` (since `'1' < '2'`), which
+    /// is the bug this test guards against.
+    #[test]
+    fn test_priority_numeric_sort() {
+        let tasks = vec![
+            make_task("t1", "Task 11", "alice", "active", Some(11), None, None),
+            make_task("t2", "Task 2", "bob", "active", Some(2), None, None),
+        ];
+        let groups = group_tasks(&tasks, "priority");
+        let config = TaskConfig::default();
+
+        // Check table output
+        let table_output =
+            format_summary_table(&groups, "priority", &config, &ColorMode::Never);
+        let pos_2 = table_output
+            .find("Priority: 2")
+            .expect("should contain 'Priority: 2'");
+        let pos_11 = table_output
+            .find("Priority: 11")
+            .expect("should contain 'Priority: 11'");
+        assert!(
+            pos_2 < pos_11,
+            "priority 2 should appear before 11 in table output, but got:\n{table_output}"
+        );
+
+        // Check list output
+        let list_output =
+            format_summary_list(&groups, "priority", &config, &ColorMode::Never);
+        let pos_2 = list_output
+            .find("Priority: 2")
+            .expect("should contain 'Priority: 2'");
+        let pos_11 = list_output
+            .find("Priority: 11")
+            .expect("should contain 'Priority: 11'");
+        assert!(
+            pos_2 < pos_11,
+            "priority 2 should appear before 11 in list output, but got:\n{list_output}"
+        );
     }
 
     #[test]
