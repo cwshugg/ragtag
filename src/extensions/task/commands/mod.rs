@@ -16,6 +16,7 @@ pub mod prioritize;
 pub mod set_attr;
 pub mod status_change;
 pub mod summary;
+pub mod time;
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -44,6 +45,7 @@ pub fn dispatch(
         Some(("summary", sub_m)) => summary::run(sub_m, config, ctx),
         Some(("get-attr", sub_m)) => get_attr::run(sub_m, config, ctx),
         Some(("set-attr", sub_m)) => set_attr::run(sub_m, config, ctx),
+        Some(("time", sub_m)) => time::run(sub_m, config, ctx),
         _ => Err(RagtagError::UnknownCommand(
             "unknown task subcommand".to_string(),
         )),

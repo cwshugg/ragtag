@@ -214,6 +214,34 @@ pub fn build_task_command() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("time")
+                .about("Set a task's worktime_spent to a non-negative number")
+                .arg(
+                    Arg::new("worktime_spent")
+                        .help("New worktime_spent value (non-negative number; e.g., 0, 1.5, 8)")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("id")
+                        .help("Task ID or ID prefix")
+                        .required(true)
+                        .index(2),
+                )
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .help("Search path (file or directory); falls back to RAGTAG_PATH env var, then \".\"")
+                        .value_name("PATH"),
+                )
+                .arg(
+                    Arg::new("no-edit")
+                        .long("no-edit")
+                        .action(ArgAction::SetTrue)
+                        .help("Don't modify the file; print the updated @task(...) string instead"),
+                ),
+        )
+        .subcommand(
             Command::new("list")
                 .about("Display a list of tasks")
                 .arg(
