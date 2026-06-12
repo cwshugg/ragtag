@@ -137,17 +137,25 @@ fn format_task_raw(task: &TaskTag, ctx: &mut ExtensionContext) -> Result<(), Rag
     Ok(())
 }
 
-/// Sorts tasks by a field name.
+/// Sorts tasks by a field name. The special value `"appearance"` sorts by
+/// file path then line number, preserving the order tasks appear in files.
 pub fn sort_tasks(tasks: &mut [TaskTag], field: &str, reverse: bool) {
     tasks.sort_by(|a, b| {
-        let va = get_task_field_str(a, field);
-        let vb = get_task_field_str(b, field);
-
-        // Try numeric comparison first
-        let ordering = if let (Ok(na), Ok(nb)) = (va.parse::<f64>(), vb.parse::<f64>()) {
-            na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+        let ordering = if field == "appearance" {
+            a.location
+                .file_path
+                .cmp(&b.location.file_path)
+                .then_with(|| a.location.line.cmp(&b.location.line))
         } else {
-            va.cmp(&vb)
+            let va = get_task_field_str(a, field);
+            let vb = get_task_field_str(b, field);
+
+            // Try numeric comparison first
+            if let (Ok(na), Ok(nb)) = (va.parse::<f64>(), vb.parse::<f64>()) {
+                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+            } else {
+                va.cmp(&vb)
+            }
         };
 
         if reverse {

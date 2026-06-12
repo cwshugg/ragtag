@@ -231,7 +231,7 @@ pub fn build_task_command() -> Command {
                 .arg(
                     Arg::new("sort")
                         .long("sort")
-                        .help("Sort by field (e.g., priority, status, title)")
+                        .help("Sort by field (e.g., priority, status, title, appearance)")
                         .value_name("FIELD"),
                 )
                 .arg(
@@ -297,7 +297,7 @@ pub fn build_task_command() -> Command {
                 .arg(
                     Arg::new("sort")
                         .long("sort")
-                        .help("Sort tasks within each group by field")
+                        .help("Sort tasks within each group by field (e.g., priority, title, appearance)")
                         .value_name("FIELD"),
                 )
                 .arg(
