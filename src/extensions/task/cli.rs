@@ -215,12 +215,13 @@ pub fn build_task_command() -> Command {
         )
         .subcommand(
             Command::new("time")
-                .about("Set a task's worktime_spent to a non-negative number")
+                .about("Set or adjust a task's worktime_spent (supports N, +N, -N)")
                 .arg(
                     Arg::new("worktime_spent")
-                        .help("New worktime_spent value (non-negative number; e.g., 0, 1.5, 8)")
+                        .help("Time value: N (set), +N (add), or -N (subtract, clamped to 0)")
                         .required(true)
-                        .index(1),
+                        .index(1)
+                        .allow_hyphen_values(true),
                 )
                 .arg(
                     Arg::new("id")

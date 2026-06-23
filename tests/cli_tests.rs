@@ -3182,3 +3182,269 @@ fn test_prefix_config_g_resolves_to_get_not_unknown() {
         "Expected prefix 'g' to resolve to 'get', but got: {stderr}"
     );
 }
+
+// === Task Time (relative adjustments) ===
+
+#[test]
+fn test_task_time_set_absolute() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tasks.md");
+    fs::write(
+        &file,
+        "@task(id=\"timeset123456789\", title=\"Time Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "time",
+            "3.5",
+            "timeset123456789",
+            "--path",
+            dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("worktime_spent → 3.5"));
+
+    let updated = fs::read_to_string(&file).unwrap();
+    assert!(
+        updated.contains("worktime_spent=3.5"),
+        "Expected worktime_spent=3.5, got: {updated}"
+    );
+}
+
+#[test]
+fn test_task_time_add_relative() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tasks.md");
+    fs::write(
+        &file,
+        "@task(id=\"timeadd123456789\", title=\"Time Test\", worktime_spent=2, worktime_estimate=4, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "time",
+            "+1.5",
+            "timeadd123456789",
+            "--path",
+            dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("worktime_spent → 3.5"));
+
+    let updated = fs::read_to_string(&file).unwrap();
+    assert!(
+        updated.contains("worktime_spent=3.5"),
+        "Expected worktime_spent=3.5, got: {updated}"
+    );
+}
+
+#[test]
+fn test_task_time_subtract_relative() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tasks.md");
+    fs::write(
+        &file,
+        "@task(id=\"timesub123456789\", title=\"Time Test\", worktime_spent=5, worktime_estimate=4, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "time",
+            "-2",
+            "timesub123456789",
+            "--path",
+            dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("worktime_spent → 3"));
+
+    let updated = fs::read_to_string(&file).unwrap();
+    assert!(
+        updated.contains("worktime_spent=3"),
+        "Expected worktime_spent=3, got: {updated}"
+    );
+}
+
+#[test]
+fn test_task_time_subtract_clamps_to_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tasks.md");
+    fs::write(
+        &file,
+        "@task(id=\"timeclamp1234567\", title=\"Time Test\", worktime_spent=1, worktime_estimate=4, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "time",
+            "-10",
+            "timeclamp1234567",
+            "--path",
+            dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("worktime_spent → 0"));
+
+    let updated = fs::read_to_string(&file).unwrap();
+    assert!(
+        updated.contains("worktime_spent=0"),
+        "Expected worktime_spent=0, got: {updated}"
+    );
+}
+
+#[test]
+fn test_task_time_add_when_no_prior_worktime() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tasks.md");
+    fs::write(
+        &file,
+        "@task(id=\"timenone12345678\", title=\"Time Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "time",
+            "+2",
+            "timenone12345678",
+            "--path",
+            dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("worktime_spent → 2"));
+
+    let updated = fs::read_to_string(&file).unwrap();
+    assert!(
+        updated.contains("worktime_spent=2"),
+        "Expected worktime_spent=2, got: {updated}"
+    );
+}
+
+#[test]
+fn test_task_time_no_edit_prints_tag_without_modifying_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tasks.md");
+    let original =
+        "@task(id=\"timenoedit123456\", title=\"Time Test\", worktime_spent=1, worktime_estimate=4, worktime_units=\"hours\", status=\"active\")";
+    fs::write(&file, original).unwrap();
+
+    let output = ragtag()
+        .args([
+            "task",
+            "time",
+            "+2",
+            "timenoedit123456",
+            "--path",
+            dir.path().to_str().unwrap(),
+            "--no-edit",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_str = String::from_utf8(output).unwrap();
+    assert!(
+        output_str.contains("worktime_spent=3"),
+        "Expected worktime_spent=3 in --no-edit output, got: {output_str}"
+    );
+    assert!(
+        output_str.contains("@task("),
+        "Expected @task tag in --no-edit output, got: {output_str}"
+    );
+
+    // File must remain unchanged.
+    let content = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        content, original,
+        "File should not be modified with --no-edit"
+    );
+}
+
+#[test]
+fn test_task_time_rejects_abc() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tasks.md");
+    fs::write(
+        &file,
+        "@task(id=\"timeerr123456789\", title=\"Time Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "time",
+            "abc",
+            "timeerr123456789",
+            "--path",
+            dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid worktime_spent"));
+}
+
+#[test]
+fn test_task_time_rejects_nan() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tasks.md");
+    fs::write(
+        &file,
+        "@task(id=\"timenan123456789\", title=\"Time Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "time",
+            "NaN",
+            "timenan123456789",
+            "--path",
+            dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid worktime_spent"));
+}
+
+#[test]
+fn test_task_time_rejects_inf() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tasks.md");
+    fs::write(
+        &file,
+        "@task(id=\"timeinf123456789\", title=\"Time Test\", worktime_estimate=4, worktime_units=\"hours\", status=\"active\")",
+    )
+    .unwrap();
+
+    ragtag()
+        .args([
+            "task",
+            "time",
+            "inf",
+            "timeinf123456789",
+            "--path",
+            dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid worktime_spent"));
+}
