@@ -1,0 +1,124 @@
+name: Release
+
+# Release pipeline for the `ragtag` crate.
+# Builds cross-platform release binaries and publishes them to a GitHub Release.
+# This workflow is SEPARATE from the CI/QA pipeline (ci.yml).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag/version to release (e.g. v1.2.3). The tag is created at the selected ref if it does not already exist."
+        required: true
+        type: string
+
+# Least privilege at the top level: read-only by default.
+# Jobs that publish the release opt in to `contents: write` individually.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Resolve the release tag/version and ensure a GitHub Release exists for it.
+  # ---------------------------------------------------------------------------
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to create/update the GitHub Release (and tag on manual runs)
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: resolve
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ github.event.inputs.tag }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+          if [ -z "${version}" ]; then
+            echo "::error::Could not determine release tag/version."
+            exit 1
+          fi
+          echo "Resolved release version: ${version}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create or update the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve.outputs.version }}
+          name: ${{ steps.resolve.outputs.version }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  # ---------------------------------------------------------------------------
+  # Build the release binary for each target and upload the packaged artifacts
+  # (archives + SHA256 checksums) to the release created above.
+  # ---------------------------------------------------------------------------
+  upload-assets:
+    name: Build & upload (${{ matrix.target }})
+    needs: create-release
+    permissions:
+      contents: write # required to upload release assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          # macOS
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # Windows
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build binary and upload to the GitHub Release
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          # Binary name (matches [package].name / [[bin]] in Cargo.toml).
+          bin: ragtag
+          # Build for the matrix target. For aarch64-unknown-linux-gnu this
+          # action automatically uses `cross` for cross-compilation.
+          target: ${{ matrix.target }}
+          # Archive base name -> ragtag-<version>-<target>(.tar.gz | .zip)
+          archive: $bin-$tag-$target
+          # Distribute .tar.gz on Unix and .zip on Windows.
+          tar: unix
+          zip: windows
+          # Generate SHA256 checksum files alongside each archive.
+          checksum: sha256
+          # Include the README inside each archive.
+          include: README.md
+          # Upload to the release for this tag (works for tag pushes and manual runs).
+          ref: refs/tags/${{ needs.create-release.outputs.version }}
+          # Built-in token; no hardcoded secrets.
+          token: ${{ github.token }}
