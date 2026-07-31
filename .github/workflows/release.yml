@@ -19,30 +19,47 @@ on:
 permissions:
   contents: read
 
+# Serialize releases for the same ref. Never cancel an in-flight release: a
+# half-cancelled run could leave a release with a partial set of assets.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Resolve the release tag/version and ensure a GitHub Release exists for it.
+  # Resolve the release tag/version and create a DRAFT GitHub Release for it.
+  # The release is only published (draft -> public) by `publish-release` after
+  # every matrix build has succeeded, so consumers never see a partial release.
   # ---------------------------------------------------------------------------
   create-release:
-    name: Create GitHub Release
+    name: Create draft GitHub Release
     runs-on: ubuntu-latest
     permissions:
       contents: write # required to create/update the GitHub Release (and tag on manual runs)
     outputs:
       version: ${{ steps.resolve.outputs.version }}
+      # The exact commit the release is built from. Used so every build job
+      # checks out identical source (provenance) and so the git tag created
+      # when the draft is published points at this commit.
+      sha: ${{ github.sha }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Resolve release tag
         id: resolve
         shell: bash
+        # Untrusted input (the workflow_dispatch tag) is passed via env and
+        # referenced as a quoted shell variable, so it is treated as DATA and
+        # never expanded into the script source (avoids script injection).
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            version="${{ github.event.inputs.tag }}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            version="${INPUT_TAG}"
           else
             version="${GITHUB_REF_NAME}"
           fi
@@ -50,22 +67,35 @@ jobs:
             echo "::error::Could not determine release tag/version."
             exit 1
           fi
+          # Enforce the expected tag format (v<major>[.<minor>...]) and fail
+          # fast on anything unexpected before it is used downstream.
+          case "${version}" in
+            v[0-9]*) ;;
+            *)
+              echo "::error::Unexpected tag format '${version}'. Expected 'v<MAJOR>.<MINOR>.<PATCH>' (e.g. v1.2.3)."
+              exit 1
+              ;;
+          esac
           echo "Resolved release version: ${version}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Create or update the GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Create or update the draft GitHub Release
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
           tag_name: ${{ steps.resolve.outputs.version }}
           name: ${{ steps.resolve.outputs.version }}
-          draft: false
+          # Pin the (future) tag to the exact built commit. On a tag push the
+          # tag already exists; on workflow_dispatch the git tag is only
+          # created when the draft is published, at this commitish.
+          target_commitish: ${{ github.sha }}
+          draft: true # keep hidden until all binaries have been uploaded
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
   # ---------------------------------------------------------------------------
   # Build the release binary for each target and upload the packaged artifacts
-  # (archives + SHA256 checksums) to the release created above.
+  # (archives + SHA256 checksums) to the draft release created above.
   # ---------------------------------------------------------------------------
   upload-assets:
     name: Build & upload (${{ matrix.target }})
@@ -89,20 +119,33 @@ jobs:
           # Windows
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+          # NOTE: aarch64-pc-windows-msvc is cross-compiled on an x86_64 runner
+          # and cannot be executed/tested here, so this artifact is PROVIDED BUT
+          # UNVERIFIED. The draft->publish flow limits blast radius; document
+          # this caveat in the release notes.
           - target: aarch64-pc-windows-msvc
             os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install stable Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          # Build from the exact commit resolved by create-release so manual
+          # (workflow_dispatch) and tag-push runs compile identical source,
+          # keeping binary/tag provenance consistent. A commit SHA is used
+          # rather than refs/tags/<version> because a DRAFT release does not
+          # create the git tag until it is published.
+          ref: ${{ needs.create-release.outputs.sha }}
+
+      - name: Install pinned Rust toolchain
+        # SHA-pinned to dtolnay/rust-toolchain@master; concrete toolchain below.
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.90.0
           targets: ${{ matrix.target }}
 
       - name: Build binary and upload to the GitHub Release
-        uses: taiki-e/upload-rust-binary-action@v1
+        uses: taiki-e/upload-rust-binary-action@e7953b6078194a4ae5f5619632e3715db6275561 # v1.24.0
         with:
           # Binary name (matches [package].name / [[bin]] in Cargo.toml).
           bin: ragtag
@@ -116,9 +159,33 @@ jobs:
           zip: windows
           # Generate SHA256 checksum files alongside each archive.
           checksum: sha256
-          # Include the README inside each archive.
-          include: README.md
+          # Include the README and LICENSE inside each archive.
+          include: README.md,LICENSE
+          # Build against the committed Cargo.lock for reproducible releases.
+          locked: true
           # Upload to the release for this tag (works for tag pushes and manual runs).
           ref: refs/tags/${{ needs.create-release.outputs.version }}
           # Built-in token; no hardcoded secrets.
           token: ${{ github.token }}
+
+  # ---------------------------------------------------------------------------
+  # Flip the draft release to published, but only after every matrix build has
+  # succeeded. This guarantees a public release always ships the full asset set.
+  # ---------------------------------------------------------------------------
+  publish-release:
+    name: Publish GitHub Release
+    needs: [create-release, upload-assets]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to update (publish) the GitHub Release
+    steps:
+      - name: Publish the release (draft -> public)
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
+        with:
+          tag_name: ${{ needs.create-release.outputs.version }}
+          # Ensure the tag GitHub creates on publish points at the built commit.
+          target_commitish: ${{ needs.create-release.outputs.sha }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

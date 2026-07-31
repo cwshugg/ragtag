@@ -220,15 +220,19 @@ tasks:
 
     #[test]
     fn test_validate_too_many_patterns() {
-        let mut config = Config::default();
-        config.ignore_patterns = vec![".*".to_string(); 300];
+        let config = Config {
+            ignore_patterns: vec![".*".to_string(); 300],
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_validate_pattern_too_long() {
-        let mut config = Config::default();
-        config.ignore_patterns = vec!["x".repeat(2000)];
+        let config = Config {
+            ignore_patterns: vec!["x".repeat(2000)],
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
@@ -240,8 +244,10 @@ tasks:
 
     #[test]
     fn test_validate_max_file_size_too_large() {
-        let mut config = Config::default();
-        config.max_file_size = 200 * 1024 * 1024; // 200 MB, exceeds 100 MB limit
+        let config = Config {
+            max_file_size: 200 * 1024 * 1024, // 200 MB, exceeds 100 MB limit
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("max_file_size"));
