@@ -1,6 +1,6 @@
 # Ragtag
 
-A Rust CLI tool for parsing, querying, and managing `@tag(attr=value)` annotations embedded in plain text files.
+A CLI tool for parsing, querying, and managing `@tag(attr=value)` annotations embedded in plain text files.
 
 I created this to make tagging things in my notes quick and easy, while supporting a drop-in-anywhere structured syntax that is easy to understand.
 Ragtag will:
