@@ -194,15 +194,19 @@ mod tests {
 
     #[test]
     fn test_validate_bad_worktime_units() {
-        let mut config = TaskConfig::default();
-        config.default_worktime_units = "fortnights".to_string();
+        let config = TaskConfig {
+            default_worktime_units: "fortnights".to_string(),
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_validate_bad_status() {
-        let mut config = TaskConfig::default();
-        config.default_status = "unknown_status".to_string();
+        let config = TaskConfig {
+            default_status: "unknown_status".to_string(),
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 

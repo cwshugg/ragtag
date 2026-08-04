@@ -480,8 +480,7 @@ mod tests {
             owner,
             status,
             priority,
-            worktime_spent,
-            worktime_estimate,
+            (worktime_spent, worktime_estimate),
         )
     }
 
@@ -492,9 +491,9 @@ mod tests {
         owner: &str,
         status: &str,
         priority: Option<u32>,
-        worktime_spent: Option<f64>,
-        worktime_estimate: Option<f64>,
+        worktime: (Option<f64>, Option<f64>),
     ) -> TaskTag {
+        let (worktime_spent, worktime_estimate) = worktime;
         TaskTag {
             id: id.to_string(),
             pid: None,
@@ -892,8 +891,7 @@ mod tests {
             "alice",
             "active",
             Some(1),
-            None,
-            None,
+            (None, None),
         )];
         let groups = group_tasks(&tasks, "status");
         let config = TaskConfig::default();
@@ -931,8 +929,7 @@ mod tests {
             "alice",
             "active",
             Some(1),
-            None,
-            None,
+            (None, None),
         )];
         let groups = group_tasks(&tasks, "status");
         let config = TaskConfig::default();

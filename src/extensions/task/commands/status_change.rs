@@ -191,27 +191,27 @@ mod tests {
     fn test_no_active_keywords_is_empty() {
         let mut config = TaskConfig::default();
         config.status_keywords.active = vec![];
-        assert!(config.status_keywords.active.first().is_none());
+        assert!(config.status_keywords.active.is_empty());
     }
 
     #[test]
     fn test_no_inactive_keywords_is_empty() {
         let mut config = TaskConfig::default();
         config.status_keywords.inactive = vec![];
-        assert!(config.status_keywords.inactive.first().is_none());
+        assert!(config.status_keywords.inactive.is_empty());
     }
 
     #[test]
     fn test_no_blocked_keywords_is_empty() {
         let mut config = TaskConfig::default();
         config.status_keywords.blocked = vec![];
-        assert!(config.status_keywords.blocked.first().is_none());
+        assert!(config.status_keywords.blocked.is_empty());
     }
 
     #[test]
     fn test_no_abandoned_keywords_is_empty() {
         let mut config = TaskConfig::default();
         config.status_keywords.abandoned = vec![];
-        assert!(config.status_keywords.abandoned.first().is_none());
+        assert!(config.status_keywords.abandoned.is_empty());
     }
 }

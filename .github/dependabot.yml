@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Keep the SHA-pinned GitHub Actions used by CI and the release pipeline
+  # up to date. Dependabot opens PRs that bump the pinned commit SHAs (and
+  # their version comments) so supply-chain pins can be reviewed and refreshed.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"

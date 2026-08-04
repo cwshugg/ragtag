@@ -170,8 +170,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("keep.txt"), "").unwrap();
         fs::write(dir.path().join("skip.pdf"), "").unwrap();
-        let mut config = Config::default();
-        config.ignore_patterns = vec![".*\\.pdf$".to_string()];
+        let config = Config {
+            ignore_patterns: vec![".*\\.pdf$".to_string()],
+            ..Default::default()
+        };
         let files = walk_path(dir.path(), &config).unwrap();
         assert!(files.iter().all(|f| !f.to_string_lossy().ends_with(".pdf")));
     }
