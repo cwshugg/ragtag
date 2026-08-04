@@ -145,7 +145,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build binary and upload to the GitHub Release
-        uses: taiki-e/upload-rust-binary-action@e7953b6078194a4ae5f5619632e3715db6275561 # v1.24.0
+        uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           # Binary name (matches [package].name / [[bin]] in Cargo.toml).
           bin: ragtag
