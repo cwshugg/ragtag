@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag/version to release (e.g. v1.2.3). The tag is created at the selected ref if it does not already exist."
+        description: "Release Version (e.g. v1.2.3)"
         required: true
         type: string
 

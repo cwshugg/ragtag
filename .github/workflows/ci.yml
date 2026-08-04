@@ -24,7 +24,7 @@ env:
 
 jobs:
   quality:
-    name: Format, lint, build & test
+    name: Code Quality Assurance
     runs-on: ubuntu-latest
     steps:
       # Third-party actions are pinned to full commit SHAs (with the
