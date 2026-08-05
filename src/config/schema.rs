@@ -5,10 +5,14 @@
 //! an empty config file is valid.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 /// The maximum number of ignore patterns allowed.
 const MAX_IGNORE_PATTERNS: usize = 256;
+
+/// The maximum number of aliases allowed.
+const MAX_ALIASES: usize = 256;
 
 /// The maximum length of a single ignore pattern.
 const MAX_PATTERN_LENGTH: usize = 1024;
@@ -46,6 +50,82 @@ impl<'de> Deserialize<'de> for ColorMode {
     }
 }
 
+/// A user-defined command alias.
+///
+/// Running `ragtag <name>` expands to the alias's `arguments` and executes
+/// the result as if typed directly.
+///
+/// In the YAML config, `arguments` is written as a single shell-like string
+/// (e.g., `arguments: "task summary"`). It is split into individual tokens
+/// with shell-like quoting semantics (via the `shlex` crate) at load time and
+/// stored as a `Vec<String>`. When serialized, the tokens are joined back into
+/// a single shell-quoted string so the external YAML shape is preserved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Alias {
+    /// The alias name, invoked as `ragtag <name>`.
+    pub name: String,
+    /// The tokens the alias expands to (e.g., `["task", "summary"]`).
+    pub arguments: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for Alias {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        /// The on-disk shape of an alias: `arguments` is a single string.
+        #[derive(Deserialize)]
+        struct RawAlias {
+            name: String,
+            arguments: String,
+        }
+
+        let raw = RawAlias::deserialize(deserializer)?;
+        let arguments = shlex::split(&raw.arguments).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "alias \"{}\" has an invalid arguments string: {:?}",
+                raw.name, raw.arguments
+            ))
+        })?;
+        if arguments.is_empty() {
+            return Err(serde::de::Error::custom(format!(
+                "alias \"{}\" has empty arguments",
+                raw.name
+            )));
+        }
+        Ok(Alias {
+            name: raw.name,
+            arguments,
+        })
+    }
+}
+
+impl Serialize for Alias {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        // Join the tokens back into a single shell-quoted string so the
+        // serialized form matches the documented single-string config shape.
+        let joined = shlex::try_join(self.arguments.iter().map(String::as_str))
+            .map_err(serde::ser::Error::custom)?;
+        let mut state = serializer.serialize_struct("Alias", 2)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("arguments", &joined)?;
+        state.end()
+    }
+}
+
+impl fmt::Display for Alias {
+    /// Renders the alias's expansion as a space-joined command string, for
+    /// use in help text.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.arguments.join(" "))
+    }
+}
+
 /// Output configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -80,6 +160,8 @@ pub struct Config {
     pub max_file_size: u64,
     /// Output configuration.
     pub output: OutputConfig,
+    /// User-defined command aliases. Empty by default (no default aliases).
+    pub aliases: Vec<Alias>,
     /// Extension configuration sections (raw YAML values).
     /// Keys are extension config section names in the YAML file (e.g., "tasks" for the task extension).
     #[serde(flatten)]
@@ -95,6 +177,7 @@ impl Default for Config {
             max_depth: None,
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             output: OutputConfig::default(),
+            aliases: Vec::new(),
             extension_configs: HashMap::new(),
         }
     }
@@ -127,6 +210,61 @@ impl Config {
                 "max_file_size {} exceeds maximum allowed value of {MAX_ALLOWED_FILE_SIZE}",
                 self.max_file_size
             )));
+        }
+        Ok(())
+    }
+
+    /// Validates the alias list against the set of real command names.
+    ///
+    /// `real_command_names` must contain every built-in command name
+    /// (e.g., `summary`, `query`, `config`) and every extension command
+    /// name (e.g., `task`). This is run at startup, before any command
+    /// executes, so collisions are caught early.
+    ///
+    /// Errors on:
+    /// - more aliases than `MAX_ALIASES`,
+    /// - an empty alias name,
+    /// - an alias name that collides with a real command name,
+    /// - a duplicate alias name,
+    /// - an alias whose `arguments` expand to no tokens.
+    pub fn validate_aliases(
+        &self,
+        real_command_names: &HashSet<String>,
+    ) -> Result<(), crate::error::RagtagError> {
+        if self.aliases.len() > MAX_ALIASES {
+            return Err(crate::error::RagtagError::InvalidConfig(format!(
+                "too many aliases ({}) — maximum is {MAX_ALIASES}",
+                self.aliases.len()
+            )));
+        }
+        let mut seen: HashSet<&str> = HashSet::new();
+        for alias in &self.aliases {
+            if alias.name.is_empty() {
+                return Err(crate::error::RagtagError::InvalidConfig(
+                    "alias name must not be empty".to_string(),
+                ));
+            }
+            if real_command_names.contains(&alias.name) {
+                return Err(crate::error::RagtagError::InvalidConfig(format!(
+                    "alias \"{}\" collides with an existing command name",
+                    alias.name
+                )));
+            }
+            if !seen.insert(alias.name.as_str()) {
+                return Err(crate::error::RagtagError::InvalidConfig(format!(
+                    "duplicate alias name \"{}\"",
+                    alias.name
+                )));
+            }
+            // Ensure the alias actually expands to a command. A parseable
+            // but empty token list (e.g., a whitespace-only arguments string)
+            // is rejected here as well as at deserialization time.
+            if alias.arguments.is_empty() {
+                return Err(crate::error::RagtagError::InvalidConfig(format!(
+                    "alias \"{}\" has empty arguments",
+                    alias.name
+                )));
+            }
         }
         Ok(())
     }
@@ -251,5 +389,253 @@ tasks:
         assert!(config.validate().is_err());
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("max_file_size"));
+    }
+
+    // === Aliases ===
+
+    /// A set of "real" command names for alias-collision testing.
+    fn real_commands() -> HashSet<String> {
+        ["config", "summary", "query", "task"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_aliases_parse_from_yaml() {
+        let yaml = r#"
+aliases:
+  - name: "my-alias"
+    arguments: "task summary"
+  - name: "active"
+    arguments: "query task --filter status=active"
+"#;
+        let config: Config = serde_yml::from_str(yaml).unwrap();
+        assert_eq!(config.aliases.len(), 2);
+        assert_eq!(config.aliases[0].name, "my-alias");
+        assert_eq!(config.aliases[0].arguments, vec!["task", "summary"]);
+        assert_eq!(config.aliases[1].name, "active");
+        assert_eq!(
+            config.aliases[1].arguments,
+            vec!["query", "task", "--filter", "status=active"]
+        );
+        // The `aliases` field must be a real field, not swallowed by the
+        // flattened `extension_configs` map.
+        assert!(!config.extension_configs.contains_key("aliases"));
+        config.validate_aliases(&real_commands()).unwrap();
+    }
+
+    #[test]
+    fn test_aliases_absent_is_ok() {
+        let yaml = "skip_hidden: false\n";
+        let config: Config = serde_yml::from_str(yaml).unwrap();
+        assert!(config.aliases.is_empty());
+        config.validate_aliases(&real_commands()).unwrap();
+    }
+
+    #[test]
+    fn test_aliases_empty_list_is_ok() {
+        let yaml = "aliases: []\n";
+        let config: Config = serde_yml::from_str(yaml).unwrap();
+        assert!(config.aliases.is_empty());
+        config.validate_aliases(&real_commands()).unwrap();
+    }
+
+    #[test]
+    fn test_aliases_coexist_with_extension_configs() {
+        let yaml = r#"
+aliases:
+  - name: "my-alias"
+    arguments: "task summary"
+tasks:
+  tag_name: "todo"
+"#;
+        let config: Config = serde_yml::from_str(yaml).unwrap();
+        assert_eq!(config.aliases.len(), 1);
+        assert!(config.extension_configs.contains_key("tasks"));
+        assert!(!config.extension_configs.contains_key("aliases"));
+    }
+
+    #[test]
+    fn test_aliases_duplicate_name_errors() {
+        let config = Config {
+            aliases: vec![
+                Alias {
+                    name: "dup".to_string(),
+                    arguments: vec!["summary".to_string()],
+                },
+                Alias {
+                    name: "dup".to_string(),
+                    arguments: vec!["query".to_string()],
+                },
+            ],
+            ..Default::default()
+        };
+        let err = config.validate_aliases(&real_commands()).unwrap_err();
+        assert!(err.to_string().contains("duplicate alias name"));
+    }
+
+    #[test]
+    fn test_aliases_empty_name_errors() {
+        let config = Config {
+            aliases: vec![Alias {
+                name: String::new(),
+                arguments: vec!["summary".to_string()],
+            }],
+            ..Default::default()
+        };
+        let err = config.validate_aliases(&real_commands()).unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_aliases_collision_with_builtin_errors() {
+        let config = Config {
+            aliases: vec![Alias {
+                name: "summary".to_string(),
+                arguments: vec!["query".to_string()],
+            }],
+            ..Default::default()
+        };
+        let err = config.validate_aliases(&real_commands()).unwrap_err();
+        assert!(err.to_string().contains("collides"));
+        assert!(err.to_string().contains("summary"));
+    }
+
+    #[test]
+    fn test_aliases_collision_with_extension_command_errors() {
+        let config = Config {
+            aliases: vec![Alias {
+                name: "task".to_string(),
+                arguments: vec!["summary".to_string()],
+            }],
+            ..Default::default()
+        };
+        let err = config.validate_aliases(&real_commands()).unwrap_err();
+        assert!(err.to_string().contains("collides"));
+        assert!(err.to_string().contains("task"));
+    }
+
+    #[test]
+    fn test_aliases_empty_arguments_errors() {
+        let config = Config {
+            aliases: vec![Alias {
+                name: "blank".to_string(),
+                arguments: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let err = config.validate_aliases(&real_commands()).unwrap_err();
+        assert!(err.to_string().contains("empty arguments"));
+    }
+
+    #[test]
+    fn test_aliases_valid_passes() {
+        let config = Config {
+            aliases: vec![Alias {
+                name: "my-alias".to_string(),
+                arguments: vec!["task".to_string(), "summary".to_string()],
+            }],
+            ..Default::default()
+        };
+        config.validate_aliases(&real_commands()).unwrap();
+    }
+
+    #[test]
+    fn test_aliases_too_many_errors() {
+        let aliases = (0..=MAX_ALIASES)
+            .map(|i| Alias {
+                name: format!("alias{i}"),
+                arguments: vec!["summary".to_string()],
+            })
+            .collect();
+        let config = Config {
+            aliases,
+            ..Default::default()
+        };
+        let err = config.validate_aliases(&real_commands()).unwrap_err();
+        assert!(err.to_string().contains("too many aliases"));
+    }
+
+    #[test]
+    fn test_aliases_at_cap_passes() {
+        let aliases = (0..MAX_ALIASES)
+            .map(|i| Alias {
+                name: format!("alias{i}"),
+                arguments: vec!["summary".to_string()],
+            })
+            .collect();
+        let config = Config {
+            aliases,
+            ..Default::default()
+        };
+        config.validate_aliases(&real_commands()).unwrap();
+    }
+
+    // === Argument parsing (shell-like quoting at load time) ===
+
+    /// Deserializes a single alias from a `name`/`arguments` YAML mapping.
+    fn alias_from_yaml(name: &str, arguments: &str) -> Result<Alias, serde_yml::Error> {
+        let yaml = format!("name: {name:?}\narguments: {arguments:?}\n");
+        serde_yml::from_str(&yaml)
+    }
+
+    #[test]
+    fn test_arguments_parse_simple() {
+        let alias = alias_from_yaml("a", "task summary").unwrap();
+        assert_eq!(alias.arguments, vec!["task", "summary"]);
+    }
+
+    #[test]
+    fn test_arguments_parse_quoted_segment() {
+        let alias = alias_from_yaml("a", r#"task get "two words""#).unwrap();
+        assert_eq!(alias.arguments, vec!["task", "get", "two words"]);
+    }
+
+    #[test]
+    fn test_arguments_parse_single_quotes() {
+        let alias = alias_from_yaml("a", "query --filter 'status=active'").unwrap();
+        assert_eq!(alias.arguments, vec!["query", "--filter", "status=active"]);
+    }
+
+    #[test]
+    fn test_arguments_parse_collapses_whitespace() {
+        let alias = alias_from_yaml("a", "task    summary").unwrap();
+        assert_eq!(alias.arguments, vec!["task", "summary"]);
+    }
+
+    #[test]
+    fn test_arguments_parse_unterminated_quote_errors() {
+        assert!(alias_from_yaml("a", r#"task get "unterminated"#).is_err());
+    }
+
+    #[test]
+    fn test_arguments_parse_whitespace_only_errors() {
+        let err = alias_from_yaml("a", "   ").unwrap_err();
+        assert!(err.to_string().contains("empty arguments"));
+    }
+
+    #[test]
+    fn test_alias_round_trip_serialization() {
+        let config = Config {
+            aliases: vec![
+                Alias {
+                    name: "my-alias".to_string(),
+                    arguments: vec!["task".to_string(), "summary".to_string()],
+                },
+                Alias {
+                    name: "spaced".to_string(),
+                    arguments: vec![
+                        "query".to_string(),
+                        "--filter".to_string(),
+                        "status = active".to_string(),
+                    ],
+                },
+            ],
+            ..Default::default()
+        };
+        let yaml = serde_yml::to_string(&config).unwrap();
+        let restored: Config = serde_yml::from_str(&yaml).unwrap();
+        assert_eq!(restored.aliases, config.aliases);
     }
 }

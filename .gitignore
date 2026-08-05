@@ -1,1 +1,11 @@
+# Rust build artifacts
 /target
+
+# Vim swapfiles
+*.swp
+*.swo
+*.swn
+
+# Other files
+*~
+

@@ -180,7 +180,7 @@ notes/project.md id="a1b2c3d4e5f67890" status="active" title="Write docs" descri
 | Flag | Description |
 | --- | --- |
 | `--path <PATH>` | Search path (file or directory, default: `.`) |
-| `--filter <EXPR>` | Filter expression. Supports `=`, `!=`, `>`, `<`, `>=`, `<=` operators, `AND`/`OR` boolean operators, and parentheses for grouping |
+| `--filter <EXPR>` | Boolean filter expression. Same syntax as `ragtag query` — see [Filter Expressions](cli-reference.md#filter-expressions) |
 | `--sort <FIELD>` | Sort results by field name (e.g., `priority`, `status`, `title`) |
 | `--reverse` | Reverse sort order |
 | `--all`, `-a` | Show all tasks, including excluded status categories (done, abandoned) |
@@ -205,6 +205,9 @@ ragtag task list --filter "status=active OR priority=0"
 
 # Parenthesized grouping: active or blocked, AND owned by alice
 ragtag task list --filter "(status=active OR status=blocked) AND owner=alice"
+
+# Whitespace around operators is optional (quote values with spaces)
+ragtag task list --filter "status = active AND owner = 'John Doe'"
 ```
 
 ### `task summary`
@@ -261,7 +264,7 @@ Status values are color-coded (green for done, yellow for active, red for blocke
 | `--path <PATH>` | `.` | Search path (file or directory) |
 | `--group <FIELD>` | `priority` | Group tasks by field: `status`, `owner`, or `priority` |
 | `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
-| `--filter <EXPR>` | — | Filter expression. Supports `AND`, `OR`, and parentheses |
+| `--filter <EXPR>` | — | Boolean filter expression. See [Filter Expressions](cli-reference.md#filter-expressions) |
 | `--format <FORMAT>` | `table` | Output format: `table` (aligned columns) or `list` (multi-line per task) |
 | `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
 

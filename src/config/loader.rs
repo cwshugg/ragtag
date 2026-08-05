@@ -9,7 +9,10 @@ use super::schema::Config;
 use crate::error::RagtagError;
 
 /// Config file names to search for, in order of preference at each directory level.
-const CONFIG_FILE_NAMES: &[&str] = &[".ragtag.yaml", "ragtag.yaml"];
+///
+/// A dotfile takes precedence over a non-dotfile, and within the same base name
+/// the `.yaml` extension takes precedence over `.yml`.
+const CONFIG_FILE_NAMES: &[&str] = &[".ragtag.yaml", ".ragtag.yml", "ragtag.yaml", "ragtag.yml"];
 
 /// Loads a ragtag configuration.
 ///
@@ -47,7 +50,7 @@ pub fn load_config(cli_path: Option<&Path>, start_dir: &Path) -> Result<Config, 
 
 /// Discovers a config file by walking up from `start_dir`.
 ///
-/// At each directory level, checks for `.ragtag.yaml` then `ragtag.yaml`.
+/// At each directory level, checks the names in [`CONFIG_FILE_NAMES`] in order.
 /// Stops at a directory containing `.git` or at the filesystem root.
 pub fn discover_config_file(start_dir: &Path) -> Option<PathBuf> {
     let mut current = start_dir.to_path_buf();
@@ -119,6 +122,51 @@ mod tests {
         fs::write(dir.path().join("ragtag.yaml"), "").unwrap();
         let found = discover_config_file(dir.path());
         assert!(found.unwrap().ends_with(".ragtag.yaml"));
+    }
+
+    #[test]
+    fn test_discover_dot_yml_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join(".ragtag.yml");
+        fs::write(&config_path, "").unwrap();
+        let found = discover_config_file(dir.path());
+        assert_eq!(found, Some(config_path));
+    }
+
+    #[test]
+    fn test_discover_plain_yml_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("ragtag.yml");
+        fs::write(&config_path, "").unwrap();
+        let found = discover_config_file(dir.path());
+        assert_eq!(found, Some(config_path));
+    }
+
+    #[test]
+    fn test_discover_dot_yaml_beats_dot_yml() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".ragtag.yaml"), "").unwrap();
+        fs::write(dir.path().join(".ragtag.yml"), "").unwrap();
+        let found = discover_config_file(dir.path());
+        assert!(found.unwrap().ends_with(".ragtag.yaml"));
+    }
+
+    #[test]
+    fn test_discover_dot_yml_beats_plain_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".ragtag.yml"), "").unwrap();
+        fs::write(dir.path().join("ragtag.yaml"), "").unwrap();
+        let found = discover_config_file(dir.path());
+        assert!(found.unwrap().ends_with(".ragtag.yml"));
+    }
+
+    #[test]
+    fn test_discover_plain_yaml_beats_plain_yml() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("ragtag.yaml"), "").unwrap();
+        fs::write(dir.path().join("ragtag.yml"), "").unwrap();
+        let found = discover_config_file(dir.path());
+        assert!(found.unwrap().ends_with("ragtag.yaml"));
     }
 
     #[test]

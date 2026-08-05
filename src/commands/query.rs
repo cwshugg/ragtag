@@ -11,6 +11,7 @@ use crate::config::{ColorMode, Config};
 use crate::discovery;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionRegistry;
+use crate::filter::{self, FilterExpr};
 use crate::models::Tag;
 use crate::output::format::colorize_path;
 use crate::parser;
@@ -34,6 +35,14 @@ pub fn run(
         .map(|vals| vals.cloned().collect())
         .unwrap_or_default();
 
+    // Parse and validate every filter up front so a malformed expression is
+    // reported regardless of how many tags match. Multiple `--filter` flags are
+    // AND-combined: a tag must satisfy all of them.
+    let parsed_filters: Vec<FilterExpr> = filters
+        .iter()
+        .map(|f| parse_query_filter(f))
+        .collect::<Result<_, _>>()?;
+
     let files = discovery::walk_path(path, config)?;
     let mut matching_tags: Vec<Tag> = Vec::new();
 
@@ -49,14 +58,9 @@ pub fn run(
         for tag in tags {
             let name_matches = tag_name.is_none_or(|name| tag.name == *name);
             if name_matches {
-                // Apply filters
-                let mut passes = true;
-                for f in &filters {
-                    passes = apply_filter(&tag, f)?;
-                    if !passes {
-                        break;
-                    }
-                }
+                let passes = parsed_filters
+                    .iter()
+                    .all(|expr| eval_query_filter(&tag, expr));
                 if passes {
                     matching_tags.push(tag);
                 }
@@ -88,37 +92,45 @@ pub fn run(
     Ok(())
 }
 
-/// Applies a filter expression to a tag.
-fn apply_filter(tag: &Tag, filter: &str) -> Result<bool, RagtagError> {
-    let filter_expr = parse_filter(filter).ok_or_else(|| {
-        RagtagError::InvalidFilter(format!(
-            "\"{filter}\" — expected format: field=value, field!=value, field>value, etc."
-        ))
-    })?;
-    Ok(match filter_expr.op {
-        FilterOp::Eq => get_tag_attr_str(tag, &filter_expr.field) == filter_expr.value,
-        FilterOp::NotEq => get_tag_attr_str(tag, &filter_expr.field) != filter_expr.value,
-        FilterOp::Gt => compare_values(
-            &get_tag_attr_str(tag, &filter_expr.field),
-            &filter_expr.value,
-            |a, b| a > b,
-        ),
-        FilterOp::Lt => compare_values(
-            &get_tag_attr_str(tag, &filter_expr.field),
-            &filter_expr.value,
-            |a, b| a < b,
-        ),
-        FilterOp::Gte => compare_values(
-            &get_tag_attr_str(tag, &filter_expr.field),
-            &filter_expr.value,
-            |a, b| a >= b,
-        ),
-        FilterOp::Lte => compare_values(
-            &get_tag_attr_str(tag, &filter_expr.field),
-            &filter_expr.value,
-            |a, b| a <= b,
-        ),
-    })
+/// Parses and validates a single `--filter` argument into a boolean
+/// expression using the shared filter engine.
+///
+/// The expression may combine conditions with `AND`, `OR`, and parentheses.
+/// Each leaf condition must contain a comparison operator; the field may be any
+/// tag attribute name.
+fn parse_query_filter(filter: &str) -> Result<FilterExpr, RagtagError> {
+    let expr = filter::parse_filter_expr(filter)?;
+    filter::validate(&expr, &validate_query_condition)?;
+    Ok(expr)
+}
+
+/// Evaluates a parsed filter expression against a tag.
+///
+/// Each leaf condition is applied with `apply_query_condition`; the shared
+/// engine combines the results with standard boolean logic.
+fn eval_query_filter(tag: &Tag, expr: &FilterExpr) -> bool {
+    filter::evaluate(expr, &mut |cond| apply_query_condition(tag, cond))
+}
+
+/// Validates a single leaf condition for a query filter.
+///
+/// A condition is valid if it contains one of the comparison operators
+/// `!=`, `>=`, `<=`, `>`, `<`, or `=` outside any quoted span.
+fn validate_query_condition(cond: &str) -> Result<(), RagtagError> {
+    filter::ensure_condition_has_operator(cond)
+}
+
+/// Applies a single leaf condition to a tag.
+///
+/// Supports `=`, `!=`, `>`, `<`, `>=`, and `<=`. Numeric values are compared
+/// numerically; non-numeric values fall back to lexicographic comparison.
+fn apply_query_condition(tag: &Tag, cond: &str) -> bool {
+    let Some((field, op, value)) = filter::split_condition(cond) else {
+        // Unreachable: conditions are validated to contain an operator first.
+        return false;
+    };
+    let attr = get_tag_attr_str(tag, field);
+    filter::apply_operator(op, &attr, value)
 }
 
 /// Gets a tag attribute as a string.
@@ -126,69 +138,6 @@ fn get_tag_attr_str(tag: &Tag, field: &str) -> String {
     tag.get_named_attribute(field)
         .map(|v| format!("{v}"))
         .unwrap_or_default()
-}
-
-/// Compares two values numerically if possible, otherwise lexicographically.
-fn compare_values(a: &str, b: &str, cmp: fn(f64, f64) -> bool) -> bool {
-    if let (Ok(na), Ok(nb)) = (a.parse::<f64>(), b.parse::<f64>()) {
-        cmp(na, nb)
-    } else {
-        // Fall back to lexicographic string comparison for non-numeric values.
-        let ordering = a.cmp(b);
-        // Map the string comparison to the same semantics as the numeric comparator:
-        // we test the comparator against (0, -1), (0, 0), (0, 1) to determine its behavior.
-        match ordering {
-            std::cmp::Ordering::Less => cmp(-1.0, 0.0),
-            std::cmp::Ordering::Equal => cmp(0.0, 0.0),
-            std::cmp::Ordering::Greater => cmp(1.0, 0.0),
-        }
-    }
-}
-
-/// A parsed filter expression.
-struct FilterExpr {
-    field: String,
-    op: FilterOp,
-    value: String,
-}
-
-/// Filter comparison operators.
-enum FilterOp {
-    Eq,
-    NotEq,
-    Gt,
-    Lt,
-    Gte,
-    Lte,
-}
-
-/// Parses a filter expression string.
-fn parse_filter(expr: &str) -> Option<FilterExpr> {
-    // Order matters: check multi-char operators first
-    for (op_str, op) in &[
-        ("!=", FilterOp::NotEq),
-        (">=", FilterOp::Gte),
-        ("<=", FilterOp::Lte),
-        (">", FilterOp::Gt),
-        ("<", FilterOp::Lt),
-        ("=", FilterOp::Eq),
-    ] {
-        if let Some(idx) = expr.find(op_str) {
-            return Some(FilterExpr {
-                field: expr[..idx].trim().to_string(),
-                op: match op {
-                    FilterOp::Eq => FilterOp::Eq,
-                    FilterOp::NotEq => FilterOp::NotEq,
-                    FilterOp::Gt => FilterOp::Gt,
-                    FilterOp::Lt => FilterOp::Lt,
-                    FilterOp::Gte => FilterOp::Gte,
-                    FilterOp::Lte => FilterOp::Lte,
-                },
-                value: expr[idx + op_str.len()..].trim().to_string(),
-            });
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -206,25 +155,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_parse_filter_eq() {
-        let f = parse_filter("status=active").unwrap();
-        assert_eq!(f.field, "status");
-        assert_eq!(f.value, "active");
-    }
-
-    #[test]
-    fn test_parse_filter_neq() {
-        let f = parse_filter("status!=done").unwrap();
-        assert_eq!(f.field, "status");
-        assert_eq!(f.value, "done");
-    }
-
-    #[test]
-    fn test_parse_filter_gt() {
-        let f = parse_filter("priority>0").unwrap();
-        assert_eq!(f.field, "priority");
-        assert_eq!(f.value, "0");
+    /// Evaluates a whole filter string against a tag, mirroring the query
+    /// command's parse-then-evaluate flow.
+    fn apply_filter(tag: &Tag, filter: &str) -> Result<bool, RagtagError> {
+        let expr = parse_query_filter(filter)?;
+        Ok(eval_query_filter(tag, &expr))
     }
 
     #[test]
@@ -265,36 +200,55 @@ mod tests {
                 AttributeValue::Str("active".to_string()),
             )],
         );
-        assert!(apply_filter(&tag, "statusinvalid").is_err());
+        // A condition with no comparison operator is rejected with the
+        // "expected format" message.
+        let err = apply_filter(&tag, "statusinvalid").unwrap_err();
+        assert!(err.to_string().contains("expected format"));
     }
 
     #[test]
-    fn test_apply_filter_string_gt() {
-        // Non-numeric values should fall back to lexicographic comparison
+    fn test_apply_filter_boolean_and_or_parens() {
+        let tag = make_tag(
+            "tag",
+            vec![
+                TagAttribute::named("status", AttributeValue::Str("active".to_string())),
+                TagAttribute::named(
+                    "priority",
+                    AttributeValue::Integer {
+                        value: 0,
+                        base: NumericBase::Decimal,
+                    },
+                ),
+            ],
+        );
+        // (status=active OR priority=9) AND status!=done → true
+        assert!(apply_filter(&tag, "(status=active OR priority=9) AND status!=done").unwrap());
+        // (status=blocked OR priority=9) AND status!=done → false (neither OR arm holds)
+        assert!(!apply_filter(&tag, "(status=blocked OR priority=9) AND status!=done").unwrap());
+    }
+
+    #[test]
+    fn test_query_and_task_share_parse_results() {
+        // The same expression string parses to identical ASTs through the
+        // shared engine, whichever command drives it.
+        let via_query = parse_query_filter("(a = 1 OR b = 2) AND c != 3").unwrap();
+        let via_shared = filter::parse_filter_expr("(a=1 OR b=2) AND c!=3").unwrap();
+        assert_eq!(via_query, via_shared);
+    }
+
+    #[test]
+    fn test_apply_filter_empty_value_matches_absent_attribute() {
+        // A tag with a non-matching attribute set, but no `owner`.
         let tag = make_tag(
             "tag",
             vec![TagAttribute::named(
                 "status",
-                AttributeValue::Str("draft".to_string()),
+                AttributeValue::Str("active".to_string()),
             )],
         );
-        // "draft" > "active" lexicographically
-        assert!(apply_filter(&tag, "status>active").unwrap());
-        // "draft" < "final" lexicographically
-        assert!(!apply_filter(&tag, "status>final").unwrap());
-    }
-
-    #[test]
-    fn test_apply_filter_string_gte() {
-        let tag = make_tag(
-            "tag",
-            vec![TagAttribute::named(
-                "status",
-                AttributeValue::Str("draft".to_string()),
-            )],
-        );
-        assert!(apply_filter(&tag, "status>=draft").unwrap());
-        assert!(apply_filter(&tag, "status>=active").unwrap());
-        assert!(!apply_filter(&tag, "status>=final").unwrap());
+        // `owner=` matches because the absent attribute reads as empty.
+        assert!(apply_filter(&tag, "owner=").unwrap());
+        // `owner!=` is the complement and does not match.
+        assert!(!apply_filter(&tag, "owner!=").unwrap());
     }
 }

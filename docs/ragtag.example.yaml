@@ -53,6 +53,22 @@ output:
 
 
 # ---------------------------------------------------------------------------
+# Aliases
+# ---------------------------------------------------------------------------
+#
+# User-defined command aliases. Empty by default — there are no built-in
+# aliases. Running `ragtag <name>` expands `arguments` (split with shell-like
+# quoting) and runs it as if typed directly. Trailing args are appended, and
+# aliases participate in prefix inference. An alias name must not collide with
+# a real command (summary/query/config/task), be duplicated, or be empty.
+aliases: []
+  # - name: "ts"
+  #   arguments: "task summary"
+  # - name: "active"
+  #   arguments: "query task --filter status=active"
+
+
+# ---------------------------------------------------------------------------
 # Task Extension
 # ---------------------------------------------------------------------------
 #
