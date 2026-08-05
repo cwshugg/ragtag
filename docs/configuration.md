@@ -62,6 +62,11 @@ output:
   # "auto" enables color when stdout is a terminal.
   color: "auto"
 
+# User-defined command aliases (empty by default — there are no built-in aliases).
+# Each entry has a `name` (invoked as `ragtag <name>`) and an `arguments` string
+# that is split with shell-like quoting and executed as if typed directly.
+aliases: []
+
 # Task extension configuration.
 tasks:
   # The tag name used for tasks.
@@ -129,6 +134,14 @@ tasks:
 | --- | --- | --- | --- |
 | `output.color` | string | `"auto"` | Color mode: `"auto"`, `"always"`, or `"never"` |
 
+### Aliases
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `aliases` | list of objects | `[]` | User-defined command aliases (see [Aliases](#aliases-1)) |
+| `aliases[].name` | string | (required) | The alias name, invoked as `ragtag <name>` |
+| `aliases[].arguments` | string | (required) | Command string the alias expands to (split with shell-like quoting) |
+
 ### Task Extension Options
 
 | Option | Type | Default | Description |
@@ -158,6 +171,47 @@ ignore_patterns:
   - "node_modules/"    # Skip Node.js dependencies
   - ".*\\.min\\.js$"   # Skip minified JavaScript
 ```
+
+## Aliases
+
+Aliases let you define shorthand commands in your config file. Running
+`ragtag <alias>` expands the alias's `arguments` and executes the result as if
+you had typed the full command. There are **no default aliases** — the list is
+empty unless you define one.
+
+```yaml
+aliases:
+  - name: "my-alias"
+    arguments: "task summary"
+  - name: "active"
+    arguments: "query task --filter status=active"
+```
+
+With the config above, `ragtag my-alias` behaves exactly like
+`ragtag task summary`.
+
+**Behavior:**
+
+* **Shell-like argument splitting.** The `arguments` string is split using
+  shell-word semantics (via the `shlex` crate), so quoting is respected:
+  `arguments: 'task get "two words"'` yields `task`, `get`, `two words`.
+* **Trailing arguments are appended.** Anything you type after the alias name is
+  appended to the expansion. `ragtag my-alias --count` runs
+  `ragtag task summary --count`.
+* **Prefix inference includes aliases.** ragtag infers unambiguous subcommand
+  prefixes, and aliases participate too: `ragtag my` resolves to `my-alias`. An
+  ambiguous prefix that matches multiple commands and/or aliases is an error,
+  just as with built-in commands.
+* **No recursion.** An alias always expands to built-in or extension commands
+  only — an alias never expands into another alias.
+
+**Validation (checked at startup):**
+
+* An alias `name` must not be empty.
+* An alias `name` must not collide with a real command name — a built-in
+  (`summary`, `query`, `config`) or an extension command (`task`). Collisions
+  are a config error.
+* Alias names must be unique.
 
 ## Example Configs
 
@@ -204,3 +258,17 @@ ignore_patterns:
   - "build/"
   - ".*\\.lock$"
 ```
+
+### Config With Aliases
+
+```yaml
+# .ragtag.yaml — handy shorthands
+aliases:
+  - name: "todo"
+    arguments: "query task --filter status=active"
+  - name: "ts"
+    arguments: "task summary"
+```
+
+Now `ragtag todo` runs `ragtag query task --filter status=active`, and
+`ragtag ts --path src` runs `ragtag task summary --path src`.

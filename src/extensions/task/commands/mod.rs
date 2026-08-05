@@ -88,22 +88,10 @@ pub fn collect_tasks(
 
 /// Validates that a filter expression is parseable.
 ///
-/// A valid filter must contain one of the comparison operators:
-/// `!=`, `>=`, `<=`, `>`, `<`, or `=`.
+/// A valid filter must contain one of the comparison operators
+/// `!=`, `>=`, `<=`, `>`, `<`, or `=` outside any quoted span.
 pub fn validate_task_filter(filter: &str) -> Result<(), RagtagError> {
-    if filter.contains("!=")
-        || filter.contains(">=")
-        || filter.contains("<=")
-        || filter.contains('>')
-        || filter.contains('<')
-        || filter.contains('=')
-    {
-        Ok(())
-    } else {
-        Err(RagtagError::InvalidFilter(format!(
-            "\"{filter}\" — expected format: field=value, field!=value, field>value, etc."
-        )))
-    }
+    crate::filter::ensure_condition_has_operator(filter)
 }
 
 /// Applies a simple filter expression to a task.
@@ -112,21 +100,19 @@ pub fn validate_task_filter(filter: &str) -> Result<(), RagtagError> {
 /// Numeric fields are compared numerically; string fields are compared
 /// lexicographically.
 pub fn apply_task_filter(task: &TaskTag, filter: &str) -> bool {
-    if let Some((field, value)) = filter.split_once("!=") {
-        get_task_field_str(task, field.trim()) != value.trim()
-    } else if let Some((field, value)) = filter.split_once(">=") {
-        compare_field(task, field.trim(), value.trim(), |a, b| a >= b)
-    } else if let Some((field, value)) = filter.split_once("<=") {
-        compare_field(task, field.trim(), value.trim(), |a, b| a <= b)
-    } else if let Some((field, value)) = filter.split_once('>') {
-        compare_field(task, field.trim(), value.trim(), |a, b| a > b)
-    } else if let Some((field, value)) = filter.split_once('<') {
-        compare_field(task, field.trim(), value.trim(), |a, b| a < b)
-    } else if let Some((field, value)) = filter.split_once('=') {
-        get_task_field_str(task, field.trim()) == value.trim()
-    } else {
-        // Should not reach here since we validate above
-        false
+    let Some((field, op, value)) = crate::filter::split_condition(filter) else {
+        // Should not reach here since we validate above.
+        return false;
+    };
+    match op {
+        "!=" => get_task_field_str(task, field) != value,
+        ">=" => compare_field(task, field, value, |a, b| a >= b),
+        "<=" => compare_field(task, field, value, |a, b| a <= b),
+        ">" => compare_field(task, field, value, |a, b| a > b),
+        "<" => compare_field(task, field, value, |a, b| a < b),
+        "=" => get_task_field_str(task, field) == value,
+        // Unreachable: `find_operator` only yields the operators above.
+        _ => false,
     }
 }
 

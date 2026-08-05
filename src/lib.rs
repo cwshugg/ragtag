@@ -11,6 +11,7 @@ pub mod discovery;
 pub mod edit;
 pub mod error;
 pub mod extensions;
+pub mod filter;
 pub mod models;
 pub mod output;
 pub mod parser;

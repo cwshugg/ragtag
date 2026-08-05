@@ -7,4 +7,4 @@ pub mod loader;
 pub mod schema;
 
 pub use loader::{discover_config_file, load_config};
-pub use schema::{ColorMode, Config, OutputConfig};
+pub use schema::{Alias, ColorMode, Config, OutputConfig};

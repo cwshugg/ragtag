@@ -134,6 +134,26 @@ Task management commands. See the [task management guide](docs/task-management.m
 
 > **Subcommand prefix matching:** ragtag accepts any unambiguous prefix of every subcommand. For example, `ragtag su` resolves to `ragtag summary`, and `ragtag t li` resolves to `ragtag task list`. See the [CLI Reference](docs/cli-reference.md#subcommand-prefix-matching) for details.
 
+### Aliases
+
+Define command aliases in your config file to create shorthands. Running `ragtag <alias>` expands the alias's `arguments` and runs it as if typed directly.
+
+```yaml
+# .ragtag.yaml
+aliases:
+  - name: "ts"
+    arguments: "task summary"
+  - name: "active"
+    arguments: "query task --filter status=active"
+```
+
+```bash
+ragtag ts                # → ragtag task summary
+ragtag ts --path src     # → ragtag task summary --path src   (trailing args appended)
+```
+
+Aliases participate in prefix inference, are split with shell-like quoting, never expand into another alias, and may not collide with a real command name (collisions are rejected at startup). See the [configuration reference](docs/configuration.md#aliases) for full details.
+
 ## Global Flags
 
 | Flag | Description |

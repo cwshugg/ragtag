@@ -36,6 +36,33 @@ ragtag t ab <ID>           # → ragtag task abandon
 
 Ambiguous prefixes (e.g., `ragtag t c`, which could be `complete` or `create`) are rejected with a list of candidate subcommands. Add one more character to disambiguate.
 
+## Aliases
+
+You can define command aliases in your config file under the `aliases` key. Running `ragtag <alias>` expands the alias's `arguments` and executes the result as if you had typed the full command.
+
+```yaml
+# .ragtag.yaml
+aliases:
+  - name: "tsum"
+    arguments: "task summary"
+```
+
+```bash
+ragtag tsum                # → ragtag task summary
+ragtag tsum --path src     # → ragtag task summary --path src   (trailing args appended)
+ragtag tsu                 # → ragtag task summary  (prefix inference; when unambiguous)
+```
+
+Notes:
+
+* **Shell-like splitting.** The `arguments` string is split with quoting respected (e.g., `arguments: 'task get "two words"'`).
+* **Trailing args are appended** after the alias's own arguments.
+* **Prefix inference includes aliases** — an ambiguous prefix across commands and aliases errors just like any other ambiguous prefix.
+* **No recursion** — an alias never expands into another alias.
+* **Collisions are rejected at startup** — an alias name that matches a built-in (`summary`, `query`, `config`) or extension command (`task`), a duplicate alias name, or an empty name is a config error.
+
+See [Configuration Reference → Aliases](configuration.md#aliases) for full details.
+
 ## Commands
 
 ### `summary`
@@ -83,7 +110,7 @@ ragtag query <TAG_NAME> [OPTIONS]
 | Option | Default | Description |
 | --- | --- | --- |
 | `--path <PATH>` | `.` | Search path (file or directory) |
-| `--filter <EXPR>` | — | Filter by attribute (repeatable). Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=` |
+| `--filter <EXPR>` | — | Boolean filter expression (repeatable, AND-combined). See [Filter Expressions](#filter-expressions) |
 | `--count` | — | Print only the count of matching tags |
 
 **Output (default):**
@@ -101,18 +128,9 @@ notes/bugs.md:42: @todo(priority=0, owner="bob")
 2
 ```
 
-**Filter operators:**
-
-| Operator | Example | Description |
-| --- | --- | --- |
-| `=` | `status=active` | Equal |
-| `!=` | `status!=done` | Not equal |
-| `>` | `priority>0` | Greater than (numeric) |
-| `<` | `worktime_estimate<8` | Less than (numeric) |
-| `>=` | `priority>=1` | Greater than or equal (numeric) |
-| `<=` | `worktime_estimate<=4` | Less than or equal (numeric) |
-
-Numeric comparisons parse both sides as `f64`. If parsing fails, the comparison returns false.
+Filters use the shared boolean [Filter Expressions](#filter-expressions) syntax,
+so `--filter '(priority = 0 OR owner = alice) AND status != done'` works, with
+optional whitespace around operators.
 
 ### `config`
 
@@ -237,7 +255,7 @@ ragtag task list [OPTIONS]
 | Option | Default | Description |
 | --- | --- | --- |
 | `--path <PATH>` | `.` | Search path (file or directory) |
-| `--filter <EXPR>` | — | Filter tasks by attribute expression (e.g., `"status=active AND priority<=2"`). Supports `AND`, `OR`, and parentheses |
+| `--filter <EXPR>` | — | Boolean filter expression, e.g. `"status=active AND priority<=2"` (repeatable, AND-combined). See [Filter Expressions](#filter-expressions) |
 | `--sort <FIELD>` | — | Sort by field name |
 | `--reverse` | — | Reverse sort order |
 | `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
@@ -300,7 +318,7 @@ ragtag task summary [OPTIONS]
 | `--path <PATH>` | `.` | Search path (file or directory) |
 | `--group <FIELD>` | `priority` | Group tasks by field: `status`, `owner`, or `priority` |
 | `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
-| `--filter <EXPR>` | — | Filter tasks by attribute expression (e.g., `"status=active AND priority<=2"`). Supports `AND`, `OR`, and parentheses |
+| `--filter <EXPR>` | — | Boolean filter expression, e.g. `"status=active AND priority<=2"` (repeatable, AND-combined). See [Filter Expressions](#filter-expressions) |
 | `--format <FORMAT>` | `table` | Output format: `table` (aligned columns) or `list` (multi-line per task) |
 | `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
 
@@ -647,6 +665,44 @@ ragtag task prioritize 2 a1b2c3
 # Print the updated tag string without modifying the file
 ragtag task prioritize 1 a1b2c3d4e5f67890 --no-edit
 ```
+
+---
+
+## Filter Expressions
+
+The `--filter <EXPR>` option accepts the same boolean filter syntax everywhere
+it appears (`ragtag query`, `ragtag task list`, and `ragtag task summary`).
+
+**Conditions.** The building block is a single `field <op> value` condition
+using one of these comparison operators:
+
+| Operator | Example | Description |
+| --- | --- | --- |
+| `=` | `status=active` | Equal |
+| `!=` | `status!=done` | Not equal |
+| `>` | `priority>0` | Greater than |
+| `<` | `worktime_estimate<8` | Less than |
+| `>=` | `priority>=1` | Greater than or equal |
+| `<=` | `worktime_estimate<=4` | Less than or equal |
+
+`field` is any attribute name valid for the command's tags. Comparisons parse
+both sides as `f64` when possible and compare numerically; otherwise they fall
+back to a lexicographic string comparison.
+
+**Boolean composition.** Conditions can be combined with `AND` and `OR`
+(case-insensitive) and grouped with parentheses. `AND` binds tighter than `OR`;
+parentheses override precedence:
+
+```
+(status = active OR priority = 0) AND status != done
+```
+
+**Whitespace and quoting.** Whitespace around a condition's operator is optional
+(`status = active` and `status=active` are equivalent). Wrap a value that
+contains spaces in single or double quotes (e.g. `owner='John Doe'`).
+
+**Multiple `--filter` flags.** Passing `--filter` more than once combines the
+expressions with `AND` — a tag must satisfy every flag.
 
 ---
 

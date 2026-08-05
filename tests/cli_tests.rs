@@ -1805,6 +1805,42 @@ fn test_task_summary_filter_mode_or() {
         .stdout(predicate::str::contains("Bob Blocked").not());
 }
 
+#[test]
+fn test_task_summary_filter_spaced_operators() {
+    // Spaces around comparison operators inside a boolean filter expression
+    // are accepted.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("test.md");
+    fs::write(
+        &file,
+        "@task(id=\"aaa1234567890ab\", title=\"Alice Active\", status=\"active\", owner=\"alice\", priority=1, worktime_estimate=1, worktime_units=\"hours\")\n\
+         @task(id=\"bbb1234567890ab\", title=\"Bob Zero\", status=\"blocked\", owner=\"bob\", priority=0, worktime_estimate=2, worktime_units=\"hours\")\n\
+         @task(id=\"ccc1234567890ab\", title=\"Carol Done\", status=\"done\", owner=\"carol\", priority=4, worktime_estimate=3, worktime_units=\"hours\")",
+    ).unwrap();
+
+    // A boolean expression with spaces around operators.
+    ragtag()
+        .args([
+            "--no-color",
+            "task",
+            "summary",
+            "--format",
+            "table",
+            "--filter",
+            "(status = active OR priority = 0) AND (status != done OR status != inactive)",
+            "--path",
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        // Alice: status=active AND not done -> matches.
+        .stdout(predicate::str::contains("Alice Active"))
+        // Bob: priority=0 AND not done -> matches.
+        .stdout(predicate::str::contains("Bob Zero"))
+        // Carol: status=done and priority!=0 -> left group false -> excluded.
+        .stdout(predicate::str::contains("Carol Done").not());
+}
+
 // === Task List --format raw ===
 
 #[test]
@@ -3447,4 +3483,421 @@ fn test_task_time_rejects_inf() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("invalid worktime_spent"));
+}
+
+// === Aliases ===
+
+/// Writes a config file containing the given YAML into a temp dir and returns
+/// (the TempDir guard, the config file path as a String).
+fn alias_config(yaml: &str) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".ragtag.yaml");
+    fs::write(&path, yaml).unwrap();
+    let path_str = path.to_str().unwrap().to_string();
+    (dir, path_str)
+}
+
+#[test]
+fn test_alias_expands_to_same_output() {
+    // `ragtag my-alias` must produce byte-identical output to the expanded
+    // `ragtag task summary`.
+    let (_guard, config) =
+        alias_config("aliases:\n  - name: \"my-alias\"\n    arguments: \"task summary\"\n");
+    let fixtures = fixtures_dir();
+
+    let expanded = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "task", "summary", "--path", &fixtures])
+        .output()
+        .unwrap();
+
+    let aliased = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "my-alias", "--path", &fixtures])
+        .output()
+        .unwrap();
+
+    assert!(expanded.status.success());
+    assert!(aliased.status.success());
+    assert_eq!(aliased.stdout, expanded.stdout);
+}
+
+#[test]
+fn test_alias_propagates_global_no_color_flag() {
+    // A global flag (`--no-color`) must be honored through an alias in both
+    // positions, identically to the direct command. `output.color: always`
+    // forces color on so its suppression is observable regardless of TTY.
+    let (_guard, config) = alias_config(
+        "output:\n  color: always\naliases:\n  - name: \"my-alias\"\n    arguments: \"task summary\"\n",
+    );
+    let fixtures = fixtures_dir();
+
+    // Sanity check: without `--no-color`, the aliased command is colored, so
+    // the assertions below are meaningful.
+    let colored = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .env_remove("NO_COLOR")
+        .args(["--config", &config, "my-alias", "--path", &fixtures])
+        .output()
+        .unwrap();
+    assert!(colored.status.success());
+    assert!(String::from_utf8(colored.stdout).unwrap().contains("\x1b["));
+
+    // `--no-color` before the alias name.
+    let before = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .env_remove("NO_COLOR")
+        .args([
+            "--config",
+            &config,
+            "--no-color",
+            "my-alias",
+            "--path",
+            &fixtures,
+        ])
+        .output()
+        .unwrap();
+    assert!(before.status.success());
+    assert!(!String::from_utf8(before.stdout).unwrap().contains("\x1b["));
+
+    // `--no-color` after the alias name.
+    let after = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .env_remove("NO_COLOR")
+        .args([
+            "--config",
+            &config,
+            "my-alias",
+            "--no-color",
+            "--path",
+            &fixtures,
+        ])
+        .output()
+        .unwrap();
+    assert!(after.status.success());
+    assert!(!String::from_utf8(after.stdout).unwrap().contains("\x1b["));
+
+    // `--no-color` trailing after other alias arguments. clap folds this flag
+    // into the alias's trailing args, so it must still be honored to match the
+    // fully-expanded direct command.
+    let trailing = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .env_remove("NO_COLOR")
+        .args([
+            "--config",
+            &config,
+            "my-alias",
+            "--path",
+            &fixtures,
+            "--no-color",
+        ])
+        .output()
+        .unwrap();
+    assert!(trailing.status.success());
+    assert!(!String::from_utf8(trailing.stdout)
+        .unwrap()
+        .contains("\x1b["));
+}
+
+#[test]
+fn test_alias_trailing_args_appended() {
+    // `ragtag qt task` must behave like `ragtag query task`.
+    let (_guard, config) = alias_config("aliases:\n  - name: \"qt\"\n    arguments: \"query\"\n");
+    let fixtures = fixtures_dir();
+
+    let expanded = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "query", "task", "--path", &fixtures])
+        .output()
+        .unwrap();
+
+    let aliased = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "qt", "task", "--path", &fixtures])
+        .output()
+        .unwrap();
+
+    assert!(expanded.status.success());
+    assert!(aliased.status.success());
+    assert_eq!(aliased.stdout, expanded.stdout);
+}
+
+#[test]
+fn test_alias_quoted_arguments() {
+    // Shell-like quoting: an alias whose arguments contain a quoted --path
+    // value with a trailing slash should still resolve correctly.
+    let fixtures = fixtures_dir();
+    let yaml = format!(
+        "aliases:\n  - name: \"fx\"\n    arguments: \"summary --path \\\"{fixtures}\\\"\"\n"
+    );
+    let (_guard, config) = alias_config(&yaml);
+
+    let expanded = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "summary", "--path", &fixtures])
+        .output()
+        .unwrap();
+
+    let aliased = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "fx"])
+        .output()
+        .unwrap();
+
+    assert!(expanded.status.success());
+    assert!(aliased.status.success());
+    assert_eq!(aliased.stdout, expanded.stdout);
+}
+
+#[test]
+fn test_alias_prefix_inference() {
+    // `ragtag my` should infer the `my-alias` subcommand when unambiguous.
+    let (_guard, config) =
+        alias_config("aliases:\n  - name: \"my-alias\"\n    arguments: \"task summary\"\n");
+    let fixtures = fixtures_dir();
+
+    let inferred = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "my", "--path", &fixtures])
+        .output()
+        .unwrap();
+
+    let full = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "my-alias", "--path", &fixtures])
+        .output()
+        .unwrap();
+
+    assert!(inferred.status.success());
+    assert_eq!(inferred.stdout, full.stdout);
+}
+
+#[test]
+fn test_alias_ambiguous_prefix_errors() {
+    // `sum` is ambiguous between the built-in `summary` and the alias
+    // `sumtotal`, so clap must error just as it does for real commands.
+    let (_guard, config) =
+        alias_config("aliases:\n  - name: \"sumtotal\"\n    arguments: \"summary\"\n");
+
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "sum"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("sumtotal"))
+        .stderr(predicate::str::contains("summary"));
+}
+
+#[test]
+fn test_alias_does_not_chain() {
+    // An alias whose arguments reference another alias must NOT chain: the
+    // expansion is treated as a literal (non-existent) command.
+    let (_guard, config) = alias_config(
+        "aliases:\n  - name: \"chain-a\"\n    arguments: \"chain-b\"\n  - name: \"chain-b\"\n    arguments: \"summary\"\n",
+    );
+
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "chain-a"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown command"))
+        .stderr(predicate::str::contains("chain-b"));
+}
+
+#[test]
+fn test_alias_collision_with_builtin_is_load_error() {
+    let (_guard, config) =
+        alias_config("aliases:\n  - name: \"summary\"\n    arguments: \"query\"\n");
+
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "--help"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("collides"))
+        .stderr(predicate::str::contains("summary"));
+}
+
+#[test]
+fn test_alias_collision_with_extension_is_load_error() {
+    let (_guard, config) = alias_config("aliases:\n  - name: \"task\"\n    arguments: \"query\"\n");
+
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "summary", "--path", &fixtures_dir()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("collides"))
+        .stderr(predicate::str::contains("task"));
+}
+
+#[test]
+fn test_alias_duplicate_name_is_load_error() {
+    let (_guard, config) = alias_config(
+        "aliases:\n  - name: \"dup\"\n    arguments: \"summary\"\n  - name: \"dup\"\n    arguments: \"query\"\n",
+    );
+
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "--help"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate alias name"));
+}
+
+#[test]
+fn test_unknown_command_still_errors_with_aliases_defined() {
+    // Defining aliases must not change behavior for genuinely unknown commands.
+    let (_guard, config) =
+        alias_config("aliases:\n  - name: \"my-alias\"\n    arguments: \"summary\"\n");
+
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "definitely-not-a-command"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_aliases_hidden_from_help() {
+    // Aliases are hidden from the top-level help listing to avoid clutter.
+    let (_guard, config) =
+        alias_config("aliases:\n  - name: \"my-alias\"\n    arguments: \"summary\"\n");
+
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("my-alias").not());
+}
+
+// === Query boolean filters (shared filter engine) ===
+
+/// Creates a temp dir with a file of `@item(a=.., b=.., c=..)` tags for query
+/// filter tests. Returns the guard (kept alive by the caller) and the file path.
+fn query_items_file() -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("items.txt");
+    fs::write(
+        &file,
+        "@item(a=1, b=9, c=9)\n\
+         @item(a=9, b=2, c=9)\n\
+         @item(a=9, b=9, c=3)\n\
+         @item(a=1, b=9, c=3)\n",
+    )
+    .unwrap();
+    let path = file.to_str().unwrap().to_string();
+    (dir, path)
+}
+
+#[test]
+fn test_query_filter_boolean_and_or_parens() {
+    // (a = 1 OR b = 2) AND c != 3 matches:
+    //   row1 (a=1, c=9): true
+    //   row2 (b=2, c=9): true
+    //   row3 (a=9,b=9): OR false
+    //   row4 (a=1, c=3): OR true but c!=3 false
+    // → 2 matches.
+    let (_dir, path) = query_items_file();
+    ragtag()
+        .args([
+            "query",
+            "item",
+            "--path",
+            &path,
+            "--count",
+            "--filter",
+            "(a = 1 OR b = 2) AND c != 3",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2"));
+}
+
+#[test]
+fn test_query_filter_whitespace_matches_spaceless() {
+    // The same expression with and without whitespace around operators yields
+    // the same count.
+    let (_dir, path) = query_items_file();
+    for expr in ["a = 1 AND c != 3", "a=1 AND c!=3"] {
+        ragtag()
+            .args([
+                "query", "item", "--path", &path, "--count", "--filter", expr,
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("1"));
+    }
+}
+
+#[test]
+fn test_query_multiple_filters_are_and_combined() {
+    // Two --filter flags are AND-combined: a=1 AND c!=3 → only row1.
+    let (_dir, path) = query_items_file();
+    ragtag()
+        .args([
+            "query", "item", "--path", &path, "--count", "--filter", "a=1", "--filter", "c!=3",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1"));
+}
+
+#[test]
+fn test_query_filter_no_operator_errors() {
+    // A condition with no comparison operator is rejected with a clear message.
+    let (_dir, path) = query_items_file();
+    ragtag()
+        .args([
+            "query",
+            "item",
+            "--path",
+            &path,
+            "--filter",
+            "statusinvalid",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("expected format"));
+}
+
+#[test]
+fn test_query_filter_lexicographic_ordering_preserved() {
+    // Non-numeric values fall back to lexicographic comparison, unchanged.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("items.txt");
+    fs::write(&file, "@item(status=\"draft\")\n").unwrap();
+    let path = file.to_str().unwrap().to_string();
+
+    // "draft" > "active" lexicographically → 1 match.
+    ragtag()
+        .args([
+            "query",
+            "item",
+            "--path",
+            &path,
+            "--count",
+            "--filter",
+            "status>active",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1"));
+
+    // "draft" > "final" is false → 0 matches.
+    ragtag()
+        .args([
+            "query",
+            "item",
+            "--path",
+            &path,
+            "--count",
+            "--filter",
+            "status>final",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0"));
 }
