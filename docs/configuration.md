@@ -181,10 +181,15 @@ empty unless you define one.
 
 ```yaml
 aliases:
-  - name: "my-alias"
-    arguments: "task summary"
+  # Example: run `ragtag active` to list active tasks.
   - name: "active"
     arguments: "query task --filter status=active"
+  # Example: run `ragtag t` to get a display showing only the active or priority-0 tasks.
+  - name: "t"
+    arguments: "task summary --filter \"(status = active OR priority = 0) AND (status != done AND status != abandoned)\""
+  # Example: `run ragtag tt` as a shorthand version of `ragtag task summary`
+  - name: "tt"
+    arguments: "task summary"
 ```
 
 With the config above, `ragtag my-alias` behaves exactly like
