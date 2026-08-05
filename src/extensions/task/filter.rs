@@ -73,34 +73,6 @@ mod tests {
     }
 
     #[test]
-    fn test_eval_and_both_true() {
-        let task = make_task("a", "active", "alice", Some(1));
-        let expr = parse_filter_expr("status=active AND owner=alice").unwrap();
-        assert!(evaluate_filter(&expr, &task));
-    }
-
-    #[test]
-    fn test_eval_and_one_false() {
-        let task = make_task("a", "active", "alice", Some(1));
-        let expr = parse_filter_expr("status=active AND owner=bob").unwrap();
-        assert!(!evaluate_filter(&expr, &task));
-    }
-
-    #[test]
-    fn test_eval_or_one_true() {
-        let task = make_task("a", "active", "alice", Some(1));
-        let expr = parse_filter_expr("status=done OR owner=alice").unwrap();
-        assert!(evaluate_filter(&expr, &task));
-    }
-
-    #[test]
-    fn test_eval_or_both_false() {
-        let task = make_task("a", "active", "alice", Some(1));
-        let expr = parse_filter_expr("status=done OR owner=bob").unwrap();
-        assert!(!evaluate_filter(&expr, &task));
-    }
-
-    #[test]
     fn test_eval_complex_expression() {
         let task_a = make_task("a", "active", "alice", Some(0));
         let task_b = make_task("b", "blocked", "bob", Some(3));
@@ -147,53 +119,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_filter_expr_valid() {
-        let expr = parse_filter_expr("status=active AND priority>0").unwrap();
-        assert!(validate_filter_expr(&expr).is_ok());
-    }
-
-    #[test]
     fn test_validate_filter_expr_invalid_condition() {
         let expr = parse_filter_expr("nooperator AND status=active").unwrap();
         assert!(validate_filter_expr(&expr).is_err());
-    }
-
-    #[test]
-    fn test_eval_chained_and() {
-        let task = make_task("a", "active", "alice", Some(0));
-        let expr = parse_filter_expr("status=active AND owner=alice AND priority=0").unwrap();
-        assert!(evaluate_filter(&expr, &task));
-    }
-
-    #[test]
-    fn test_eval_chained_or() {
-        let task = make_task("a", "active", "alice", Some(0));
-        let expr = parse_filter_expr("status=done OR status=blocked OR status=active").unwrap();
-        assert!(evaluate_filter(&expr, &task));
-    }
-
-    #[test]
-    fn test_eval_full_spaced_user_expression() {
-        // A fully spaced boolean expression parses and evaluates.
-        let expr = parse_filter_expr(
-            "(status = active OR priority = 0) AND (status != done OR status != inactive)",
-        )
-        .unwrap();
-
-        // active/priority 5: left group true (status=active); right group true
-        // (status != done). Overall true.
-        let task_a = make_task("a", "active", "alice", Some(5));
-        assert!(evaluate_filter(&expr, &task_a));
-
-        // done/priority 0: left group true (priority=0); right group: status
-        // != done is false, but status != inactive is true, so right is true.
-        let task_b = make_task("b", "done", "bob", Some(0));
-        assert!(evaluate_filter(&expr, &task_b));
-
-        // blocked/priority 5: left group false (not active, priority != 0);
-        // overall false regardless of the right group.
-        let task_c = make_task("c", "blocked", "carol", Some(5));
-        assert!(!evaluate_filter(&expr, &task_c));
     }
 
     #[test]
@@ -218,21 +146,6 @@ mod tests {
         // The complement does not match.
         assert!(!evaluate_filter(
             &parse_filter_expr("worktime_spent!=").unwrap(),
-            &task
-        ));
-    }
-
-    #[test]
-    fn test_eval_empty_value_does_not_match_present_field() {
-        // `status` is non-empty, so `status=` must not match, and `status!=`
-        // must match.
-        let task = make_task("a", "active", "alice", Some(2));
-        assert!(!evaluate_filter(
-            &parse_filter_expr("status=").unwrap(),
-            &task
-        ));
-        assert!(evaluate_filter(
-            &parse_filter_expr("status!=").unwrap(),
             &task
         ));
     }

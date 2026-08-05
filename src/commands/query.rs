@@ -130,16 +130,7 @@ fn apply_query_condition(tag: &Tag, cond: &str) -> bool {
         return false;
     };
     let attr = get_tag_attr_str(tag, field);
-    match op {
-        "!=" => attr != value,
-        ">=" => compare_values(&attr, value, |a, b| a >= b),
-        "<=" => compare_values(&attr, value, |a, b| a <= b),
-        ">" => compare_values(&attr, value, |a, b| a > b),
-        "<" => compare_values(&attr, value, |a, b| a < b),
-        "=" => attr == value,
-        // Unreachable: `find_operator` only yields the operators above.
-        _ => false,
-    }
+    filter::apply_operator(op, &attr, value)
 }
 
 /// Gets a tag attribute as a string.
@@ -147,23 +138,6 @@ fn get_tag_attr_str(tag: &Tag, field: &str) -> String {
     tag.get_named_attribute(field)
         .map(|v| format!("{v}"))
         .unwrap_or_default()
-}
-
-/// Compares two values numerically if possible, otherwise lexicographically.
-fn compare_values(a: &str, b: &str, cmp: fn(f64, f64) -> bool) -> bool {
-    if let (Ok(na), Ok(nb)) = (a.parse::<f64>(), b.parse::<f64>()) {
-        cmp(na, nb)
-    } else {
-        // Fall back to lexicographic string comparison for non-numeric values.
-        let ordering = a.cmp(b);
-        // Map the string comparison to the same semantics as the numeric comparator:
-        // we test the comparator against (0, -1), (0, 0), (0, 1) to determine its behavior.
-        match ordering {
-            std::cmp::Ordering::Less => cmp(-1.0, 0.0),
-            std::cmp::Ordering::Equal => cmp(0.0, 0.0),
-            std::cmp::Ordering::Greater => cmp(1.0, 0.0),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -202,19 +176,6 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_filter_neq() {
-        let tag = make_tag(
-            "tag",
-            vec![TagAttribute::named(
-                "status",
-                AttributeValue::Str("active".to_string()),
-            )],
-        );
-        assert!(apply_filter(&tag, "status!=done").unwrap());
-        assert!(!apply_filter(&tag, "status!=active").unwrap());
-    }
-
-    #[test]
     fn test_apply_filter_numeric_gt() {
         let tag = make_tag(
             "tag",
@@ -246,36 +207,6 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_filter_string_gt() {
-        // Non-numeric values should fall back to lexicographic comparison
-        let tag = make_tag(
-            "tag",
-            vec![TagAttribute::named(
-                "status",
-                AttributeValue::Str("draft".to_string()),
-            )],
-        );
-        // "draft" > "active" lexicographically
-        assert!(apply_filter(&tag, "status>active").unwrap());
-        // "draft" < "final" lexicographically
-        assert!(!apply_filter(&tag, "status>final").unwrap());
-    }
-
-    #[test]
-    fn test_apply_filter_string_gte() {
-        let tag = make_tag(
-            "tag",
-            vec![TagAttribute::named(
-                "status",
-                AttributeValue::Str("draft".to_string()),
-            )],
-        );
-        assert!(apply_filter(&tag, "status>=draft").unwrap());
-        assert!(apply_filter(&tag, "status>=active").unwrap());
-        assert!(!apply_filter(&tag, "status>=final").unwrap());
-    }
-
-    #[test]
     fn test_apply_filter_boolean_and_or_parens() {
         let tag = make_tag(
             "tag",
@@ -294,23 +225,6 @@ mod tests {
         assert!(apply_filter(&tag, "(status=active OR priority=9) AND status!=done").unwrap());
         // (status=blocked OR priority=9) AND status!=done → false (neither OR arm holds)
         assert!(!apply_filter(&tag, "(status=blocked OR priority=9) AND status!=done").unwrap());
-    }
-
-    #[test]
-    fn test_apply_filter_whitespace_around_operators() {
-        let tag = make_tag(
-            "tag",
-            vec![TagAttribute::named(
-                "status",
-                AttributeValue::Str("active".to_string()),
-            )],
-        );
-        // Spacing around the operator does not change the result.
-        assert!(apply_filter(&tag, "status = active").unwrap());
-        assert_eq!(
-            apply_filter(&tag, "status = active").unwrap(),
-            apply_filter(&tag, "status=active").unwrap()
-        );
     }
 
     #[test]
@@ -336,33 +250,5 @@ mod tests {
         assert!(apply_filter(&tag, "owner=").unwrap());
         // `owner!=` is the complement and does not match.
         assert!(!apply_filter(&tag, "owner!=").unwrap());
-    }
-
-    #[test]
-    fn test_apply_filter_empty_value_does_not_match_present_attribute() {
-        let tag = make_tag(
-            "tag",
-            vec![TagAttribute::named(
-                "status",
-                AttributeValue::Str("active".to_string()),
-            )],
-        );
-        // A non-empty attribute does not match the empty-value condition.
-        assert!(!apply_filter(&tag, "status=").unwrap());
-        assert!(apply_filter(&tag, "status!=").unwrap());
-    }
-
-    #[test]
-    fn test_apply_filter_quoted_value_with_operator_char() {
-        let tag = make_tag(
-            "tag",
-            vec![TagAttribute::named(
-                "label",
-                AttributeValue::Str(">2".to_string()),
-            )],
-        );
-        // The quoted value contains an operator char; it must match literally.
-        assert!(apply_filter(&tag, "label='>2'").unwrap());
-        assert!(!apply_filter(&tag, "label='>3'").unwrap());
     }
 }

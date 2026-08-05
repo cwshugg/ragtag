@@ -104,16 +104,8 @@ pub fn apply_task_filter(task: &TaskTag, filter: &str) -> bool {
         // Should not reach here since we validate above.
         return false;
     };
-    match op {
-        "!=" => get_task_field_str(task, field) != value,
-        ">=" => compare_field(task, field, value, |a, b| a >= b),
-        "<=" => compare_field(task, field, value, |a, b| a <= b),
-        ">" => compare_field(task, field, value, |a, b| a > b),
-        "<" => compare_field(task, field, value, |a, b| a < b),
-        "=" => get_task_field_str(task, field) == value,
-        // Unreachable: `find_operator` only yields the operators above.
-        _ => false,
-    }
+    let field_str = get_task_field_str(task, field);
+    crate::filter::apply_operator(op, &field_str, value)
 }
 
 /// Gets a task field as a string for comparison.
@@ -160,22 +152,6 @@ pub fn get_task_field_str<'a>(task: &'a TaskTag, field: &str) -> Cow<'a, str> {
         _ => {
             log::warn!("unknown task field \"{field}\" in filter/sort expression");
             Cow::Owned(String::new())
-        }
-    }
-}
-
-/// Compares a task field numerically if possible, otherwise lexicographically.
-fn compare_field(task: &TaskTag, field: &str, value: &str, cmp: fn(f64, f64) -> bool) -> bool {
-    let field_str = get_task_field_str(task, field);
-    if let (Ok(a), Ok(b)) = (field_str.parse::<f64>(), value.parse::<f64>()) {
-        cmp(a, b)
-    } else {
-        // Fall back to lexicographic string comparison for non-numeric values.
-        let ordering = (*field_str).cmp(value);
-        match ordering {
-            std::cmp::Ordering::Less => cmp(-1.0, 0.0),
-            std::cmp::Ordering::Equal => cmp(0.0, 0.0),
-            std::cmp::Ordering::Greater => cmp(1.0, 0.0),
         }
     }
 }

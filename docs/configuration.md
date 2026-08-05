@@ -192,7 +192,7 @@ aliases:
     arguments: "task summary"
 ```
 
-With the config above, `ragtag my-alias` behaves exactly like
+With the config above, `ragtag tt` behaves exactly like
 `ragtag task summary`.
 
 **Behavior:**

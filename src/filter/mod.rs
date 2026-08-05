@@ -374,6 +374,52 @@ pub fn ensure_condition_has_operator(condition: &str) -> Result<(), RagtagError>
     }
 }
 
+/// Compares two scalar values numerically when both parse as `f64`, otherwise
+/// lexicographically.
+///
+/// The `cmp` closure performs the ordering test. When both operands are numeric
+/// it receives them directly; when either is non-numeric the string comparison
+/// is mapped onto the same closure via representative operands (`-1`/`0`/`1`
+/// against `0`), so numeric and lexicographic paths share one ordering
+/// definition.
+///
+/// Both the task and query leaves share this comparator so their ordering
+/// operators (`>`, `<`, `>=`, `<=`) behave identically.
+pub fn compare_scalar(a: &str, b: &str, cmp: fn(f64, f64) -> bool) -> bool {
+    if let (Ok(na), Ok(nb)) = (a.parse::<f64>(), b.parse::<f64>()) {
+        cmp(na, nb)
+    } else {
+        // Fall back to lexicographic string comparison for non-numeric values.
+        match a.cmp(b) {
+            std::cmp::Ordering::Less => cmp(-1.0, 0.0),
+            std::cmp::Ordering::Equal => cmp(0.0, 0.0),
+            std::cmp::Ordering::Greater => cmp(1.0, 0.0),
+        }
+    }
+}
+
+/// Applies a comparison operator to an attribute value and a comparison value.
+///
+/// `=` and `!=` use exact string equality; the ordering operators
+/// (`>`, `<`, `>=`, `<=`) defer to [`compare_scalar`], so numeric values compare
+/// numerically and non-numeric values compare lexicographically. Any other
+/// operator string yields `false`.
+///
+/// Every leaf calls this after [`split_condition`] and its own field lookup, so
+/// operator dispatch lives in exactly one place across every domain.
+pub fn apply_operator(op: &str, attr_value: &str, cmp_value: &str) -> bool {
+    match op {
+        "!=" => attr_value != cmp_value,
+        ">=" => compare_scalar(attr_value, cmp_value, |a, b| a >= b),
+        "<=" => compare_scalar(attr_value, cmp_value, |a, b| a <= b),
+        ">" => compare_scalar(attr_value, cmp_value, |a, b| a > b),
+        "<" => compare_scalar(attr_value, cmp_value, |a, b| a < b),
+        "=" => attr_value == cmp_value,
+        // Unreachable: `find_operator` only yields the operators above.
+        _ => false,
+    }
+}
+
 /// Strips surrounding quotes (single or double) from a string.
 fn strip_quotes(s: &str) -> &str {
     if s.len() >= 2 {
@@ -940,5 +986,60 @@ mod tests {
         let a = parse_filter_expr("(status = active OR priority = 0) AND status != done").unwrap();
         let b = parse_filter_expr("(status=active OR priority=0) AND status!=done").unwrap();
         assert_eq!(a, b);
+    }
+
+    // =====================================================================
+    // Shared operator dispatch and comparator tests
+    // =====================================================================
+
+    #[test]
+    fn test_apply_operator_equality() {
+        assert!(apply_operator("=", "active", "active"));
+        assert!(!apply_operator("=", "active", "done"));
+        assert!(apply_operator("!=", "active", "done"));
+        assert!(!apply_operator("!=", "active", "active"));
+    }
+
+    #[test]
+    fn test_apply_operator_numeric_ordering() {
+        assert!(apply_operator(">", "5", "2"));
+        assert!(!apply_operator(">", "2", "5"));
+        assert!(apply_operator(">=", "2", "2"));
+        assert!(apply_operator("<", "2", "5"));
+        assert!(!apply_operator("<", "5", "2"));
+        assert!(apply_operator("<=", "2", "2"));
+    }
+
+    #[test]
+    fn test_apply_operator_lexicographic_fallback() {
+        // Non-numeric operands fall back to lexicographic ordering.
+        assert!(apply_operator(">", "draft", "active"));
+        assert!(!apply_operator(">", "draft", "final"));
+        assert!(apply_operator(">=", "draft", "draft"));
+        assert!(!apply_operator(">=", "active", "draft"));
+    }
+
+    #[test]
+    fn test_apply_operator_empty_value() {
+        // An empty attribute matches an empty-value equality and not its
+        // complement.
+        assert!(apply_operator("=", "", ""));
+        assert!(!apply_operator("!=", "", ""));
+        assert!(!apply_operator("=", "active", ""));
+        assert!(apply_operator("!=", "active", ""));
+    }
+
+    #[test]
+    fn test_apply_operator_unknown_is_false() {
+        assert!(!apply_operator("~", "a", "a"));
+    }
+
+    #[test]
+    fn test_compare_scalar_numeric_and_lexicographic() {
+        // Numeric operands compare numerically ("10" > "9").
+        assert!(compare_scalar("10", "9", |a, b| a > b));
+        // Non-numeric operands compare lexicographically ("10" < "9").
+        assert!(compare_scalar("v10", "v9", |a, b| a < b));
+        assert!(compare_scalar("x", "x", |a, b| a == b));
     }
 }

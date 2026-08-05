@@ -252,6 +252,9 @@ mod tests {
 
     #[test]
     fn test_resolve_config_path_from_args() {
+        // Consolidate every RAGTAG_CONFIG-dependent assertion into one
+        // sequential test so parallel test threads never race on the shared
+        // env var.
         std::env::remove_var(RAGTAG_CONFIG_ENV);
 
         // 1. No flag, no env → None.
@@ -275,28 +278,8 @@ mod tests {
             Some(std::path::PathBuf::from("/last"))
         );
 
-        // 5. Falls back to env var when no flag is present.
-        std::env::set_var(RAGTAG_CONFIG_ENV, "/env/config.yaml");
-        assert_eq!(
-            resolve_config_path_from_args(["ragtag", "summary"]),
-            Some(std::path::PathBuf::from("/env/config.yaml"))
-        );
-
-        // 6. Flag overrides env var.
-        assert_eq!(
-            resolve_config_path_from_args(["ragtag", "--config", "/cli.yaml"]),
-            Some(std::path::PathBuf::from("/cli.yaml"))
-        );
-
-        std::env::remove_var(RAGTAG_CONFIG_ENV);
-    }
-
-    #[test]
-    fn test_resolve_config_path_stops_at_double_dash() {
-        std::env::remove_var(RAGTAG_CONFIG_ENV);
-
-        // A `--config` after a `--` separator is a positional (e.g. passed to
-        // an alias's underlying command) and must not be consumed.
+        // 5. A `--config` after a `--` separator is a positional (e.g. passed
+        // to an alias's underlying command) and must not be consumed.
         assert_eq!(
             resolve_config_path_from_args(["ragtag", "my-alias", "--", "--config", "/x.yaml"]),
             None
@@ -306,7 +289,7 @@ mod tests {
             None
         );
 
-        // A `--config` before the `--` separator is still honored.
+        // 6. A `--config` before the `--` separator is still honored.
         assert_eq!(
             resolve_config_path_from_args([
                 "ragtag",
@@ -318,6 +301,21 @@ mod tests {
             ]),
             Some(std::path::PathBuf::from("/real.yaml"))
         );
+
+        // 7. Falls back to env var when no flag is present.
+        std::env::set_var(RAGTAG_CONFIG_ENV, "/env/config.yaml");
+        assert_eq!(
+            resolve_config_path_from_args(["ragtag", "summary"]),
+            Some(std::path::PathBuf::from("/env/config.yaml"))
+        );
+
+        // 8. Flag overrides env var.
+        assert_eq!(
+            resolve_config_path_from_args(["ragtag", "--config", "/cli.yaml"]),
+            Some(std::path::PathBuf::from("/cli.yaml"))
+        );
+
+        std::env::remove_var(RAGTAG_CONFIG_ENV);
     }
 
     #[test]
