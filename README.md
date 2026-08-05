@@ -175,7 +175,7 @@ Aliases participate in prefix inference, are split with shell-like quoting, neve
 
 ## Configuration
 
-Ragtag looks for `.ragtag.yaml` or `ragtag.yaml` in the current directory and walks up the directory tree until it finds one (stopping at a directory containing a `.git` folder or the filesystem root).
+Ragtag looks for `.ragtag.yaml`, `.ragtag.yml`, `ragtag.yaml`, or `ragtag.yml` (searched in that order of precedence) in the current directory and walks up the directory tree until it finds one (stopping at a directory containing a `.git` folder or the filesystem root).
 See the [configuration reference](docs/configuration.md) for full details.
 
 ## Documentation

@@ -4,10 +4,14 @@ ragtag is configured via a YAML file. All settings have sensible defaults, so a 
 
 ## Config File Discovery
 
-ragtag searches for a config file by walking up the directory tree from the current working directory. At each level it checks for:
+ragtag searches for a config file by walking up the directory tree from the current working directory. At each level it checks the following names in order, using the first that exists:
 
-1. `.ragtag.yaml` (preferred)
-2. `ragtag.yaml`
+1. `.ragtag.yaml`
+2. `.ragtag.yml`
+3. `ragtag.yaml`
+4. `ragtag.yml`
+
+Both the `.yaml` and `.yml` extensions are searched. A dotfile takes precedence over a non-dotfile, and within the same base name `.yaml` takes precedence over `.yml`.
 
 The search **stops** when it reaches a directory containing a `.git` folder or the filesystem root. If no config file is found, built-in defaults are used.
 
