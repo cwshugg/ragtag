@@ -13,6 +13,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use crate::error::RagtagError;
 use crate::parser;
 
+use super::scan::attr_value_end;
+
 /// Trait for in-place file editing, enabling testability.
 pub trait FileEditor {
     /// Updates a specific attribute within a tag in a file.
@@ -323,38 +325,7 @@ fn replace_attribute_value(
                     }
 
                     // Determine value end
-                    let value_end = if vs < tag_text.len()
-                        && (tag_text.as_bytes()[vs] == b'"' || tag_text.as_bytes()[vs] == b'\'')
-                    {
-                        let quote = tag_text.as_bytes()[vs];
-                        let mut end = vs + 1;
-                        while end < tag_text.len() {
-                            if tag_text.as_bytes()[end] == b'\\' {
-                                end += 2;
-                                if end >= tag_text.len() {
-                                    break;
-                                }
-                                continue;
-                            }
-                            if tag_text.as_bytes()[end] == quote {
-                                end += 1;
-                                break;
-                            }
-                            end += 1;
-                        }
-                        end
-                    } else {
-                        // Bare word — find end
-                        let mut end = vs;
-                        while end < tag_text.len() {
-                            let b = tag_text.as_bytes()[end];
-                            if b.is_ascii_whitespace() || b == b',' || b == b')' {
-                                break;
-                            }
-                            end += 1;
-                        }
-                        end
-                    };
+                    let value_end = attr_value_end(tag_text, vs);
 
                     let mut result = String::with_capacity(tag_text.len());
                     result.push_str(&tag_text[..vs]);
@@ -576,6 +547,26 @@ mod tests {
         let tag = r#"@task(id="abc123", title="old")"#;
         let result = modify_tag_attribute(tag, "title", "\"Fix bug (urgent)\"").unwrap();
         assert!(result.contains("title=\"Fix bug (urgent)\""));
+        assert!(result.contains("id=\"abc123\""));
+    }
+
+    #[test]
+    fn test_modify_backtick_value_with_spaces() {
+        let tag = r#"@task(id="abc123", cmd=`old`)"#;
+        let result = modify_tag_attribute(tag, "cmd", "`echo hello world`").unwrap();
+        assert!(result.contains("cmd=`echo hello world`"));
+        // Other attributes must remain intact.
+        assert!(result.contains("id=\"abc123\""));
+    }
+
+    #[test]
+    fn test_modify_escaped_backtick_value() {
+        // The original value contains an escaped backtick; scanning must
+        // skip it so the whole value span is replaced and neighbouring
+        // attributes stay intact.
+        let tag = r#"@task(cmd=`a \` b`, id="abc123")"#;
+        let result = modify_tag_attribute(tag, "cmd", "`new`").unwrap();
+        assert!(result.contains("cmd=`new`"));
         assert!(result.contains("id=\"abc123\""));
     }
 }

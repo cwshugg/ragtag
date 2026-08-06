@@ -3,6 +3,7 @@
 //! Provides atomic file writes via tempfile + rename for safe
 //! in-place tag attribute updates.
 
+mod scan;
 pub mod tag_format;
 pub mod writer;
 
