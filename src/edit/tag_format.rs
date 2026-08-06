@@ -19,6 +19,8 @@ use crate::error::RagtagError;
 use crate::models::{AttributeKind, Tag};
 use crate::parser;
 
+use super::scan::attr_value_end;
+
 /// Describes the formatting of a tag as found in a source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagFormatInfo {
@@ -176,36 +178,7 @@ fn find_attr_value_span(tag_text: &str, attr_name: &str) -> Option<Range<usize>>
                 while vs < tag_text.len() && bytes[vs].is_ascii_whitespace() {
                     vs += 1;
                 }
-                let value_end = if vs < tag_text.len() && (bytes[vs] == b'"' || bytes[vs] == b'\'')
-                {
-                    let quote = bytes[vs];
-                    let mut end = vs + 1;
-                    while end < tag_text.len() {
-                        if bytes[end] == b'\\' {
-                            end += 2;
-                            if end >= tag_text.len() {
-                                break;
-                            }
-                            continue;
-                        }
-                        if bytes[end] == quote {
-                            end += 1;
-                            break;
-                        }
-                        end += 1;
-                    }
-                    end
-                } else {
-                    let mut end = vs;
-                    while end < tag_text.len() {
-                        let b = bytes[end];
-                        if b.is_ascii_whitespace() || b == b',' || b == b')' {
-                            break;
-                        }
-                        end += 1;
-                    }
-                    end
-                };
+                let value_end = attr_value_end(tag_text, vs);
                 return Some(vs..value_end);
             }
         }
@@ -534,5 +507,15 @@ mod tests {
         let tag = r#"@task(id="abc", title="old")"#;
         let out = edit_task_tag(tag, &[("title", "\"Fix bug (urgent)\"")]).unwrap();
         assert_eq!(out, r#"@task(id="abc", title="Fix bug (urgent)")"#);
+    }
+
+    #[test]
+    fn test_edit_backtick_quoted_attribute_span_located() {
+        // A backtick-quoted attribute (with spaces) must have its full value
+        // span located so an edit replaces the whole value, not just up to the
+        // first space.
+        let tag = "@task(id=`abc`, title=`Fix the bug`)";
+        let out = edit_task_tag(tag, &[("id", "\"xyz\"")]).unwrap();
+        assert_eq!(out, "@task(id=\"xyz\", title=`Fix the bug`)");
     }
 }

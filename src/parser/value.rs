@@ -14,6 +14,7 @@ pub fn parse_attr_value(cursor: &mut Cursor) -> Option<AttributeValue> {
     match cursor.peek()? {
         '"' => parse_quoted_string(cursor, '"'),
         '\'' => parse_quoted_string(cursor, '\''),
+        '`' => parse_quoted_string(cursor, '`'),
         _ => parse_bare_value(cursor),
     }
 }
@@ -25,9 +26,9 @@ const MAX_QUOTED_VALUE_LENGTH: usize = 1_048_576; // 1 MB
 /// Parses a quoted string value, handling backslash escapes.
 ///
 /// Backslash causes the next character to be included literally — there is
-/// no special interpretation of `\n`, `\t`, etc. Only `\\` and `\"` (or `\'`)
-/// produce meaningful escapes. For example, `\n` in input becomes the single
-/// character `n`, not a newline.
+/// no special interpretation of `\n`, `\t`, etc. Only `\\` and `\<delim>`
+/// (e.g. `\"`, `\'`, or `` \` ``) produce meaningful escapes. For example,
+/// `\n` in input becomes the single character `n`, not a newline.
 pub fn parse_quoted_string(cursor: &mut Cursor, quote_char: char) -> Option<AttributeValue> {
     // Advance past the opening quote
     cursor.advance()?;
@@ -56,8 +57,9 @@ const MAX_BARE_VALUE_LENGTH: usize = 4096;
 
 /// Parses a bare (unquoted) value and attempts numeric conversion.
 ///
-/// Accumulates characters that are not whitespace, `,`, `)`, `'`, `"`, or `=`.
-/// Then attempts conversion in order: prefixed int → float → decimal int → string.
+/// Accumulates characters that are not whitespace, `,`, `)`, `'`, `"`, `` ` ``,
+/// or `=`. Then attempts conversion in order:
+/// prefixed int → float → decimal int → string.
 pub fn parse_bare_value(cursor: &mut Cursor) -> Option<AttributeValue> {
     let mut word = String::new();
 
@@ -67,6 +69,7 @@ pub fn parse_bare_value(cursor: &mut Cursor) -> Option<AttributeValue> {
             || ch == ')'
             || ch == '\''
             || ch == '"'
+            || ch == '`'
             || ch == '='
         {
             break;
@@ -161,6 +164,86 @@ mod tests {
             parse_value("'hello world'"),
             Some(AttributeValue::Str("hello world".to_string()))
         );
+    }
+
+    #[test]
+    fn test_backtick_quoted_string() {
+        assert_eq!(
+            parse_value("`hello world`"),
+            Some(AttributeValue::Str("hello world".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_backtick_preserves_terminator_chars() {
+        // Chars that would terminate a bare value are preserved inside backticks.
+        assert_eq!(
+            parse_value("`a, b (c) d=e`"),
+            Some(AttributeValue::Str("a, b (c) d=e".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_escape_backtick_in_backticks() {
+        // `\`` inside backticks yields a literal backtick.
+        assert_eq!(
+            parse_value("`a\\`b`"),
+            Some(AttributeValue::Str("a`b".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_escape_backslash_in_backticks() {
+        assert_eq!(
+            parse_value("`path\\\\here`"),
+            Some(AttributeValue::Str("path\\here".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_literal_backtick_in_double_quotes() {
+        // A backtick inside a double-quoted string is a literal backtick.
+        assert_eq!(
+            parse_value("\"a`b\""),
+            Some(AttributeValue::Str("a`b".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_literal_backtick_in_single_quotes() {
+        assert_eq!(
+            parse_value("'a`b'"),
+            Some(AttributeValue::Str("a`b".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_literal_double_quote_in_backticks() {
+        assert_eq!(
+            parse_value("`a\"b`"),
+            Some(AttributeValue::Str("a\"b".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_literal_single_quote_in_backticks() {
+        assert_eq!(
+            parse_value("`a'b`"),
+            Some(AttributeValue::Str("a'b".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_unterminated_backtick_string() {
+        assert_eq!(parse_value("`unterminated"), None);
+    }
+
+    #[test]
+    fn test_bare_word_stops_at_backtick() {
+        let mut cursor = Cursor::new("hello`world");
+        let val = parse_attr_value(&mut cursor);
+        assert_eq!(val, Some(AttributeValue::Str("hello".to_string())));
+        assert_eq!(cursor.peek(), Some('`'));
     }
 
     #[test]

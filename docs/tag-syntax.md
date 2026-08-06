@@ -129,18 +129,21 @@ Attribute values are parsed in the following order of precedence:
 
 ### 1. Quoted Strings
 
-Values enclosed in double (`"`) or single (`'`) quotes are always treated as strings, even if they contain numeric content:
+Values enclosed in double (`"`), single (`'`), or backtick (`` ` ``) quotes are always treated as strings, even if they contain numeric content:
 
 ```
-@tag(name="hello world", alt='single quoted')
+@tag(name="hello world", alt='single quoted', other=`backtick quoted`)
 ```
 
-**Escaping:** Use a backslash (`\`) before any character to include it literally. There are no special escape sequences — `\n` inserts a literal `n`, not a newline.
+All three delimiters are equivalent for input. On output, string values that need quoting are normalized to double quotes.
+
+**Escaping:** Use a backslash (`\`) before any character to include it literally. There are no special escape sequences — `\n` inserts a literal `n`, not a newline. Only `\\` and an escaped copy of the surrounding delimiter (`\"`, `\'`, or `` \` ``) are meaningful; a quote character that is not the surrounding delimiter is a literal character (e.g. a backtick inside a `"..."` string is a literal backtick).
 
 ```
 @tag(value="she said \"hi\"")     — embedded double quotes
 @tag(value="path\\to\\file")      — embedded backslashes
 @tag(value='it\'s fine')          — embedded single quote
+@tag(value=`a \` b`)              — embedded backtick
 ```
 
 An unterminated quoted string (no closing quote before end-of-file) causes the tag parse to fail.
@@ -190,6 +193,7 @@ Bare (unquoted) values are terminated by any of these characters:
 * Closing parenthesis (`)`)
 * Single quote (`'`)
 * Double quote (`"`)
+* Backtick (`` ` ``)
 * Equals sign (`=`)
 
 Bare values have a maximum length of **4096 characters**.
