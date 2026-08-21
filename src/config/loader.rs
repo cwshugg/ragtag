@@ -3,6 +3,7 @@
 //! Implements walk-up discovery from the current directory, stopping at
 //! `.git` boundaries or the filesystem root.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use super::schema::Config;
@@ -14,6 +15,9 @@ use crate::error::RagtagError;
 /// the `.yaml` extension takes precedence over `.yml`.
 const CONFIG_FILE_NAMES: &[&str] = &[".ragtag.yaml", ".ragtag.yml", "ragtag.yaml", "ragtag.yml"];
 
+/// Maximum number of bytes accepted from one configuration file.
+pub const MAX_CONFIG_FILE_SIZE: u64 = 1024 * 1024;
+
 /// A validated configuration together with its lexical ragtag root.
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
@@ -21,6 +25,50 @@ pub struct LoadedConfig {
     pub config: Config,
     /// Parent of the selected config file, or startup cwd when none exists.
     pub root_dir: PathBuf,
+    /// Resolved selected config path, or `None` when defaults are in use.
+    pub source_path: Option<PathBuf>,
+}
+
+/// Reads one regular config file without permitting unbounded allocation.
+fn read_config_file(path: &Path) -> Result<String, RagtagError> {
+    let metadata = std::fs::metadata(path).map_err(|source| RagtagError::FileRead {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !metadata.is_file() {
+        return Err(RagtagError::InvalidConfig(format!(
+            "config file \"{}\" must be a regular file",
+            path.display()
+        )));
+    }
+    if metadata.len() > MAX_CONFIG_FILE_SIZE {
+        return Err(RagtagError::InvalidConfig(format!(
+            "config file \"{}\" exceeds maximum size of {MAX_CONFIG_FILE_SIZE} bytes",
+            path.display()
+        )));
+    }
+
+    let file = std::fs::File::open(path).map_err(|source| RagtagError::FileRead {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_CONFIG_FILE_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|source| RagtagError::FileRead {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if bytes.len() as u64 > MAX_CONFIG_FILE_SIZE {
+        return Err(RagtagError::InvalidConfig(format!(
+            "config file \"{}\" exceeds maximum size of {MAX_CONFIG_FILE_SIZE} bytes",
+            path.display()
+        )));
+    }
+    String::from_utf8(bytes).map_err(|source| RagtagError::FileRead {
+        path: path.to_path_buf(),
+        source: std::io::Error::new(std::io::ErrorKind::InvalidData, source),
+    })
 }
 
 /// Loads a ragtag configuration.
@@ -46,10 +94,7 @@ pub fn load_config(cli_path: Option<&Path>, start_dir: &Path) -> Result<LoadedCo
     match config_path {
         Some(path) => {
             log::info!("loaded config from {}", path.display());
-            let content = std::fs::read_to_string(&path).map_err(|e| RagtagError::FileRead {
-                path: path.clone(),
-                source: e,
-            })?;
+            let content = read_config_file(&path)?;
             let config: Config =
                 serde_yml::from_str(&content).map_err(|e| RagtagError::ConfigParse {
                     path: path.clone(),
@@ -60,11 +105,16 @@ pub fn load_config(cli_path: Option<&Path>, start_dir: &Path) -> Result<LoadedCo
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| start_dir.to_path_buf());
-            Ok(LoadedConfig { config, root_dir })
+            Ok(LoadedConfig {
+                config,
+                root_dir,
+                source_path: Some(path),
+            })
         }
         None => Ok(LoadedConfig {
             config: Config::default(),
             root_dir: start_dir.to_path_buf(),
+            source_path: None,
         }),
     }
 }
@@ -111,6 +161,7 @@ mod tests {
         let loaded = load_config(None, dir.path()).unwrap();
         assert!(loaded.config.respect_gitignore);
         assert_eq!(loaded.root_dir, dir.path());
+        assert_eq!(loaded.source_path, None);
     }
 
     #[test]
@@ -121,6 +172,45 @@ mod tests {
         let loaded = load_config(Some(&config_path), dir.path()).unwrap();
         assert!(!loaded.config.skip_hidden);
         assert_eq!(loaded.root_dir, dir.path());
+        assert_eq!(loaded.source_path, Some(config_path));
+    }
+
+    #[test]
+    fn test_config_size_limit_accepts_boundary_and_rejects_next_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("bounded.yaml");
+        let prefix = "skip_hidden: false\n#";
+        let at_limit = format!(
+            "{prefix}{}",
+            "x".repeat(MAX_CONFIG_FILE_SIZE as usize - prefix.len())
+        );
+        fs::write(&config_path, &at_limit).unwrap();
+        let loaded = load_config(Some(&config_path), dir.path()).unwrap();
+        assert!(!loaded.config.skip_hidden);
+
+        fs::write(&config_path, format!("{at_limit}x")).unwrap();
+        let error = load_config(Some(&config_path), dir.path()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("exceeds maximum size of 1048576 bytes"),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_config_loader_rejects_non_regular_special_file() {
+        let special = Path::new("/dev/zero");
+        if !special.exists() {
+            return;
+        }
+
+        let error = load_config(Some(special), Path::new("/")).unwrap_err();
+        assert!(
+            error.to_string().contains("must be a regular file"),
+            "{error}"
+        );
     }
 
     #[test]

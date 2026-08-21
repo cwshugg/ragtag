@@ -78,15 +78,22 @@ output:
 # ---------------------------------------------------------------------------
 #
 # User-defined command aliases. Empty by default — there are no built-in
-# aliases. Running `ragtag <name>` expands `arguments` (split with shell-like
-# quoting) and runs it as if typed directly. Trailing args are appended, and
-# aliases participate in prefix inference. An alias name must not collide with
-# a real command (summary/query/config/file/task), be duplicated, or be empty.
+# aliases. Each definition uses either `name` or a nonempty ordered `names`
+# list. Running `ragtag <name>` expands `arguments` (split with shell-like
+# quoting), appends trailing argv, and composes when expansion token zero
+# exactly names another alias. Outer prefixes are inferred when unambiguous.
+# Names must be nonempty, unique, and distinct from real commands, including
+# `help`. Limits are 256 definitions, 256 aggregate names, 32 composed
+# definitions, and 4096 expanded arguments. A leading `--` prevents alias
+# recognition. Configuration is selected once from leading `--config` tokens
+# before the command; an alias-defined `--config` does not reload it.
 aliases: []
-  # - name: "ts"
+  # - names: ["ts", "task-summary"]
   #   arguments: "task summary"
   # - name: "active"
   #   arguments: "query task --filter status=active"
+  # - name: "active-count"
+  #   arguments: "active --count"
 
 
 # ---------------------------------------------------------------------------

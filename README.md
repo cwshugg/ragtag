@@ -192,16 +192,27 @@ Define command aliases in your config file to create shorthands. Running `ragtag
 aliases:
   - name: "ts"
     arguments: "task summary"
-  - name: "active"
+  - names: ["active", "a"]
     arguments: "query task --filter status=active"
+  - name: "active-count"
+    arguments: "active --count"
+  - names: ["quicknote", "qn"]
+    arguments: "file touch --tag \"quicknote\" --edit"
 ```
 
 ```bash
 ragtag ts                # → ragtag task summary
 ragtag ts --path src     # → ragtag task summary --path src   (trailing args appended)
+ragtag active-count      # → ragtag query task --filter status=active --count
 ```
 
-Aliases participate in prefix inference, are split with shell-like quoting, never expand into another alias, and may not collide with a real command name (collisions are rejected at startup). See the [configuration reference](docs/configuration.md#aliases) for full details.
+Each definition uses either `name` or an ordered, nonempty `names` list.
+Aliases participate in outer-command prefix inference and may compose when the
+first configured argument exactly names another alias. Alias names are absent
+from top-level help and may not collide with real commands. Configuration is
+loaded once from the original command line, and a leading `--` disables alias
+recognition. See the [configuration reference](docs/configuration.md#aliases)
+for composition order, limits, boundary behavior, and error details.
 
 ## Global Flags
 
@@ -225,6 +236,11 @@ Aliases participate in prefix inference, are split with shell-like quoting, neve
 ## Configuration
 
 Ragtag looks for `.ragtag.yaml`, `.ragtag.yml`, `ragtag.yaml`, or `ragtag.yml` (searched in that order of precedence) in the current directory and walks up the directory tree until it finds one (stopping at a directory containing a `.git` folder or the filesystem root).
+Repository-local config is trusted input: review it before running ragtag in an
+untrusted checkout because it controls aliases, discovery behavior, and
+file-writing options. For automation, use a reviewed config via a leading
+`--config <PATH>` or `RAGTAG_CONFIG`. Config files must be regular files no
+larger than 1 MiB.
 See the [configuration reference](docs/configuration.md) for full details.
 
 ## Documentation

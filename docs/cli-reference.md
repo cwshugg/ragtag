@@ -17,7 +17,10 @@ ragtag [OPTIONS] <COMMAND>
 | `--version` | Print version information |
 | `--help`, `-h` | Print help information |
 
-These options are global and can be placed before any subcommand.
+`--no-color`, help, and version follow clap's global placement rules.
+`--config` must precede the outer command when it selects startup
+configuration, because configuration and aliases are loaded before the single
+terminal clap parse.
 
 ## Subcommand Prefix Matching
 
@@ -43,23 +46,49 @@ You can define command aliases in your config file under the `aliases` key. Runn
 ```yaml
 # .ragtag.yaml
 aliases:
-  - name: "tsum"
+  - names: ["tsum", "ts"]
     arguments: "task summary"
+  - name: "all-tasks"
+    arguments: "tsum --all"
 ```
 
 ```bash
 ragtag tsum                # → ragtag task summary
+ragtag ts                  # → ragtag task summary
 ragtag tsum --path src     # → ragtag task summary --path src   (trailing args appended)
 ragtag tsu                 # → ragtag task summary  (prefix inference; when unambiguous)
+ragtag all-tasks           # → ragtag task summary --all
 ```
 
 Notes:
 
+* **One or multiple names.** Each definition specifies exactly one of `name`
+  or a nonempty ordered `names` list. All names invoke the same definition.
 * **Shell-like splitting.** The `arguments` string is split with quoting respected (e.g., `arguments: 'task get "two words"'`).
 * **Trailing args are appended** after the alias's own arguments.
 * **Prefix inference includes aliases** — an ambiguous prefix across commands and aliases errors just like any other ambiguous prefix.
-* **No recursion** — an alias never expands into another alias.
-* **Collisions are rejected at startup** — an alias name that matches a built-in (`summary`, `query`, `config`, `file`) or extension command (`task`), a duplicate alias name, or an empty name is a config error.
+* **Composition uses exact names.** If token zero of an expansion exactly names
+  another alias, that definition expands too. Recursive prefixes do not
+  compose. Inner arguments come first, followed by each outer remainder and
+  then the original invocation suffix.
+* **Aliases are config-only.** They do not appear in top-level help. Every name
+  is checked at startup against built-ins (including `help`), extension
+  commands, duplicates, and empty names.
+* **Boundaries are preserved.** A `--` before the outer command prevents alias
+  recognition. A `--` after an alias is retained for the terminal command.
+  Help and version tokens after an alias are handled by the expanded command.
+* **Configuration loads once.** Only leading `--config` tokens before the outer
+  command select startup configuration. A different original `--config` after
+  the command is rejected. An alias-defined `--config` is still validated by
+  clap but does not reload configuration.
+* **Expansion is bounded.** Configuration allows at most 256 alias definitions
+  and 256 aggregate names. Composition allows at most 32 definitions and 4096
+  expanded arguments. Cycles, unknown terminal targets, ambiguous outer
+  prefixes, and exceeded limits produce explicit errors.
+* **Exit status distinguishes error ownership.** Alias-engine errors such as
+  ambiguity, cycles, unknown targets, and exceeded limits exit with status `1`.
+  Syntax rejected by the expanded terminal command is reported by clap and
+  exits with status `2`.
 
 See [Configuration Reference → Aliases](configuration.md#aliases) for full details.
 
@@ -805,7 +834,8 @@ expressions with `AND` — a tag must satisfy every flag.
 | Code | Meaning |
 | --- | --- |
 | `0` | Success |
-| `1` | Error (config not found, parse error, invalid filter, task not found, I/O error, etc.) |
+| `1` | Application error (config loading or validation, alias-engine failure, invalid filter, task not found, I/O error, etc.) |
+| `2` | Command-line grammar error reported by clap (unknown command or option, missing value, unexpected argument, etc.) |
 
 All errors are printed to stderr with a descriptive message.
 

@@ -4,17 +4,110 @@
 //! dynamically including extension subcommands. Also provides helper
 //! functions for resolving CLI arguments with environment variable fallbacks.
 
-use crate::config::Alias;
 use crate::extensions::ExtensionRegistry;
 use clap::{Arg, ArgMatches, Command};
-use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
+use std::ffi::{OsStr, OsString};
+
+pub mod aliases;
 
 /// Environment variable name for specifying the config file path.
 pub const RAGTAG_CONFIG_ENV: &str = "RAGTAG_CONFIG";
 
 /// Environment variable name for specifying the default search path.
 pub const RAGTAG_PATH_ENV: &str = "RAGTAG_PATH";
+
+/// Classification shared by the raw config and outer-command scanners.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RootToken {
+    /// The literal option/positional separator.
+    Separator,
+    /// The split `--config PATH` form.
+    ConfigSplit,
+    /// The `--config=PATH` form and its OS-native path value.
+    ConfigEquals(OsString),
+    /// The global `--no-color` flag.
+    NoColor,
+    /// An option not interpreted by the alias scanner.
+    Option,
+    /// A prospective outer command.
+    Command,
+}
+
+/// Tests whether an OS-native token begins with an ASCII prefix.
+fn os_starts_with_ascii(token: &OsStr, prefix: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        token.as_bytes().starts_with(prefix.as_bytes())
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let mut encoded = token.encode_wide();
+        prefix
+            .encode_utf16()
+            .all(|unit| encoded.next() == Some(unit))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        token
+            .to_str()
+            .is_some_and(|value| value.starts_with(prefix))
+    }
+}
+
+/// Extracts an OS-native value from the `--config=PATH` form.
+fn config_equals_value(token: &OsStr) -> Option<OsString> {
+    const PREFIX: &str = "--config=";
+
+    if !os_starts_with_ascii(token, PREFIX) {
+        return None;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        Some(OsString::from_vec(
+            token.as_bytes()[PREFIX.len()..].to_vec(),
+        ))
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let encoded = token.encode_wide().collect::<Vec<_>>();
+        Some(OsString::from_wide(
+            &encoded[PREFIX.encode_utf16().count()..],
+        ))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        token
+            .to_str()
+            .and_then(|value| value.strip_prefix(PREFIX))
+            .map(OsString::from)
+    }
+}
+
+/// Classifies one root-level token without requiring Unicode conversion.
+pub(crate) fn classify_root_token(token: &OsStr) -> RootToken {
+    if token == OsStr::new("--") {
+        RootToken::Separator
+    } else if token == OsStr::new("--config") {
+        RootToken::ConfigSplit
+    } else if let Some(value) = config_equals_value(token) {
+        RootToken::ConfigEquals(value)
+    } else if token == OsStr::new("--no-color") {
+        RootToken::NoColor
+    } else if os_starts_with_ascii(token, "-") {
+        RootToken::Option
+    } else {
+        RootToken::Command
+    }
+}
 
 /// Resolves the search path from CLI args, falling back to `RAGTAG_PATH` env var, then `"."`.
 ///
@@ -29,105 +122,82 @@ pub fn resolve_path(matches: &ArgMatches) -> String {
 
 /// Resolves the config file path from a raw argument vector, without a full parse.
 ///
-/// Because aliases are defined in the config file and must be registered as
-/// subcommands *before* clap parses the arguments, the config path has to be
-/// resolved up front. This performs a lightweight scan of `args` for a
-/// `--config <PATH>` or `--config=<PATH>` occurrence anywhere on the command
-/// line, falling back to the `RAGTAG_CONFIG` environment variable, then `None`.
+/// Because aliases are defined in the selected config file, the config path
+/// has to be resolved before alias expansion and the single clap parse. This
+/// performs a lightweight scan of `args` for a `--config <PATH>` or
+/// `--config=<PATH>` occurrence in the leading root-option prefix. Scanning
+/// stops at the first command, separator, or unrecognized option so terminal
+/// command values cannot redirect configuration. The result falls back to the
+/// `RAGTAG_CONFIG` environment variable, then `None`.
 ///
 /// Precedence: `--config` flag (last occurrence wins, matching clap) >
 /// `RAGTAG_CONFIG` env var > `None` (auto-discovery).
 pub fn resolve_config_path_from_args<I, S>(args: I) -> Option<std::path::PathBuf>
 where
     I: IntoIterator<Item = S>,
-    S: AsRef<str>,
+    S: AsRef<OsStr>,
 {
-    let mut found: Option<String> = None;
-    let mut iter = args.into_iter().peekable();
+    resolve_cli_config_path_from_args(args)
+        .or_else(|| std::env::var_os(RAGTAG_CONFIG_ENV).map(std::path::PathBuf::from))
+}
+
+/// Resolves only a leading root-level `--config` occurrence from raw argv.
+fn resolve_cli_config_path_from_args<I, S>(args: I) -> Option<std::path::PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut found: Option<OsString> = None;
+    let mut iter = args.into_iter();
+    // The first token is argv[0], not a root option.
+    iter.next();
     while let Some(arg) = iter.next() {
         let arg = arg.as_ref();
-        // Everything after a `--` separator is a positional argument, not an
-        // option, so stop scanning: a trailing `--config` (e.g. passed through
-        // to an alias) must not be mistaken for ragtag's own config flag.
-        if arg == "--" {
-            break;
-        }
-        if let Some(value) = arg.strip_prefix("--config=") {
-            found = Some(value.to_string());
-        } else if arg == "--config" {
-            if let Some(value) = iter.next() {
-                found = Some(value.as_ref().to_string());
+        match classify_root_token(arg) {
+            // Everything after a separator is positional. A separator in the
+            // value position also terminates the scan rather than becoming a
+            // config path.
+            RootToken::Separator => break,
+            RootToken::ConfigEquals(value) => found = Some(value),
+            RootToken::ConfigSplit => {
+                let Some(value) = iter.next() else {
+                    break;
+                };
+                if classify_root_token(value.as_ref()) == RootToken::Separator {
+                    break;
+                }
+                found = Some(value.as_ref().to_os_string());
             }
+            RootToken::NoColor => {}
+            RootToken::Option | RootToken::Command => break,
         }
     }
 
-    found
-        .or_else(|| std::env::var(RAGTAG_CONFIG_ENV).ok())
-        .map(std::path::PathBuf::from)
+    found.map(std::path::PathBuf::from)
 }
 
-/// Returns the set of "real" command names: every built-in and extension
+/// Returns the ordered "real" command names: every built-in and extension
 /// subcommand registered in the command tree.
 ///
-/// The set is derived authoritatively from `build_cli` (with no aliases) so it
+/// The order is derived authoritatively from `build_real_cli` so it
 /// automatically covers built-ins and extension commands and cannot drift from
 /// the actual command tree. Used to detect alias-name collisions at
 /// config-validation time.
-pub fn real_command_names(registry: &ExtensionRegistry) -> HashSet<String> {
-    build_cli(registry, &[])
+pub fn real_command_names(registry: &ExtensionRegistry) -> Vec<String> {
+    let mut command = build_real_cli(registry);
+    command.build();
+    command
         .get_subcommands()
         .map(|cmd| cmd.get_name().to_string())
         .collect()
 }
 
-/// Interns an alias name into a process-lifetime pool, returning a `'static`
-/// reference.
-///
-/// clap's `Command::new` requires a `'static` name, but `build_cli` is invoked
-/// multiple times per run (initial parse, alias re-parse, help paths). Interning
-/// ensures each distinct alias name is leaked at most once for the life of the
-/// process, rather than leaking a fresh string on every `build_cli` call. The
-/// number of distinct names is bounded by the alias-count cap enforced during
-/// config validation, so the total leaked memory is bounded.
-fn intern_alias_name(name: &str) -> &'static str {
-    static POOL: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
-    let pool = POOL.get_or_init(|| Mutex::new(HashSet::new()));
-    let mut guard = pool.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(existing) = guard.get(name) {
-        return existing;
-    }
-    let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
-    guard.insert(leaked);
-    leaked
-}
-
-/// Builds the clap subcommand that represents a single user-defined alias.
-///
-/// The alias is hidden from the top-level help listing (to avoid cluttering
-/// `--help` with user commands that shadow the real ones) but still
-/// participates in `infer_subcommands` prefix matching. A trailing var-arg
-/// captures any user-supplied arguments so they can be appended after the
-/// alias's own expansion.
-fn build_alias_command(alias: &Alias) -> Command {
-    let name = intern_alias_name(&alias.name);
-    Command::new(name)
-        .about(format!("Alias for `{alias}`"))
-        .hide(true)
-        .arg(
-            Arg::new("args")
-                .num_args(0..)
-                .allow_hyphen_values(true)
-                .trailing_var_arg(true),
-        )
-}
-
-/// Builds the complete CLI command tree.
+/// Builds the real CLI command tree.
 ///
 /// Core commands (summary, query) are defined statically.
 /// Extension commands are added dynamically from the registry.
-/// User-defined aliases are added as hidden subcommands so they participate
-/// in `infer_subcommands` prefix matching.
-pub fn build_cli(registry: &ExtensionRegistry, aliases: &[Alias]) -> Command {
+/// Aliases remain outside clap and are expanded before the single parse.
+pub fn build_real_cli(registry: &ExtensionRegistry) -> Command {
     let mut cmd = Command::new("ragtag")
         .version(env!("CARGO_PKG_VERSION"))
         .about("A CLI tool for parsing @tag(attr=value) from plain text files")
@@ -138,6 +208,7 @@ pub fn build_cli(registry: &ExtensionRegistry, aliases: &[Alias]) -> Command {
                 .long("config")
                 .help("Path to config file")
                 .value_name("PATH")
+                .value_parser(clap::value_parser!(std::path::PathBuf))
                 .global(true),
         )
         .arg(
@@ -240,12 +311,6 @@ pub fn build_cli(registry: &ExtensionRegistry, aliases: &[Alias]) -> Command {
         cmd = cmd.subcommand(ext_cmd);
     }
 
-    // Add user-defined aliases as (hidden) subcommands so clap's own
-    // `infer_subcommands` handles prefix matching and ambiguity errors.
-    for alias in aliases {
-        cmd = cmd.subcommand(build_alias_command(alias));
-    }
-
     cmd
 }
 
@@ -291,26 +356,50 @@ mod tests {
         // 1. No flag, no env → None.
         assert_eq!(resolve_config_path_from_args(["ragtag", "summary"]), None);
 
-        // 2. `--config <PATH>` form, anywhere on the line.
+        // 2. Both config forms are recognized in the leading root prefix.
         assert_eq!(
-            resolve_config_path_from_args(["ragtag", "my-alias", "--config", "/a/b.yaml"]),
+            resolve_config_path_from_args(["ragtag", "--config", "/a/b.yaml", "my-alias"]),
             Some(std::path::PathBuf::from("/a/b.yaml"))
         );
-
-        // 3. `--config=<PATH>` form.
         assert_eq!(
             resolve_config_path_from_args(["ragtag", "--config=/c/d.yaml", "summary"]),
             Some(std::path::PathBuf::from("/c/d.yaml"))
         );
 
-        // 4. Last occurrence wins (matching clap's override behavior).
+        // 3. Last leading occurrence wins, including interleaved globals.
         assert_eq!(
-            resolve_config_path_from_args(["ragtag", "--config", "/first", "--config", "/last"]),
+            resolve_config_path_from_args([
+                "ragtag",
+                "--config",
+                "/first",
+                "--no-color",
+                "--config",
+                "/last",
+                "summary"
+            ]),
             Some(std::path::PathBuf::from("/last"))
         );
+        assert_eq!(
+            resolve_config_path_from_args(["ragtag", "--config=/first", "summary", "--config=",]),
+            Some(std::path::PathBuf::from("/first"))
+        );
+        assert_eq!(
+            resolve_config_path_from_args(["ragtag", "--config", "", "summary"]),
+            Some(std::path::PathBuf::from(""))
+        );
+        assert_eq!(
+            resolve_config_path_from_args(["ragtag", "--config", "--", "summary"]),
+            None
+        );
+        assert_eq!(
+            resolve_config_path_from_args([
+                "ragtag", "--config", "/first", "--config", "--", "summary"
+            ]),
+            Some(std::path::PathBuf::from("/first"))
+        );
 
-        // 5. A `--config` after a `--` separator is a positional (e.g. passed
-        // to an alias's underlying command) and must not be consumed.
+        // 4. Scanning stops at the outer command, separator, or unknown option
+        // so terminal values cannot redirect startup configuration.
         assert_eq!(
             resolve_config_path_from_args(["ragtag", "my-alias", "--", "--config", "/x.yaml"]),
             None
@@ -319,28 +408,23 @@ mod tests {
             resolve_config_path_from_args(["ragtag", "my-alias", "--", "--config=/x.yaml"]),
             None
         );
-
-        // 6. A `--config` before the `--` separator is still honored.
         assert_eq!(
-            resolve_config_path_from_args([
-                "ragtag",
-                "--config",
-                "/real.yaml",
-                "--",
-                "--config",
-                "/x.yaml"
-            ]),
-            Some(std::path::PathBuf::from("/real.yaml"))
+            resolve_config_path_from_args(["ragtag", "file", "touch", "--tag", "--config=/x.yaml"]),
+            None
+        );
+        assert_eq!(
+            resolve_config_path_from_args(["ragtag", "--bogus", "--config", "/x.yaml"]),
+            None
         );
 
-        // 7. Falls back to env var when no flag is present.
+        // 5. Falls back to env var when no leading flag is present.
         std::env::set_var(RAGTAG_CONFIG_ENV, "/env/config.yaml");
         assert_eq!(
             resolve_config_path_from_args(["ragtag", "summary"]),
             Some(std::path::PathBuf::from("/env/config.yaml"))
         );
 
-        // 8. Flag overrides env var.
+        // 6. A leading flag overrides the environment.
         assert_eq!(
             resolve_config_path_from_args(["ragtag", "--config", "/cli.yaml"]),
             Some(std::path::PathBuf::from("/cli.yaml"))
@@ -349,20 +433,50 @@ mod tests {
         std::env::remove_var(RAGTAG_CONFIG_ENV);
     }
 
+    #[cfg(unix)]
     #[test]
-    fn test_real_command_names_includes_builtins() {
+    fn test_config_forms_preserve_non_utf8_os_path() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let path = OsString::from_vec(vec![b'c', 0xff, b'f']);
+        let split_args = vec![
+            OsString::from("ragtag"),
+            OsString::from("--config"),
+            path.clone(),
+        ];
+        let split = resolve_config_path_from_args(split_args).unwrap();
+        assert_eq!(split.as_os_str().as_bytes(), path.as_os_str().as_bytes());
+
+        let mut equals = OsString::from("--config=");
+        equals.push(&path);
+        let equals_args = vec![OsString::from("ragtag"), equals];
+        let equals = resolve_config_path_from_args(equals_args).unwrap();
+        assert_eq!(equals.as_os_str().as_bytes(), path.as_os_str().as_bytes());
+    }
+
+    #[test]
+    fn test_real_command_names_matches_built_tree_including_help() {
         let registry = ExtensionRegistry::new();
         let names = real_command_names(&registry);
-        assert!(names.contains("summary"));
-        assert!(names.contains("query"));
-        assert!(names.contains("config"));
-        assert!(names.contains("file"));
+        assert_eq!(names, ["config", "file", "summary", "query", "help"]);
+    }
+
+    #[test]
+    fn test_outer_scanner_global_set_matches_real_tree() {
+        let registry = ExtensionRegistry::new();
+        let command = build_real_cli(&registry);
+        let globals = command
+            .get_arguments()
+            .filter(|argument| argument.is_global_set())
+            .filter_map(clap::Arg::get_long)
+            .collect::<Vec<_>>();
+        assert_eq!(globals, ["config", "no-color"]);
     }
 
     #[test]
     fn test_file_command_contains_only_touch_and_accepts_repeated_tags() {
         let registry = ExtensionRegistry::new();
-        let command = build_cli(&registry, &[]);
+        let command = build_real_cli(&registry);
         let file = command
             .get_subcommands()
             .find(|subcommand| subcommand.get_name() == "file")
@@ -374,7 +488,7 @@ mod tests {
             vec!["touch"]
         );
 
-        let matches = build_cli(&registry, &[])
+        let matches = build_real_cli(&registry)
             .try_get_matches_from([
                 "ragtag", "file", "touch", "--tag", "-one", "--tag", "@-two", "--edit",
             ])
@@ -390,19 +504,8 @@ mod tests {
             ["-one", "@-two"]
         );
         assert!(touch_matches.get_flag("edit"));
-        assert!(build_cli(&registry, &[])
+        assert!(build_real_cli(&registry)
             .try_get_matches_from(["ragtag", "file", "unknown"])
             .is_err());
-    }
-
-    #[test]
-    fn test_build_cli_registers_alias_subcommand() {
-        let registry = ExtensionRegistry::new();
-        let aliases = vec![Alias {
-            name: "my-alias".to_string(),
-            arguments: vec!["summary".to_string()],
-        }];
-        let cmd = build_cli(&registry, &aliases);
-        assert!(cmd.get_subcommands().any(|sc| sc.get_name() == "my-alias"));
     }
 }
