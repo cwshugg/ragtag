@@ -109,7 +109,15 @@ fn run() -> Result<(), RagtagError> {
     )
 }
 
-/// Ensures terminal clap did not discover a new original config selector.
+/// Reconciles terminal clap's config value with the startup config selection.
+///
+/// A selector introduced by a trusted alias is accepted as terminal syntax but
+/// never reloads configuration. An original post-command selector is accepted
+/// only when it resolves to the same file already loaded (using canonical
+/// paths when available and lexical paths as a fallback). A different selector
+/// fails with `InvalidConfig`, because aliases and extensions were initialized
+/// before the process's single clap parse. This function never reads or reloads
+/// a config file.
 fn reconcile_terminal_config(
     matches: &clap::ArgMatches,
     loaded_path: Option<&std::path::Path>,

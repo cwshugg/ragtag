@@ -174,6 +174,7 @@ Task management commands. See the [task management guide](docs/task-management.m
 | `summary` | Display a grouped summary of tasks (default grouping: priority) |
 | `get-attr` | Print a single task attribute value |
 | `set-attr` | Update a single task attribute |
+| `time` | Set, add, or subtract `worktime_spent`; the value is `N`, `+N`, or `-N` |
 | `complete` | Mark a task as done |
 | `activate` | Set a task's status to active |
 | `deactivate` | Set a task's status to inactive |
@@ -181,7 +182,20 @@ Task management commands. See the [task management guide](docs/task-management.m
 | `abandon` | Set a task's status to abandoned |
 | `prioritize` | Set a task's priority (`prioritize <PRIORITY> <ID>`) |
 
-> **Subcommand prefix matching:** ragtag accepts any unambiguous prefix of every subcommand. For example, `ragtag su` resolves to `ragtag summary`, and `ragtag t li` resolves to `ragtag task list`. See the [CLI Reference](docs/cli-reference.md#subcommand-prefix-matching) for details.
+Use `task time` for absolute or relative time tracking:
+
+```bash
+ragtag task time 4 a1b2c3d4e5f67890       # set worktime_spent to 4
+ragtag task time +1.5 a1b2c3d4e5f67890    # add 1.5
+ragtag task time -2 a1b2c3d4e5f67890      # subtract 2, clamped to 0
+```
+
+The numeric magnitude must be finite and non-negative. A missing current
+`worktime_spent` starts at `0`. `--path <PATH>` selects the search location;
+`--no-edit` prints the updated `@task(...)` without writing its file. Every
+successful operation updates `time_last_updated`.
+
+> **Subcommand prefix matching:** ragtag accepts unambiguous prefixes. For example, `ragtag su` resolves to `ragtag summary`, and `ragtag task li` resolves to `ragtag task list`. An exact configured alias takes precedence over top-level real-command prefix inference. See the [CLI Reference](docs/cli-reference.md#subcommand-prefix-matching) for details.
 
 ### Aliases
 

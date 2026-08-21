@@ -20,24 +20,41 @@ ragtag [OPTIONS] <COMMAND>
 `--no-color`, help, and version follow clap's global placement rules.
 `--config` must precede the outer command when it selects startup
 configuration, because configuration and aliases are loaded before the single
-terminal clap parse.
+terminal clap parse. The raw scan recognizes only leading `--config PATH`,
+`--config=PATH`, and `--no-color`; it skips `--no-color` and continues
+scanning. It stops at the command, a literal `--`, or any other option,
+including `-h`, `--help`, and `--version`. In split form, `--config --` does
+not select `--` as a path and does not replace an earlier valid leading
+selector. A post-command selector for the same loaded file is accepted as
+redundant; a different original selector is rejected. Alias-introduced
+selectors remain terminal syntax and never reload configuration.
 
 ## Subcommand Prefix Matching
 
-ragtag enables unambiguous prefix matching for *every* subcommand and sub-subcommand via clap's `infer_subcommands`. You may type any leading prefix of a subcommand name as long as it resolves to exactly one command at that level:
+ragtag enables unambiguous prefix matching for *every* subcommand and
+sub-subcommand via clap's `infer_subcommands`. Subject to exact top-level alias
+precedence described below, you may type a leading prefix of a subcommand name
+when it resolves to exactly one command at that level:
 
 ```bash
 ragtag su                  # → ragtag summary
 ragtag q task              # → ragtag query task
-ragtag t li                # → ragtag task list
-ragtag t cr --title "X"    # → ragtag task create
-ragtag t sum               # → ragtag task summary
-ragtag t comp <ID>         # → ragtag task complete
-ragtag t pr 0 <ID>         # → ragtag task prioritize
-ragtag t ab <ID>           # → ragtag task abandon
+ragtag t li             # → ragtag task list
+ragtag t cr --title "X" # → ragtag task create
+ragtag task sum            # → ragtag task summary
+ragtag task comp <ID>      # → ragtag task complete
+ragtag task pr 0 <ID>      # → ragtag task prioritize
+ragtag task ab <ID>        # → ragtag task abandon
 ```
 
-Ambiguous prefixes (e.g., `ragtag t c`, which could be `complete` or `create`) are rejected with a list of candidate subcommands. Add one more character to disambiguate.
+Ambiguous prefixes (e.g., `ragtag task c`, which could be `complete` or
+`create`) are rejected with a list of candidate subcommands. Add one more
+character to disambiguate.
+
+At the top level, an exact alias name is resolved before real-command prefix
+inference. For example, an alias named `t` handles `ragtag t` instead of
+inferring the real `task` command. Use `ragtag task ...` when a configured
+alias may claim a shorter spelling.
 
 ## Aliases
 
@@ -67,6 +84,11 @@ Notes:
 * **Shell-like splitting.** The `arguments` string is split with quoting respected (e.g., `arguments: 'task get "two words"'`).
 * **Trailing args are appended** after the alias's own arguments.
 * **Prefix inference includes aliases** — an ambiguous prefix across commands and aliases errors just like any other ambiguous prefix.
+  Prefix matches through multiple peer names of one definition count as one
+  candidate, not an ambiguity. A uniquely inferred synonym uses the
+  definition's first configured name as its canonical spelling.
+  An exact alias name wins before real-command prefix inference, so an alias
+  named with a real command's prefix shadows that abbreviated spelling.
 * **Composition uses exact names.** If token zero of an expansion exactly names
   another alias, that definition expands too. Recursive prefixes do not
   compose. Inner arguments come first, followed by each outer remainder and
@@ -89,6 +111,11 @@ Notes:
   ambiguity, cycles, unknown targets, and exceeded limits exit with status `1`.
   Syntax rejected by the expanded terminal command is reported by clap and
   exits with status `2`.
+* **OS-native argv is preserved through alias processing.** Original tokens
+  retain their platform-native values through scanning, composition, and
+  terminal argv assembly. Configured alias tokens are YAML strings. The final
+  clap value parser may still require Unicode for a particular argument;
+  OS-path arguments such as `--config` retain native path values.
 
 See [Configuration Reference → Aliases](configuration.md#aliases) for full details.
 
@@ -197,11 +224,18 @@ ragtag config get output.color          # auto
 ragtag config get tasks.tag_name        # task
 ragtag config get tasks.default_owner   # me
 ragtag config get ignore_patterns       # ["*.git", "node_modules"]
+ragtag config get aliases               # [{names: ["active", "a"], arguments: query task --filter 'status=active'}, {name: active-count, arguments: active --count}]
 ragtag config get tasks.status_keywords.done  # ["done", "finished", "complete", "completed"]
 ragtag config get nonexistent_field     # error: unknown config key "nonexistent_field"
 ```
 
 Extension configs (like `tasks`) are resolved with defaults applied, so all fields are available even if not explicitly set in the YAML file.
+
+`config get aliases` uses ragtag's human-readable flow-style rendering, not
+YAML. Its field selection is canonical: a definition with one name is printed
+with `name`, while a definition with multiple peer names is printed with
+ordered `names`. Each `arguments` value remains one shell-quoted string; it is
+never emitted as a token array.
 
 ### `file touch`
 
@@ -545,6 +579,58 @@ ragtag task set-attr a1b2c3d4e5f67890 pid f0e1d2c3b4a59687
 
 # Get updated tag string without modifying the file
 ragtag task set-attr a1b2c3d4e5f67890 status done --no-edit
+```
+
+For relative additions and subtractions, use [`task time`](#task-time).
+
+#### `task time`
+
+Set or adjust a task's `worktime_spent`.
+
+```bash
+ragtag task time <N|+N|-N> <ID> [OPTIONS]
+```
+
+The first argument controls how time is updated:
+
+* `N` sets an absolute value.
+* `+N` adds to the current value.
+* `-N` subtracts from the current value and clamps the result to `0`.
+
+`N` must be a finite, non-negative number. If `worktime_spent` is absent, its
+current value is treated as `0`. A successful update also sets
+`time_last_updated` to the current UTC timestamp.
+
+**Arguments:**
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `N`, `+N`, or `-N` | Yes | Absolute value or relative adjustment |
+| `ID` | Yes | Task ID or ID prefix |
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `.` | Search path (file or directory) |
+| `--no-edit` | — | Do not modify the file; print the updated `@task(...)` string instead |
+
+Without `--no-edit`, ragtag atomically updates the source file and prints
+exactly:
+
+```text
+Updated task <ID> (worktime_spent → <VALUE>)
+```
+
+With `--no-edit`, the file is unchanged and the complete updated tag,
+including `time_last_updated`, is printed.
+
+**Examples:**
+
+```bash
+ragtag task time 4 a1b2c3d4e5f67890
+ragtag task time +1.5 a1b2c3d4e5f67890 --path ./notes
+ragtag task time -2 a1b2c3d4e5f67890 --no-edit
 ```
 
 #### `task complete`

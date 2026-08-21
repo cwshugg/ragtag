@@ -7,6 +7,11 @@
 # boundary. Use `--config <path>` or the `RAGTAG_CONFIG` environment variable
 # to specify an explicit config file.
 #
+# SECURITY: repository config is trusted input. Review it before running
+# ragtag in an untrusted checkout because aliases can select ragtag operations,
+# including file-writing commands. Config must be a regular file no larger
+# than 1 MiB.
+#
 # Every field below has a default value — an empty file (or no file at all)
 # is perfectly valid. Only override what you need.
 # =============================================================================

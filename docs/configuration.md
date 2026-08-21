@@ -50,6 +50,27 @@ name. A different `--config` parsed after the command is rejected because
 aliases and extensions have already been initialized. If the specified file
 does not exist, ragtag exits with an error.
 
+The raw startup scan recognizes only these leading root options:
+
+* `--config PATH`
+* `--config=PATH`
+* `--no-color`, which is skipped while scanning continues
+
+Scanning stops at the outer command token, a literal `--`, or any other option,
+including `-h`, `--help`, and `--version`.
+
+Within that prefix, the last valid split `--config PATH` or
+`--config=PATH` selector wins. For split syntax, a literal `--` in the value
+position terminates the scan and is not used as a path. If an earlier valid
+selector was already seen, `--config --` leaves that earlier selection intact.
+
+The single terminal clap parse may later encounter another global config
+spelling. A post-command selector that resolves to the same file already
+loaded is accepted as redundant and does not reload it. A different original
+selector is rejected. A selector introduced by an alias is terminal syntax
+only: clap may accept it, but it never changes or reloads startup
+configuration.
+
 ### Override With `RAGTAG_CONFIG`
 
 Alternatively, set the `RAGTAG_CONFIG` environment variable to specify a config file path without passing `--config` every time:
@@ -92,8 +113,9 @@ output:
   color: "auto"
 
 # User-defined command aliases (empty by default — there are no built-in aliases).
-# Each entry has a `name` (invoked as `ragtag <name>`) and an `arguments` string
-# that is split with shell-like quoting and executed as if typed directly.
+# Each entry has exactly one naming form: `name` (one string) or `names`
+# (a nonempty ordered list of peer names), plus one shell-like `arguments`
+# string.
 aliases: []
 
 # File creation settings.
@@ -183,7 +205,8 @@ tasks:
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `aliases` | list of objects | `[]` | User-defined command aliases (see [Aliases](#aliases-1)) |
-| `aliases[].name` | string | (required) | The alias name, invoked as `ragtag <name>` |
+| `aliases[].name` | string | conditional | Single alias name; required when `names` is absent and mutually exclusive with it |
+| `aliases[].names` | nonempty list of strings | conditional | Ordered peer names; required when `name` is absent and mutually exclusive with it |
 | `aliases[].arguments` | string | (required) | Command string the alias expands to (split with shell-like quoting) |
 
 ### Task Extension Options
@@ -231,8 +254,8 @@ aliases:
   # This alias composes through the exact `active` name.
   - name: "active-count"
     arguments: "active --count"
-  # Run `ragtag t` to show only active or priority-0 tasks.
-  - name: "t"
+  # Run `ragtag focus` to show only active or priority-0 tasks.
+  - name: "focus"
     arguments: "task summary --filter \"(status = active OR priority = 0) AND (status != done AND status != abandoned)\""
 ```
 
@@ -242,20 +265,29 @@ peer invocation names. A one-element `names` sequence is accepted and is
 serialized canonically as `name`; two or more names serialize as `names`.
 Comma-delimited strings and token-array forms for `arguments` are not accepted.
 
+`ragtag config get aliases` uses ragtag's human-readable flow-style rendering,
+not YAML. Its field selection is canonical: a single-name definition uses
+`name`, multiple names retain their configured order under `names`, and
+`arguments` remains one shell-quoted string rather than a token sequence.
+
 **Behavior:**
 
 * **Shell-like argument splitting.** The `arguments` string is split using
   shell-word semantics (via the `shlex` crate), so quoting is respected:
   `arguments: 'task get "two words"'` yields `task`, `get`, `two words`.
 * **Trailing arguments are appended.** Anything you type after the alias name is
-  appended to the expansion. `ragtag my-alias --count` runs
-  `ragtag task summary --count`.
+  appended to the expansion. With the example above, `ragtag active --count`
+  adds `--count` to the expanded `query task` command.
 * **Prefix inference includes aliases.** ragtag infers unambiguous subcommand
-  prefixes, and aliases participate too: `ragtag my` resolves to `my-alias`. An
+  prefixes, and aliases participate too: `ragtag foc` resolves to `focus`. An
   ambiguous prefix that matches multiple commands and/or aliases is an error,
-  just as with built-in commands.
-  Prefix matches through several names of the same definition are treated as
-  one candidate.
+  just as with built-in commands. Prefix matches through peer names of one
+  definition count as one candidate and use the first configured name as the
+  canonical spelling.
+* **Exact aliases precede real-prefix inference.** An exact alias name wins even
+  when that spelling is also a prefix of a real command. For example, defining
+  an alias named `t` would make `ragtag t` invoke that alias rather than infer
+  `task`.
 * **Exact composition.** If the first expansion token exactly matches any name
   of another alias definition, that token is recursively replaced. Prefixes do
   not compose. For `active-count` above, the final order is the inner

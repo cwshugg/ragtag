@@ -71,6 +71,9 @@ impl<'de> Deserialize<'de> for ColorMode {
 /// with shell-like quoting semantics (via the `shlex` crate) at load time and
 /// stored as a `Vec<String>`. When serialized, the tokens are joined back into
 /// a single shell-quoted string so the external YAML shape is preserved.
+/// Serialization is canonical: exactly one configured name is emitted as
+/// `name`, while two or more ordered peer names are emitted as `names`. A
+/// one-element input `names` sequence therefore serializes back as `name`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     /// The ordered peer names that invoke this alias definition.

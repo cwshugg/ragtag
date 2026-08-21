@@ -14,7 +14,7 @@ use super::{classify_root_token, RootToken};
 /// Maximum number of alias definitions in one expansion chain.
 pub const MAX_ALIAS_EXPANSION_DEPTH: usize = 32;
 
-/// Maximum number of expanded tokens, excluding argv[0] and leading globals.
+/// Maximum number of expanded tokens, excluding `argv[0]` and leading globals.
 pub const MAX_EXPANDED_ARGUMENTS: usize = 4096;
 
 /// A validated, ordered lookup over alias definitions and all peer names.
@@ -178,7 +178,7 @@ pub fn resolve_outer_command(
 /// Tokens produced by recursive alias composition before terminal argv assembly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expansion {
-    /// Expanded command tokens, excluding argv[0] and leading root globals.
+    /// Expanded command tokens, excluding `argv[0]` and leading root globals.
     pub working: Vec<OsString>,
     /// Number of leading working tokens supplied by alias definitions.
     configured_len: usize,
@@ -243,6 +243,22 @@ fn checked_projected_count(
 }
 
 /// Recursively replaces token zero on exact alias-name references.
+///
+/// The supplied index must have been obtained from this same [`AliasIndex`],
+/// built only after `Config::validate_aliases` succeeds. `real_names` must be
+/// the fully built real command universe. Original suffix tokens are appended
+/// unchanged and remain OS-native.
+///
+/// Cycles are detected by definition identity before checking the next depth,
+/// so cycles through peer names receive a cycle error. The outer definition
+/// counts as depth one: chains ending at a real command at depth 32 succeed,
+/// while selecting definition 33 fails. Expanded working argv is limited to
+/// 4096 tokens, including the original suffix but excluding `argv[0]` and the
+/// unchanged leading-global prefix; projections are checked before allocation.
+///
+/// Returns typed errors for cycles, excess depth, excess projected arguments,
+/// and definite unknown terminal targets. Real-command prefixes and terminal
+/// option grammar remain the responsibility of the final clap parse.
 pub fn expand_alias(
     aliases: &AliasIndex<'_>,
     definition_index: usize,
