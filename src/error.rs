@@ -4,6 +4,7 @@
 //! across config loading, file I/O, parsing, and extension execution.
 
 use std::path::PathBuf;
+use std::process::ExitStatus;
 
 /// The primary error type for the ragtag application.
 ///
@@ -55,6 +56,57 @@ pub enum RagtagError {
     /// Invalid user input (e.g., empty search string).
     #[error("error: invalid input: {0}")]
     InvalidInput(String),
+
+    /// A supplied tag is not exactly one valid parser tag.
+    #[error("error: invalid tag {input:?}: {reason}")]
+    InvalidTag { input: String, reason: String },
+
+    /// A target path or generated filename is invalid.
+    #[error("error: invalid file target \"{path}\": {reason}")]
+    InvalidFileTarget { path: PathBuf, reason: String },
+
+    /// Failed to create the target's parent directories.
+    #[error("error: failed to create parent directory \"{parent}\" for \"{target}\": {source}")]
+    FileParentCreate {
+        parent: PathBuf,
+        target: PathBuf,
+        source: std::io::Error,
+    },
+
+    /// The requested creation target already exists.
+    #[error("error: target already exists: \"{0}\"")]
+    FileTargetExists(PathBuf),
+
+    /// Failed to exclusively create the target.
+    #[error("error: failed to create \"{path}\": {source}")]
+    FileCreate {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    /// Failed while writing or flushing a newly created target.
+    #[error("error: failed to write newly created file \"{path}\": {source}")]
+    FileCreateWrite {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    /// EDITOR is unavailable or cannot be parsed.
+    #[error("error: invalid EDITOR configuration: {0}")]
+    InvalidEditor(String),
+
+    /// The configured editor could not be launched.
+    #[error("error: failed to launch editor for \"{path}\": {source}; the created file remains")]
+    EditorLaunch {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    /// The configured editor exited unsuccessfully.
+    #[error(
+        "error: editor exited unsuccessfully for \"{path}\" ({status}); the created file remains"
+    )]
+    EditorExit { path: PathBuf, status: ExitStatus },
 
     /// Attempted to edit a symlinked file.
     #[error("error: cannot edit symlinked file \"{0}\" — resolve the symlink or edit the target file directly")]

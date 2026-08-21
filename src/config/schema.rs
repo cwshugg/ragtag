@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::path::PathBuf;
 
 /// The maximum number of ignore patterns allowed.
 const MAX_IGNORE_PATTERNS: usize = 256;
@@ -19,6 +20,12 @@ const MAX_PATTERN_LENGTH: usize = 1024;
 
 /// The default maximum file size in bytes (10 MB).
 const DEFAULT_MAX_FILE_SIZE: u64 = 10_485_760;
+
+/// Default directory for files created by `file touch`.
+const DEFAULT_FILE_DIRECTORY: &str = ".";
+
+/// Default UTC strftime pattern for files created by `file touch`.
+const DEFAULT_FILENAME_FORMAT: &str = "%Y-%m-%d_%H-%M-%S.md";
 
 /// Color mode for output.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
@@ -142,6 +149,50 @@ impl Default for OutputConfig {
     }
 }
 
+/// Configuration for files created by the built-in file command.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct FileConfig {
+    /// Directory used when `file touch` has no explicit path.
+    pub default_directory: PathBuf,
+    /// Chrono strftime pattern used to generate the default filename.
+    pub filename_format: String,
+}
+
+impl Default for FileConfig {
+    fn default() -> Self {
+        Self {
+            default_directory: PathBuf::from(DEFAULT_FILE_DIRECTORY),
+            filename_format: DEFAULT_FILENAME_FORMAT.to_string(),
+        }
+    }
+}
+
+impl FileConfig {
+    /// Validates static file-creation configuration.
+    pub fn validate(&self) -> Result<(), crate::error::RagtagError> {
+        if self.default_directory.as_os_str().is_empty() {
+            return Err(crate::error::RagtagError::InvalidConfig(
+                "files.default_directory must not be empty".to_string(),
+            ));
+        }
+        if self.filename_format.is_empty() {
+            return Err(crate::error::RagtagError::InvalidConfig(
+                "files.filename_format must not be empty".to_string(),
+            ));
+        }
+        if chrono::format::StrftimeItems::new(&self.filename_format)
+            .any(|item| matches!(item, chrono::format::Item::Error))
+        {
+            return Err(crate::error::RagtagError::InvalidConfig(format!(
+                "files.filename_format contains invalid strftime syntax: {:?}",
+                self.filename_format
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// The core ragtag configuration.
 ///
 /// All fields have defaults, so a minimal or empty YAML file is valid.
@@ -160,6 +211,8 @@ pub struct Config {
     pub max_file_size: u64,
     /// Output configuration.
     pub output: OutputConfig,
+    /// Configuration for files created by the built-in file command.
+    pub files: FileConfig,
     /// User-defined command aliases. Empty by default (no default aliases).
     pub aliases: Vec<Alias>,
     /// Extension configuration sections (raw YAML values).
@@ -177,6 +230,7 @@ impl Default for Config {
             max_depth: None,
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             output: OutputConfig::default(),
+            files: FileConfig::default(),
             aliases: Vec::new(),
             extension_configs: HashMap::new(),
         }
@@ -211,6 +265,7 @@ impl Config {
                 self.max_file_size
             )));
         }
+        self.files.validate()?;
         Ok(())
     }
 
@@ -283,7 +338,7 @@ mod tests {
         assert_eq!(config.max_depth, None);
         assert_eq!(config.max_file_size, 10_485_760);
         assert_eq!(config.output.color, ColorMode::Auto);
-        assert_eq!(config.output.color, ColorMode::Auto);
+        assert_eq!(config.files, FileConfig::default());
     }
 
     #[test]
@@ -298,6 +353,9 @@ max_depth: 5
 max_file_size: 1048576
 output:
   color: "never"
+files:
+  default_directory: "notes"
+  filename_format: "%Y%m%d-%3f.txt"
 "#;
         let config: Config = serde_yml::from_str(yaml).unwrap();
         assert_eq!(config.ignore_patterns.len(), 2);
@@ -306,6 +364,9 @@ output:
         assert_eq!(config.max_depth, Some(5));
         assert_eq!(config.max_file_size, 1_048_576);
         assert_eq!(config.output.color, ColorMode::Never);
+        assert_eq!(config.files.default_directory, PathBuf::from("notes"));
+        assert_eq!(config.files.filename_format, "%Y%m%d-%3f.txt");
+        assert!(!config.extension_configs.contains_key("files"));
     }
 
     #[test]
@@ -381,6 +442,35 @@ tasks:
     }
 
     #[test]
+    fn test_file_config_validation() {
+        let mut config = Config::default();
+        config.files.default_directory = PathBuf::new();
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("default_directory"));
+
+        config.files.default_directory = PathBuf::from(".");
+        config.files.filename_format.clear();
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("filename_format"));
+
+        config.files.filename_format = "%".to_string();
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("strftime"));
+
+        config.files.filename_format = "%Y-%m-%d_%H-%M-%S-%3f.md".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
     fn test_validate_max_file_size_too_large() {
         let config = Config {
             max_file_size: 200 * 1024 * 1024, // 200 MB, exceeds 100 MB limit
@@ -395,7 +485,7 @@ tasks:
 
     /// A set of "real" command names for alias-collision testing.
     fn real_commands() -> HashSet<String> {
-        ["config", "summary", "query", "task"]
+        ["config", "summary", "query", "file", "task"]
             .iter()
             .map(|s| s.to_string())
             .collect()

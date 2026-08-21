@@ -4,5 +4,6 @@
 //! on the extension registry and application configuration.
 
 pub mod config;
+pub mod file;
 pub mod query;
 pub mod summary;

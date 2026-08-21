@@ -12,6 +12,517 @@ fn fixtures_dir() -> String {
     format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"))
 }
 
+// === File Touch ===
+
+#[test]
+fn test_file_touch_help_exposes_only_touch_and_creation_options() {
+    ragtag()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("file"));
+    ragtag()
+        .args(["file", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("touch"))
+        .stdout(predicate::str::contains("  help").not())
+        .stdout(predicate::str::contains("create").not())
+        .stdout(predicate::str::contains("list").not());
+    ragtag()
+        .args(["file", "touch", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Create a new file and print its path; fail if the target exists",
+        ))
+        .stdout(predicate::str::contains("--path <FILE>"))
+        .stdout(predicate::str::contains("--tag <TAG>"))
+        .stdout(predicate::str::contains("--edit"));
+    ragtag().args(["file", "list"]).assert().failure();
+}
+
+#[test]
+fn test_file_touch_default_uses_config_root_and_utc_filename() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join(".ragtag.yaml");
+    fs::write(
+        &config,
+        "files:\n  default_directory: notes\n  filename_format: \"%Y-%m-%d_%H-%M-%S.md\"\n",
+    )
+    .unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+
+    let assert = ragtag()
+        .current_dir(elsewhere.path())
+        .args(["--config", config.to_str().unwrap(), "file", "touch"])
+        .env_remove("EDITOR")
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+
+    let entries = fs::read_dir(dir.path().join("notes"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    let name = entries[0].file_name();
+    let name = name.to_str().unwrap();
+    assert_eq!(name.len(), "2026-08-21_12-33-52.md".len());
+    assert!(name.ends_with(".md"));
+    assert!(name.chars().enumerate().all(|(index, value)| match index {
+        4 | 7 => value == '-',
+        10 => value == '_',
+        13 | 16 => value == '-',
+        19 => value == '.',
+        20 => value == 'm',
+        21 => value == 'd',
+        _ => value.is_ascii_digit(),
+    }));
+    assert_eq!(fs::read(entries[0].path()).unwrap(), b"");
+    assert_eq!(
+        assert.get_output().stdout,
+        format!("{}\n", entries[0].path().display()).as_bytes()
+    );
+}
+
+#[test]
+fn test_file_touch_default_dot_directory_prints_clean_absolute_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join(".ragtag.yaml");
+    fs::write(
+        &config,
+        "files:\n  default_directory: \".\"\n  filename_format: \"fixed.md\"\n",
+    )
+    .unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let expected = dir.path().join("fixed.md");
+
+    let assert = ragtag()
+        .current_dir(elsewhere.path())
+        .args(["--config", config.to_str().unwrap(), "file", "touch"])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+
+    assert!(expected.is_absolute());
+    assert!(expected.is_file());
+    assert!(!String::from_utf8_lossy(&assert.get_output().stdout).contains("/./"));
+    assert_eq!(
+        assert.get_output().stdout,
+        format!("{}\n", expected.display()).as_bytes()
+    );
+}
+
+#[test]
+fn test_file_touch_explicit_nested_absolute_and_parent_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("cwd");
+    fs::create_dir(&cwd).unwrap();
+
+    ragtag()
+        .current_dir(&cwd)
+        .args(["file", "touch", "--path", "nested/deep/note.md"])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", cwd.join("nested/deep/note.md").display()));
+    assert!(cwd.join("nested/deep/note.md").is_file());
+
+    let external = dir.path().join("external/path/note.md");
+    ragtag()
+        .current_dir(&cwd)
+        .args(["file", "touch", "--path", external.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", external.display()));
+    assert!(external.is_file());
+
+    ragtag()
+        .current_dir(&cwd)
+        .args(["file", "touch", "--path", "../parent.md"])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", cwd.join("../parent.md").display()));
+    assert!(dir.path().join("parent.md").is_file());
+}
+
+#[test]
+fn test_file_touch_tags_preserve_order_spelling_and_exact_deduplication() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("tags.md");
+    ragtag()
+        .args([
+            "file",
+            "touch",
+            "--path",
+            target.to_str().unwrap(),
+            "--tag",
+            " todo ",
+            "--tag",
+            "@task(owner=\"A B\", priority=1)",
+            "--tag",
+            "@todo",
+            "--tag",
+            "@task(owner=\"C\", priority=1)",
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        b"@todo\n@task(owner=\"A B\", priority=1)\n@task(owner=\"C\", priority=1)\n"
+    );
+}
+
+#[test]
+fn test_file_touch_hyphen_leading_tags_are_repeatable_before_adjacent_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("hyphen-tags.md");
+    ragtag()
+        .args([
+            "file",
+            "touch",
+            "--tag",
+            "-todo",
+            "--tag",
+            "@-doing",
+            "--path",
+            target.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(target).unwrap(), b"@-todo\n@-doing\n");
+
+    let edit_target = dir.path().join("edit-after-hyphen-tags.md");
+    ragtag()
+        .args([
+            "file",
+            "touch",
+            "--tag",
+            "-todo",
+            "--tag",
+            "@-doing",
+            "--edit",
+            "--path",
+            edit_target.to_str().unwrap(),
+        ])
+        .env("EDITOR", " ")
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("invalid EDITOR"));
+    assert!(!edit_target.exists());
+}
+
+#[test]
+fn test_file_touch_invalid_tag_has_no_filesystem_effects() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("uncreated/invalid.md");
+    ragtag()
+        .args([
+            "file",
+            "touch",
+            "--path",
+            target.to_str().unwrap(),
+            "--tag",
+            "@one trailing prose",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid tag"));
+    assert!(!dir.path().join("uncreated").exists());
+}
+
+#[test]
+fn test_file_touch_invalid_terminal_components_have_no_filesystem_effects() {
+    let dir = tempfile::tempdir().unwrap();
+    for path in ["new-dot/.", "new-parent/..", "new-trailing/"] {
+        ragtag()
+            .current_dir(dir.path())
+            .args(["file", "touch", "--path", path])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("usable filename"));
+    }
+    assert!(!dir.path().join("new-dot").exists());
+    assert!(!dir.path().join("new-parent").exists());
+    assert!(!dir.path().join("new-trailing").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_file_touch_allows_literal_backslashes_before_terminal_dots() {
+    let dir = tempfile::tempdir().unwrap();
+    for path in [r"note\.", r"note\.."] {
+        ragtag()
+            .current_dir(dir.path())
+            .args(["file", "touch", "--path", path])
+            .assert()
+            .success();
+        assert!(dir.path().join(path).is_file());
+    }
+}
+
+#[test]
+fn test_file_touch_rejects_existing_file_and_directory_without_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("existing.md");
+    fs::write(&file, b"original").unwrap();
+    ragtag()
+        .args([
+            "file",
+            "touch",
+            "--path",
+            file.to_str().unwrap(),
+            "--tag",
+            "replacement",
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("target already exists"));
+    assert_eq!(fs::read(&file).unwrap(), b"original");
+    ragtag()
+        .env("EDITOR", "/bin/false")
+        .args(["file", "touch", "--edit", "--path", file.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("target already exists"));
+    assert_eq!(fs::read(&file).unwrap(), b"original");
+
+    let directory = dir.path().join("existing-directory");
+    fs::create_dir(&directory).unwrap();
+    ragtag()
+        .args(["file", "touch", "--path", directory.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("target already exists"));
+    assert!(directory.is_dir());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_file_touch_rejects_existing_symlink_and_dangling_symlink() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("original.md");
+    fs::write(&original, b"original").unwrap();
+    for (name, destination) in [
+        ("link.md", original.clone()),
+        ("dangling.md", dir.path().join("missing.md")),
+    ] {
+        let link = dir.path().join(name);
+        symlink(destination, &link).unwrap();
+        ragtag()
+            .args(["file", "touch", "--path", link.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("target already exists"));
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+    assert_eq!(fs::read(original).unwrap(), b"original");
+}
+
+#[test]
+fn test_file_touch_same_generated_name_collision_fails_without_suffix() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join(".ragtag.yaml");
+    fs::write(
+        &config,
+        "files:\n  default_directory: notes\n  filename_format: \"fixed.md\"\n",
+    )
+    .unwrap();
+    let args = ["--config", config.to_str().unwrap(), "file", "touch"];
+    ragtag().args(args).assert().success();
+    ragtag()
+        .args(args)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("target already exists"));
+    let entries = fs::read_dir(dir.path().join("notes"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].file_name(), "fixed.md");
+}
+
+#[test]
+fn test_file_touch_editor_is_opt_in_and_prevalidated() {
+    let dir = tempfile::tempdir().unwrap();
+    let no_edit = dir.path().join("no-edit.md");
+    ragtag()
+        .env_remove("EDITOR")
+        .args(["file", "touch", "--path", no_edit.to_str().unwrap()])
+        .assert()
+        .success();
+    assert!(no_edit.is_file());
+
+    for (parent, editor) in [
+        ("unset", None),
+        ("blank", Some("   ")),
+        ("malformed", Some("'unterminated")),
+        ("empty-program", Some("''")),
+        ("empty-program-with-argument", Some("'' --wait")),
+    ] {
+        let parent = dir.path().join(parent);
+        let target = parent.join("note.md");
+        let mut command = ragtag();
+        command.args([
+            "file",
+            "touch",
+            "--edit",
+            "--path",
+            target.to_str().unwrap(),
+        ]);
+        match editor {
+            Some(value) => {
+                command.env("EDITOR", value);
+            }
+            None => {
+                command.env_remove("EDITOR");
+            }
+        }
+        command
+            .assert()
+            .failure()
+            .stdout(predicate::str::is_empty())
+            .stderr(predicate::str::contains("invalid EDITOR"));
+        assert!(!parent.exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn test_file_touch_editor_success_failure_and_retention() {
+    let dir = tempfile::tempdir().unwrap();
+    let success = dir.path().join("success.md");
+    ragtag()
+        .env("EDITOR", "/usr/bin/test -f")
+        .args([
+            "file",
+            "touch",
+            "--edit",
+            "--path",
+            success.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", success.display()));
+    assert!(success.is_file());
+
+    let cwd = dir.path().join("cwd");
+    fs::create_dir(&cwd).unwrap();
+    let lexical_target = cwd.join("../lexical.md");
+    ragtag()
+        .current_dir(&cwd)
+        .env(
+            "EDITOR",
+            "/bin/sh -c 'test \"$0\" = \"quoted arg\" && test \"$1\" = \"--ordered\" && test \"$2\" = \"$EXPECTED_TARGET\"' 'quoted arg' --ordered",
+        )
+        .env("EXPECTED_TARGET", lexical_target.as_os_str())
+        .args(["file", "touch", "--edit", "--path", "../lexical.md"])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", lexical_target.display()));
+    assert!(dir.path().join("lexical.md").is_file());
+
+    let nonzero = dir.path().join("nonzero.md");
+    ragtag()
+        .env("EDITOR", "/bin/false")
+        .args([
+            "file",
+            "touch",
+            "--edit",
+            "--path",
+            nonzero.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("created file remains"));
+    assert!(nonzero.is_file());
+
+    let missing = dir.path().join("missing-editor.md");
+    ragtag()
+        .env("EDITOR", "/definitely/missing/editor")
+        .args([
+            "file",
+            "touch",
+            "--edit",
+            "--path",
+            missing.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("failed to launch editor"))
+        .stderr(predicate::str::contains("created file remains"));
+    assert!(missing.is_file());
+
+    let signaled = dir.path().join("signaled.md");
+    ragtag()
+        .env("EDITOR", "/bin/sh -c 'kill -TERM $$'")
+        .args([
+            "file",
+            "touch",
+            "--edit",
+            "--path",
+            signaled.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("editor exited unsuccessfully"))
+        .stderr(predicate::str::contains("created file remains"));
+    assert!(signaled.is_file());
+}
+
+#[test]
+fn test_file_touch_alias_collision_and_expansion_with_trailing_options() {
+    let dir = tempfile::tempdir().unwrap();
+    let collision = dir.path().join("collision.yaml");
+    fs::write(
+        &collision,
+        "aliases:\n  - name: file\n    arguments: \"summary\"\n",
+    )
+    .unwrap();
+    ragtag()
+        .args([
+            "--config",
+            collision.to_str().unwrap(),
+            "summary",
+            "--path",
+            &fixtures_dir(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("collides"));
+
+    let alias_config = dir.path().join("alias.yaml");
+    fs::write(
+        &alias_config,
+        "aliases:\n  - name: new-note\n    arguments: \"file touch\"\n",
+    )
+    .unwrap();
+    let target = dir.path().join("alias-created.md");
+    ragtag()
+        .args([
+            "new-note",
+            "--tag",
+            "aliased",
+            "--path",
+            target.to_str().unwrap(),
+            "--config",
+            alias_config.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(target).unwrap(), b"@aliased\n");
+}
+
 // === Version and Help ===
 
 #[test]

@@ -165,6 +165,37 @@ pub fn build_cli(registry: &ExtensionRegistry, aliases: &[Alias]) -> Command {
                 ),
         )
         .subcommand(
+            Command::new("file")
+                .about("Create files")
+                .infer_subcommands(true)
+                .disable_help_subcommand(true)
+                .subcommand_required(true)
+                .subcommand(
+                    Command::new("touch")
+                        .about("Create a new file and print its path; fail if the target exists")
+                        .arg(
+                            Arg::new("path")
+                                .long("path")
+                                .help("Target file; defaults to a UTC-generated file under the configured directory")
+                                .value_name("FILE"),
+                        )
+                        .arg(
+                            Arg::new("tag")
+                                .long("tag")
+                                .help("Tag placed at the beginning of the file; repeat once per tag")
+                                .value_name("TAG")
+                                .allow_hyphen_values(true)
+                                .action(clap::ArgAction::Append),
+                        )
+                        .arg(
+                            Arg::new("edit")
+                                .long("edit")
+                                .help("Open the newly created file using EDITOR after creation")
+                                .action(clap::ArgAction::SetTrue),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("summary")
                 .about("Show a summary of all tags found")
                 .arg(
@@ -325,6 +356,43 @@ mod tests {
         assert!(names.contains("summary"));
         assert!(names.contains("query"));
         assert!(names.contains("config"));
+        assert!(names.contains("file"));
+    }
+
+    #[test]
+    fn test_file_command_contains_only_touch_and_accepts_repeated_tags() {
+        let registry = ExtensionRegistry::new();
+        let command = build_cli(&registry, &[]);
+        let file = command
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "file")
+            .unwrap();
+        assert_eq!(
+            file.get_subcommands()
+                .map(clap::Command::get_name)
+                .collect::<Vec<_>>(),
+            vec!["touch"]
+        );
+
+        let matches = build_cli(&registry, &[])
+            .try_get_matches_from([
+                "ragtag", "file", "touch", "--tag", "-one", "--tag", "@-two", "--edit",
+            ])
+            .unwrap();
+        let (_, file_matches) = matches.subcommand().unwrap();
+        let (_, touch_matches) = file_matches.subcommand().unwrap();
+        assert_eq!(
+            touch_matches
+                .get_many::<String>("tag")
+                .unwrap()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["-one", "@-two"]
+        );
+        assert!(touch_matches.get_flag("edit"));
+        assert!(build_cli(&registry, &[])
+            .try_get_matches_from(["ragtag", "file", "unknown"])
+            .is_err());
     }
 
     #[test]

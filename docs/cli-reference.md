@@ -59,7 +59,7 @@ Notes:
 * **Trailing args are appended** after the alias's own arguments.
 * **Prefix inference includes aliases** — an ambiguous prefix across commands and aliases errors just like any other ambiguous prefix.
 * **No recursion** — an alias never expands into another alias.
-* **Collisions are rejected at startup** — an alias name that matches a built-in (`summary`, `query`, `config`) or extension command (`task`), a duplicate alias name, or an empty name is a config error.
+* **Collisions are rejected at startup** — an alias name that matches a built-in (`summary`, `query`, `config`, `file`) or extension command (`task`), a duplicate alias name, or an empty name is a config error.
 
 See [Configuration Reference → Aliases](configuration.md#aliases) for full details.
 
@@ -173,6 +173,100 @@ ragtag config get nonexistent_field     # error: unknown config key "nonexistent
 ```
 
 Extension configs (like `tasks`) are resolved with defaults applied, so all fields are available even if not explicitly set in the YAML file.
+
+### `file touch`
+
+Create exactly one new plain text file.
+
+```text
+ragtag file touch [--path <FILE>] [--tag <TAG>]... [--edit]
+```
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <FILE>` | UTC-generated target | Target file |
+| `--tag <TAG>` | — | Complete tag to place at the beginning of the file; repeat once per tag |
+| `--edit` | disabled | Open the newly created file using `EDITOR` |
+
+On success, ragtag prints the new file's full absolute resolved path to stdout
+with one trailing newline. The display path is normalized without filesystem
+access, removing redundant `.` components without requiring the target to
+still exist after an editor runs. It is not canonicalized; parent components
+may remain where lexical removal could change symlink-sensitive semantics.
+
+The operation is exclusive creation, not POSIX `touch`: it fails if the target
+already exists. Existing regular files, directories, symlinks, and dangling
+symlinks are all rejected and left unchanged. Concurrent attempts for the same
+target have only one winner. Ragtag never overwrites, appends a suffix, retries,
+or treats an existing target as success.
+
+**Target resolution:**
+
+* An explicit absolute `--path` is used directly.
+* An explicit relative `--path`, including a path such as `../note.md`, is
+    resolved from the working directory in which ragtag started.
+* Missing parent directories are created recursively after all tags and any
+    requested editor configuration have been validated.
+* Paths are lexical and are not restricted to the ragtag root. Tildes and
+    environment variables are not expanded.
+* Without `--path`, `files.filename_format` is evaluated using the current UTC
+    time and appended to `files.default_directory`. A relative configured
+    directory is based on the ragtag root: the selected config file's directory,
+    or the startup working directory if no config exists. An absolute configured
+    directory is used directly.
+
+The default format, `%Y-%m-%d_%H-%M-%S.md`, produces names such as
+`2026-08-21_12-33-52.md`. Because it has one-second resolution, two creations
+in the same second can collide. A collision is an error; configure fractional
+seconds such as `%3f` to reduce that risk. See
+[File Creation Configuration](configuration.md#file-creation).
+
+**Tag header:**
+
+Each `--tag` occurrence must contain one complete tag accepted by ragtag's
+normal tag parser. Surrounding whitespace is trimmed, and `@` is prepended when
+omitted. Trailing prose, multiple tags in one option, and malformed syntax are
+rejected before any directories or files are created.
+
+Exact normalized duplicates are removed in first-seen order: `todo` and
+`@todo` are duplicates, while `@todo(owner=a)` and `@todo(owner=b)` are not.
+The normalized source spelling, including valid quoting, spacing, and attribute
+order, is preserved. Tags start at byte zero, one per line, with one line-feed
+after every tag and no extra blank line:
+
+```text
+@project
+@task(status=active)
+```
+
+With no tags, ragtag creates a zero-byte file.
+
+**Editor behavior:**
+
+`EDITOR` is consulted only when `--edit` is present. Its value must be set,
+nonblank, and valid shell-word syntax. Ragtag parses the executable and initial
+arguments with shell-like quoting, but invokes the executable directly without
+a shell. The created target is appended as the final argument. The editor
+inherits stdin, stdout, and stderr, and ragtag waits for it to finish.
+
+Invalid `EDITOR` configuration fails before parent or file creation. A launch
+failure, signal termination, or nonzero editor exit makes the command fail
+after creation; the created file is deliberately retained because the editor
+may already have changed it. These failures do not print the created path. A
+zero editor exit is successful, and only then does ragtag print the path.
+Without `--edit`, ragtag does not read or validate `EDITOR` and prints the path
+immediately after writing the file.
+
+**Examples:**
+
+```bash
+ragtag file touch
+ragtag file touch --path notes/today.md
+ragtag file touch --path ../shared/idea.md --tag idea --tag '@project(name=ragtag)'
+ragtag file touch --path /absolute/path/note.md --edit
+```
 
 ### `task`
 
