@@ -82,6 +82,18 @@ cargo build --release
     This prints an `@task(...)` string to stdout for you to copy into a note file.
     Integrate this with other tools to generate the `@task(...)` string and drop it straight into your other notes.
 
+6. **Create a new tagged file:**
+
+    ```bash
+    ragtag file touch --tag project --tag '@task(status=new)'
+    ragtag file touch --path notes/idea.md --tag idea --edit
+    ```
+
+    `file touch` always creates a new file and fails if its target already
+    exists. Without `--path`, the default is a UTC-named file such as
+    `2026-08-21_12-33-52.md` under the configured file directory. On success,
+    it prints the new file's full absolute path.
+
 ## Commands
 
 ### `ragtag summary`
@@ -112,6 +124,43 @@ ragtag config get max_depth
 ragtag config get tasks.tag_name
 ragtag config get tasks.status_keywords.done
 ```
+
+### `ragtag file touch [--path <FILE>] [--tag <TAG>]... [--edit]`
+
+Creates exactly one new plain text file and prints its full absolute resolved
+path to stdout, followed by a newline. Creation is exclusive: an existing file,
+directory, symlink, or dangling symlink is rejected and never modified.
+
+```bash
+ragtag file touch
+ragtag file touch --path notes/today.md
+ragtag file touch --path ../shared/idea.md --tag idea --tag '@project(name=ragtag)'
+ragtag file touch --path /absolute/path/note.md --edit
+```
+
+An explicit relative `--path` is resolved from the current working directory;
+absolute paths and paths containing parent components are accepted. Missing
+parent directories are created recursively. Without `--path`,
+`files.default_directory` is resolved relative to the selected config file's
+directory (or the startup working directory when no config exists), and
+`files.filename_format` generates the filename in UTC. A collision fails
+without overwriting, suffixing, or retrying.
+
+Repeat `--tag` once per complete parser-valid tag. The leading `@` is optional.
+After normalization, exact duplicates are removed while preserving first-seen
+order. Tags are written from byte zero, one per line with no blank separator;
+with no tags, the new file is empty.
+
+`--edit` safely parses `EDITOR` as an executable and arguments without a shell,
+then appends the new file path as the final argument and waits for the editor.
+`EDITOR` is ignored when `--edit` is absent. Invalid editor configuration is
+rejected before creation; if launching fails or the editor exits
+unsuccessfully after creation, the file is retained and the command reports
+failure without printing the path. With `--edit`, the path is printed only
+after the editor exits successfully.
+
+See the [CLI reference](docs/cli-reference.md#file-touch) and
+[configuration reference](docs/configuration.md#file-creation) for details.
 
 ### `ragtag task <subcommand>`
 
@@ -184,4 +233,3 @@ See the [configuration reference](docs/configuration.md) for full details.
 * [Task Management Guide](docs/task-management.md) — using `@task` tags for task tracking
 * [Configuration Reference](docs/configuration.md) — YAML config file options
 * [CLI Reference](docs/cli-reference.md) — full command-line reference
-

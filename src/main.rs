@@ -39,7 +39,8 @@ fn run() -> Result<(), RagtagError> {
     let raw_args: Vec<String> = std::env::args().collect();
     let config_path = cli::resolve_config_path_from_args(&raw_args);
     let cwd = std::env::current_dir().map_err(RagtagError::Io)?;
-    let app_config = config::load_config(config_path.as_deref(), &cwd)?;
+    let loaded = config::load_config(config_path.as_deref(), &cwd)?;
+    let app_config = &loaded.config;
 
     // Validate aliases against the set of real command names (built-ins +
     // extension commands) so collisions are caught before anything executes.
@@ -88,11 +89,25 @@ fn run() -> Result<(), RagtagError> {
             // global flag from both sources so an alias honors it in every
             // position, identically to the fully-expanded direct command.
             let no_color = no_color || expanded.get_flag("no-color");
-            return dispatch(&expanded, no_color, &app_config, &registry);
+            return dispatch(
+                &expanded,
+                no_color,
+                app_config,
+                &loaded.root_dir,
+                &cwd,
+                &registry,
+            );
         }
     }
 
-    dispatch(&matches, no_color, &app_config, &registry)
+    dispatch(
+        &matches,
+        no_color,
+        app_config,
+        &loaded.root_dir,
+        &cwd,
+        &registry,
+    )
 }
 
 /// Dispatches a parsed set of top-level matches to the appropriate command.
@@ -110,6 +125,8 @@ fn dispatch(
     matches: &clap::ArgMatches,
     no_color: bool,
     app_config: &config::Config,
+    root_dir: &std::path::Path,
+    startup_cwd: &std::path::Path,
     registry: &ExtensionRegistry,
 ) -> Result<(), RagtagError> {
     // Resolve color mode from the caller-supplied global flag.
@@ -142,6 +159,19 @@ fn dispatch(
             let mut stdout = std::io::stdout();
             commands::query::run(sub_m, app_config, registry, &color_mode, &mut stdout)
         }
+        Some(("file", file_matches)) => match file_matches.subcommand() {
+            Some(("touch", touch_matches)) => {
+                let mut stdout = std::io::stdout();
+                commands::file::run_touch(
+                    touch_matches,
+                    app_config,
+                    root_dir,
+                    startup_cwd,
+                    &mut stdout,
+                )
+            }
+            _ => Err(RagtagError::UnknownCommand("file".to_string())),
+        },
         Some((name, sub_m)) => {
             // Try extension commands
             if let Some(ext) = registry.get_by_command_name(name) {

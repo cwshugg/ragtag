@@ -14,17 +14,31 @@ use crate::error::RagtagError;
 /// the `.yaml` extension takes precedence over `.yml`.
 const CONFIG_FILE_NAMES: &[&str] = &[".ragtag.yaml", ".ragtag.yml", "ragtag.yaml", "ragtag.yml"];
 
+/// A validated configuration together with its lexical ragtag root.
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    /// Parsed and validated application configuration.
+    pub config: Config,
+    /// Parent of the selected config file, or startup cwd when none exists.
+    pub root_dir: PathBuf,
+}
+
 /// Loads a ragtag configuration.
 ///
 /// If `cli_path` is provided, loads from that explicit path. Otherwise,
 /// walks up from `start_dir` looking for a config file.
-pub fn load_config(cli_path: Option<&Path>, start_dir: &Path) -> Result<Config, RagtagError> {
+pub fn load_config(cli_path: Option<&Path>, start_dir: &Path) -> Result<LoadedConfig, RagtagError> {
     let config_path = match cli_path {
         Some(path) => {
-            if !path.exists() {
-                return Err(RagtagError::ConfigNotFound(path.to_path_buf()));
+            let resolved = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                start_dir.join(path)
+            };
+            if !resolved.exists() {
+                return Err(RagtagError::ConfigNotFound(resolved));
             }
-            Some(path.to_path_buf())
+            Some(resolved)
         }
         None => discover_config_file(start_dir),
     };
@@ -42,9 +56,16 @@ pub fn load_config(cli_path: Option<&Path>, start_dir: &Path) -> Result<Config, 
                     source: Box::new(e),
                 })?;
             config.validate()?;
-            Ok(config)
+            let root_dir = path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| start_dir.to_path_buf());
+            Ok(LoadedConfig { config, root_dir })
         }
-        None => Ok(Config::default()),
+        None => Ok(LoadedConfig {
+            config: Config::default(),
+            root_dir: start_dir.to_path_buf(),
+        }),
     }
 }
 
@@ -87,8 +108,9 @@ mod tests {
     #[test]
     fn test_load_default_when_no_config() {
         let dir = tempfile::tempdir().unwrap();
-        let config = load_config(None, dir.path()).unwrap();
-        assert!(config.respect_gitignore);
+        let loaded = load_config(None, dir.path()).unwrap();
+        assert!(loaded.config.respect_gitignore);
+        assert_eq!(loaded.root_dir, dir.path());
     }
 
     #[test]
@@ -96,8 +118,29 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join(".ragtag.yaml");
         fs::write(&config_path, "skip_hidden: false\n").unwrap();
-        let config = load_config(Some(&config_path), dir.path()).unwrap();
-        assert!(!config.skip_hidden);
+        let loaded = load_config(Some(&config_path), dir.path()).unwrap();
+        assert!(!loaded.config.skip_hidden);
+        assert_eq!(loaded.root_dir, dir.path());
+    }
+
+    #[test]
+    fn test_load_relative_explicit_config_preserves_lexical_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("config");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("ragtag.yaml"), "").unwrap();
+        let loaded = load_config(Some(Path::new("config/ragtag.yaml")), dir.path()).unwrap();
+        assert_eq!(loaded.root_dir, dir.path().join("config"));
+    }
+
+    #[test]
+    fn test_discovered_config_provides_parent_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let child = dir.path().join("child");
+        fs::create_dir(&child).unwrap();
+        fs::write(dir.path().join(".ragtag.yaml"), "").unwrap();
+        let loaded = load_config(None, &child).unwrap();
+        assert_eq!(loaded.root_dir, dir.path());
     }
 
     #[test]

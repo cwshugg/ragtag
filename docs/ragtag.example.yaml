@@ -42,6 +42,27 @@ max_depth: 10
 max_file_size: 10485760
 
 # ---------------------------------------------------------------------------
+# File Creation
+# ---------------------------------------------------------------------------
+#
+# Used by `ragtag file touch` when `--path` is omitted. A relative directory
+# is based on the selected config file's directory, or the startup working
+# directory when there is no config. Paths are literal: `~` and environment
+# variables are not expanded.
+files:
+  # May be relative, absolute, or contain parent components.
+  # Missing parent directories are created recursively.
+  # Default: "."
+  default_directory: "."
+
+  # Chrono strftime syntax, evaluated in UTC. The rendered value must be one
+  # filename component. Common directives are %Y, %m, %d, %H, %M, and %S.
+  # Add fractional seconds such as %3f to reduce same-second collisions.
+  # Existing targets always cause an error; ragtag never overwrites or retries.
+  # Default: "%Y-%m-%d_%H-%M-%S.md"
+  filename_format: "%Y-%m-%d_%H-%M-%S.md"
+
+# ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 
@@ -60,7 +81,7 @@ output:
 # aliases. Running `ragtag <name>` expands `arguments` (split with shell-like
 # quoting) and runs it as if typed directly. Trailing args are appended, and
 # aliases participate in prefix inference. An alias name must not collide with
-# a real command (summary/query/config/task), be duplicated, or be empty.
+# a real command (summary/query/config/file/task), be duplicated, or be empty.
 aliases: []
   # - name: "ts"
   #   arguments: "task summary"

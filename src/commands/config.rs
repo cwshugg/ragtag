@@ -173,6 +173,29 @@ mod tests {
     }
 
     #[test]
+    fn test_get_file_defaults_and_overrides() {
+        let config = default_config();
+        assert_eq!(run_get("files.default_directory", &config).unwrap(), ".");
+        assert_eq!(
+            run_get("files.filename_format", &config).unwrap(),
+            "%Y-%m-%d_%H-%M-%S.md"
+        );
+
+        let config: Config = serde_yml::from_str(
+            "files:\n  default_directory: notes\n  filename_format: \"%Y%m%d-%3f.txt\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            run_get("files.default_directory", &config).unwrap(),
+            "notes"
+        );
+        assert_eq!(
+            run_get("files.filename_format", &config).unwrap(),
+            "%Y%m%d-%3f.txt"
+        );
+    }
+
+    #[test]
     fn test_get_tasks_tag_name() {
         let config = default_config();
         let result = run_get("tasks.tag_name", &config).unwrap();
