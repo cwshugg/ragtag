@@ -116,6 +116,68 @@ pub enum RagtagError {
     #[error("error: unknown command \"{0}\"")]
     UnknownCommand(String),
 
+    /// An outer token is ambiguous across real commands and aliases.
+    #[error(
+        "error: alias command \"{token}\" is ambiguous; candidates: {}",
+        candidates.join(", ")
+    )]
+    AliasOuterAmbiguous {
+        /// The unresolved outer token.
+        token: String,
+        /// Deterministically ordered matching names.
+        candidates: Vec<String>,
+    },
+
+    /// Recursive alias composition revisited an active definition.
+    #[error("error: alias expansion cycle: {}", chain.join(" -> "))]
+    AliasCycle {
+        /// Selected and referenced spellings in expansion order.
+        chain: Vec<String>,
+    },
+
+    /// Recursive alias composition would exceed its definition-depth bound.
+    #[error(
+        "error: alias expansion exceeds maximum depth of {limit}: {}",
+        chain.join(" -> ")
+    )]
+    AliasExpansionDepthExceeded {
+        /// Configured depth limit.
+        limit: usize,
+        /// Selected and referenced spellings in expansion order.
+        chain: Vec<String>,
+    },
+
+    /// Recursive alias composition would exceed its token bound.
+    #[error(
+        "error: alias expansion exceeds maximum of {limit} arguments ({count_display}): {}",
+        chain.join(" -> "),
+        count_display = if *count == usize::MAX {
+            "projected count overflowed usize; saturated count is usize::MAX".to_string()
+        } else {
+            format!("projected count: {count}")
+        }
+    )]
+    AliasExpansionArgumentsExceeded {
+        /// Configured expanded-token limit.
+        limit: usize,
+        /// Exact projection, or `usize::MAX` when checked arithmetic overflowed.
+        count: usize,
+        /// Selected and referenced spellings in expansion order.
+        chain: Vec<String>,
+    },
+
+    /// An alias terminated at a definite unknown command target.
+    #[error(
+        "error: alias target \"{target}\" is not a command (chain: {})",
+        chain.join(" -> ")
+    )]
+    AliasTargetUnknown {
+        /// Unknown terminal target.
+        target: String,
+        /// Selected and referenced spellings in expansion order.
+        chain: Vec<String>,
+    },
+
     /// An error from an extension.
     #[error("error [{extension_name}]: {message}")]
     ExtensionError {
@@ -153,5 +215,59 @@ mod tests {
         let err = RagtagError::SymlinkEdit(PathBuf::from("notes/link.md"));
         assert!(err.to_string().contains("symlinked file"));
         assert!(err.to_string().contains("notes/link.md"));
+    }
+
+    #[test]
+    fn test_alias_errors_preserve_structured_order_and_counts() {
+        let ambiguity = RagtagError::AliasOuterAmbiguous {
+            token: "su".to_string(),
+            candidates: vec!["summary".to_string(), "sum-all".to_string()],
+        };
+        assert_eq!(
+            ambiguity.to_string(),
+            "error: alias command \"su\" is ambiguous; candidates: summary, sum-all"
+        );
+
+        let cycle = RagtagError::AliasCycle {
+            chain: vec!["a".to_string(), "alt-a".to_string()],
+        };
+        assert_eq!(
+            cycle.to_string(),
+            "error: alias expansion cycle: a -> alt-a"
+        );
+
+        let depth = RagtagError::AliasExpansionDepthExceeded {
+            limit: 32,
+            chain: vec!["a".to_string(), "b".to_string()],
+        };
+        assert_eq!(
+            depth.to_string(),
+            "error: alias expansion exceeds maximum depth of 32: a -> b"
+        );
+
+        let exact = RagtagError::AliasExpansionArgumentsExceeded {
+            limit: 4096,
+            count: 4097,
+            chain: vec!["a".to_string(), "b".to_string()],
+        };
+        assert!(exact.to_string().contains("projected count: 4097"));
+        assert!(exact.to_string().contains("a -> b"));
+
+        let saturated = RagtagError::AliasExpansionArgumentsExceeded {
+            limit: 4096,
+            count: usize::MAX,
+            chain: vec!["a".to_string()],
+        };
+        assert!(saturated.to_string().contains("overflowed usize"));
+        assert!(saturated.to_string().contains("usize::MAX"));
+
+        let unknown = RagtagError::AliasTargetUnknown {
+            target: "missing".to_string(),
+            chain: vec!["a".to_string(), "b".to_string()],
+        };
+        assert_eq!(
+            unknown.to_string(),
+            "error: alias target \"missing\" is not a command (chain: a -> b)"
+        );
     }
 }

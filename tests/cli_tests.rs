@@ -12,6 +12,17 @@ fn fixtures_dir() -> String {
     format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"))
 }
 
+/// Asserts process status, stdout, and stderr are byte-identical.
+fn assert_output_equivalent(actual: &std::process::Output, expected: &std::process::Output) {
+    assert_eq!(
+        actual.status.code(),
+        expected.status.code(),
+        "status differs"
+    );
+    assert_eq!(actual.stdout, expected.stdout, "stdout differs");
+    assert_eq!(actual.stderr, expected.stderr, "stderr differs");
+}
+
 // === File Touch ===
 
 #[test]
@@ -510,13 +521,13 @@ fn test_file_touch_alias_collision_and_expansion_with_trailing_options() {
     let target = dir.path().join("alias-created.md");
     ragtag()
         .args([
+            "--config",
+            alias_config.to_str().unwrap(),
             "new-note",
             "--tag",
             "aliased",
             "--path",
             target.to_str().unwrap(),
-            "--config",
-            alias_config.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -4009,6 +4020,130 @@ fn alias_config(yaml: &str) -> (tempfile::TempDir, String) {
 }
 
 #[test]
+fn test_terminal_command_values_cannot_redirect_startup_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let first_target = dir.path().join("first.md");
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .current_dir(dir.path())
+        .args(["file", "touch", "--path"])
+        .arg(&first_target)
+        .args(["--tag", "--config=/definitely/not/selected.yaml"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("invalid tag"))
+        .stderr(predicate::str::contains("config file not found").not());
+    assert!(!first_target.exists());
+
+    let second_target = dir.path().join("second.md");
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .current_dir(dir.path())
+        .args(["file", "touch", "--tag", "--config", "--path"])
+        .arg(&second_target)
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains(
+            second_target.display().to_string(),
+        ))
+        .stderr(predicate::str::contains("config file not found").not());
+    assert_eq!(fs::read_to_string(&second_target).unwrap(), "@--config\n");
+
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .current_dir(dir.path())
+        .args([
+            "task",
+            "set-attr",
+            "a1b2c3d4e5f67890",
+            "owner",
+            "--config=/definitely/not/selected.yaml",
+            "--path",
+            &fixtures_dir(),
+            "--no-edit",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "required arguments were not provided",
+        ))
+        .stderr(predicate::str::contains("config file not found").not());
+}
+
+#[test]
+fn test_root_config_selection_and_terminal_reconciliation() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first.yaml");
+    let second = dir.path().join("second.yaml");
+    fs::write(&first, "output:\n  color: always\n").unwrap();
+    fs::write(&second, "output:\n  color: never\n").unwrap();
+    let equals = format!("--config={}", second.display());
+
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config"])
+        .arg(&first)
+        .args(["config", "get", "output.color"])
+        .assert()
+        .code(0)
+        .stdout("always\n");
+    ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .arg(&equals)
+        .args(["config", "get", "output.color"])
+        .assert()
+        .code(0)
+        .stdout("never\n");
+
+    ragtag()
+        .env("RAGTAG_CONFIG", &first)
+        .args(["config", "get", "output.color", "--config"])
+        .arg(&second)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "--config must appear before the command name",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_unbounded_special_file_is_rejected_as_config() {
+    if !std::path::Path::new("/dev/zero").exists() {
+        return;
+    }
+
+    ragtag()
+        .args(["--config", "/dev/zero", "summary"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "config file \"/dev/zero\" must be a regular file",
+        ));
+}
+
+/// Runs ragtag with owned arguments and an optional startup config environment.
+fn alias_case_output(args: &[String], config_environment: Option<&str>) -> std::process::Output {
+    let mut command = ragtag();
+    command.env_remove("RAGTAG_CONFIG");
+    if let Some(config) = config_environment {
+        command.env("RAGTAG_CONFIG", config);
+    }
+    command.args(args).output().unwrap()
+}
+
+/// Compares an alias invocation with its explicit terminal argv.
+fn assert_alias_case_equivalent(
+    actual_args: &[String],
+    expected_args: &[String],
+    config_environment: Option<&str>,
+) {
+    let actual = alias_case_output(actual_args, config_environment);
+    let expected = alias_case_output(expected_args, config_environment);
+    assert_output_equivalent(&actual, &expected);
+}
+
+#[test]
 fn test_alias_expands_to_same_output() {
     // `ragtag my-alias` must produce byte-identical output to the expanded
     // `ragtag task summary`.
@@ -4186,7 +4321,7 @@ fn test_alias_prefix_inference() {
 #[test]
 fn test_alias_ambiguous_prefix_errors() {
     // `sum` is ambiguous between the built-in `summary` and the alias
-    // `sumtotal`, so clap must error just as it does for real commands.
+    // `sumtotal`, so the combined alias resolver reports its typed error.
     let (_guard, config) =
         alias_config("aliases:\n  - name: \"sumtotal\"\n    arguments: \"summary\"\n");
 
@@ -4194,26 +4329,103 @@ fn test_alias_ambiguous_prefix_errors() {
         .env_remove("RAGTAG_CONFIG")
         .args(["--config", &config, "sum"])
         .assert()
-        .failure()
+        .code(1)
         .stderr(predicate::str::contains("sumtotal"))
         .stderr(predicate::str::contains("summary"));
 }
 
 #[test]
-fn test_alias_does_not_chain() {
-    // An alias whose arguments reference another alias must NOT chain: the
-    // expansion is treated as a literal (non-existent) command.
-    let (_guard, config) = alias_config(
-        "aliases:\n  - name: \"chain-a\"\n    arguments: \"chain-b\"\n  - name: \"chain-b\"\n    arguments: \"summary\"\n",
+fn test_alias_help_target_collision_and_shared_prefixes() {
+    let (_target_guard, target_config) =
+        alias_config("aliases:\n  - name: show-help\n    arguments: help\n");
+    let alias_help = alias_case_output(
+        &[
+            "--config".to_string(),
+            target_config.clone(),
+            "show-help".to_string(),
+        ],
+        None,
     );
+    let direct_help = alias_case_output(
+        &["--config".to_string(), target_config, "help".to_string()],
+        None,
+    );
+    assert_output_equivalent(&alias_help, &direct_help);
+    assert_eq!(alias_help.status.code(), Some(0));
 
+    let (_collision_guard, collision_config) =
+        alias_config("aliases:\n  - name: help\n    arguments: summary\n");
     ragtag()
-        .env_remove("RAGTAG_CONFIG")
-        .args(["--config", &config, "chain-a"])
+        .args(["--config", &collision_config, "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("unknown command"))
-        .stderr(predicate::str::contains("chain-b"));
+        .code(1)
+        .stderr(predicate::str::contains(
+            "alias \"help\" collides with an existing command name",
+        ));
+
+    let (_prefix_guard, prefix_config) =
+        alias_config("aliases:\n  - name: hello\n    arguments: summary\n");
+    for prefix in ["h", "hel"] {
+        ragtag()
+            .args(["--config", &prefix_config, prefix])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(format!(
+                "alias command \"{prefix}\" is ambiguous"
+            )))
+            .stderr(predicate::str::contains("help, hello"));
+    }
+}
+
+#[test]
+fn test_alias_synonym_prefix_resolves_once_per_definition() {
+    let (_guard, config) =
+        alias_config("aliases:\n  - names: [active, act]\n    arguments: summary\n");
+    let fixtures = fixtures_dir();
+    let inferred = alias_case_output(
+        &[
+            "--config".to_string(),
+            config.clone(),
+            "ac".to_string(),
+            "--path".to_string(),
+            fixtures.clone(),
+        ],
+        None,
+    );
+    let canonical = alias_case_output(
+        &[
+            "--config".to_string(),
+            config,
+            "active".to_string(),
+            "--path".to_string(),
+            fixtures,
+        ],
+        None,
+    );
+    assert_output_equivalent(&inferred, &canonical);
+    assert_eq!(inferred.status.code(), Some(0));
+}
+
+#[test]
+fn test_alias_composes_recursively() {
+    let (_guard, config) = alias_config(
+        "aliases:\n  - name: \"chain-a\"\n    arguments: \"chain-b --count\"\n  - name: \"chain-b\"\n    arguments: \"chain-c task\"\n  - name: \"chain-c\"\n    arguments: \"query\"\n",
+    );
+    let fixtures = fixtures_dir();
+
+    let actual = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args(["--config", &config, "chain-a", "--path", &fixtures])
+        .output()
+        .unwrap();
+    let expected = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args([
+            "--config", &config, "query", "task", "--count", "--path", &fixtures,
+        ])
+        .output()
+        .unwrap();
+    assert_output_equivalent(&actual, &expected);
 }
 
 #[test]
@@ -4271,8 +4483,9 @@ fn test_unknown_command_still_errors_with_aliases_defined() {
 }
 
 #[test]
-fn test_aliases_hidden_from_help() {
-    // Aliases are hidden from the top-level help listing to avoid clutter.
+fn test_aliases_are_absent_from_top_level_help() {
+    // Aliases are never registered as clap subcommands, so the top-level help
+    // contains only commands from the real command tree.
     let (_guard, config) =
         alias_config("aliases:\n  - name: \"my-alias\"\n    arguments: \"summary\"\n");
 
@@ -4282,6 +4495,787 @@ fn test_aliases_hidden_from_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("my-alias").not());
+}
+
+#[test]
+fn test_every_extension_alias_synonym_matches_direct_dispatch() {
+    let (_guard, config) = alias_config(
+        "aliases:\n  - names: [task-view, tv, tasks-now]\n    arguments: \"task summary --all\"\n",
+    );
+    let fixtures = fixtures_dir();
+    let expected = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .args([
+            "--config", &config, "task", "summary", "--all", "--path", &fixtures,
+        ])
+        .output()
+        .unwrap();
+
+    for name in ["task-view", "tv", "tasks-now"] {
+        let actual = ragtag()
+            .env_remove("RAGTAG_CONFIG")
+            .args(["--config", &config, name, "--path", &fixtures])
+            .output()
+            .unwrap();
+        assert_output_equivalent(&actual, &expected);
+    }
+}
+
+#[test]
+fn test_alias_leading_global_scanner_preserves_spelling_order_and_boundary() {
+    let (_guard, config) =
+        alias_config("aliases:\n  - name: a\n    arguments: \"query task --count\"\n");
+    let fixtures = fixtures_dir();
+
+    for (actual, expected) in [
+        (
+            vec![
+                "--no-color",
+                "--config",
+                config.as_str(),
+                "a",
+                "--path",
+                fixtures.as_str(),
+            ],
+            vec![
+                "--no-color",
+                "--config",
+                config.as_str(),
+                "query",
+                "task",
+                "--count",
+                "--path",
+                fixtures.as_str(),
+            ],
+        ),
+        (
+            vec![
+                "--config",
+                config.as_str(),
+                "--no-color",
+                "a",
+                "--path",
+                fixtures.as_str(),
+            ],
+            vec![
+                "--config",
+                config.as_str(),
+                "--no-color",
+                "query",
+                "task",
+                "--count",
+                "--path",
+                fixtures.as_str(),
+            ],
+        ),
+    ] {
+        let actual = ragtag()
+            .env_remove("RAGTAG_CONFIG")
+            .args(actual)
+            .output()
+            .unwrap();
+        let expected = ragtag()
+            .env_remove("RAGTAG_CONFIG")
+            .args(expected)
+            .output()
+            .unwrap();
+        assert_output_equivalent(&actual, &expected);
+    }
+
+    let (_plain_guard, plain_config) = alias_config("");
+    let after_boundary =
+        alias_case_output(&["--".to_string(), "a".to_string()], Some(config.as_str()));
+    let direct = alias_case_output(
+        &["--".to_string(), "a".to_string()],
+        Some(plain_config.as_str()),
+    );
+    assert_output_equivalent(&after_boundary, &direct);
+    assert_eq!(after_boundary.status.code(), Some(2));
+    assert!(String::from_utf8(after_boundary.stderr)
+        .unwrap()
+        .contains("unrecognized subcommand 'a'"));
+}
+
+#[test]
+fn test_config_split_form_stops_at_separator_for_both_raw_scanners() {
+    let (_guard, config) = alias_config("aliases:\n  - name: a\n    arguments: summary\n");
+    ragtag()
+        .env("RAGTAG_CONFIG", &config)
+        .args(["--config", "--", "a"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("config file not found").not())
+        .stderr(predicate::str::contains("unrecognized subcommand 'a'"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_non_utf8_config_paths_survive_alias_expansion_and_terminal_clap() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir
+        .path()
+        .join(OsString::from_vec(b"config-\xff.yaml".to_vec()));
+    fs::write(&path, "aliases:\n  - name: a\n    arguments: summary\n").unwrap();
+    let fixtures = fixtures_dir();
+
+    let split_alias = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .arg("--config")
+        .arg(&path)
+        .args(["a", "--path", &fixtures])
+        .output()
+        .unwrap();
+    let split_direct = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .arg("--config")
+        .arg(&path)
+        .args(["summary", "--path", &fixtures])
+        .output()
+        .unwrap();
+    assert_output_equivalent(&split_alias, &split_direct);
+    assert_eq!(split_alias.status.code(), Some(0));
+
+    let mut equals = OsString::from("--config=");
+    equals.push(path.as_os_str());
+    let equals_alias = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .arg(&equals)
+        .args(["a", "--path", &fixtures])
+        .output()
+        .unwrap();
+    let equals_direct = ragtag()
+        .env_remove("RAGTAG_CONFIG")
+        .arg(&equals)
+        .args(["summary", "--path", &fixtures])
+        .output()
+        .unwrap();
+    assert_output_equivalent(&equals_alias, &equals_direct);
+    assert_eq!(equals_alias.status.code(), Some(0));
+}
+
+#[test]
+fn test_empty_suffix_token_reaches_terminal_clap_unchanged() {
+    let (_guard, config) = alias_config("aliases:\n  - name: q\n    arguments: query\n");
+    let fixtures = fixtures_dir();
+    let actual = ragtag()
+        .args(["--config", &config, "q"])
+        .arg("")
+        .args(["--path", &fixtures])
+        .output()
+        .unwrap();
+    let direct = ragtag()
+        .args(["--config", &config, "query"])
+        .arg("")
+        .args(["--path", &fixtures])
+        .output()
+        .unwrap();
+    assert_output_equivalent(&actual, &direct);
+    assert_eq!(actual.status.code(), Some(0));
+}
+
+#[test]
+fn test_alias_leading_global_matrix_matches_direct_terminal_argv() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first.yaml");
+    let last = dir.path().join("last.yaml");
+    let yaml = "aliases:\n  - name: a\n    arguments: \"query task --count\"\n";
+    fs::write(&first, yaml).unwrap();
+    fs::write(&last, yaml).unwrap();
+    let first = first.to_str().unwrap().to_string();
+    let last = last.to_str().unwrap().to_string();
+    let first_equals = format!("--config={first}");
+    let last_equals = format!("--config={last}");
+    let fixtures = fixtures_dir();
+
+    let cases = [
+        (
+            vec![
+                "--no-color".to_string(),
+                "--config".to_string(),
+                first.clone(),
+                "a".to_string(),
+                "--path".to_string(),
+                fixtures.clone(),
+            ],
+            vec![
+                "--no-color".to_string(),
+                "--config".to_string(),
+                first.clone(),
+                "query".to_string(),
+                "task".to_string(),
+                "--count".to_string(),
+                "--path".to_string(),
+                fixtures.clone(),
+            ],
+        ),
+        (
+            vec![
+                first_equals.clone(),
+                "a".to_string(),
+                "--path".to_string(),
+                fixtures.clone(),
+            ],
+            vec![
+                first_equals.clone(),
+                "query".to_string(),
+                "task".to_string(),
+                "--count".to_string(),
+                "--path".to_string(),
+                fixtures.clone(),
+            ],
+        ),
+        (
+            vec![
+                "--config".to_string(),
+                first.clone(),
+                "--no-color".to_string(),
+                last_equals.clone(),
+                "a".to_string(),
+                "--path".to_string(),
+                fixtures.clone(),
+            ],
+            vec![
+                "--config".to_string(),
+                first.clone(),
+                "--no-color".to_string(),
+                last_equals,
+                "query".to_string(),
+                "task".to_string(),
+                "--count".to_string(),
+                "--path".to_string(),
+                fixtures,
+            ],
+        ),
+        (
+            vec!["--bogus".to_string(), "a".to_string()],
+            vec![
+                "--bogus".to_string(),
+                "query".to_string(),
+                "task".to_string(),
+                "--count".to_string(),
+            ],
+        ),
+    ];
+
+    for (actual, expected) in cases {
+        assert_alias_case_equivalent(&actual, &expected, Some(&last));
+    }
+}
+
+#[test]
+fn test_alias_repeated_and_suffix_config_tokens_match_direct_clap_behavior() {
+    let (_guard, config) =
+        alias_config("aliases:\n  - name: a\n    arguments: \"query task --count\"\n");
+    let fixtures = fixtures_dir();
+    let equals = format!("--config={config}");
+
+    let actual = ragtag()
+        .args([
+            "--config",
+            &config,
+            "--no-color",
+            &equals,
+            "a",
+            "--path",
+            &fixtures,
+        ])
+        .output()
+        .unwrap();
+    let expected = ragtag()
+        .args([
+            "--config",
+            &config,
+            "--no-color",
+            &equals,
+            "query",
+            "task",
+            "--count",
+            "--path",
+            &fixtures,
+        ])
+        .output()
+        .unwrap();
+    assert_output_equivalent(&actual, &expected);
+
+    let actual = ragtag()
+        .env("RAGTAG_CONFIG", &config)
+        .args(["a", &equals, "--path", &fixtures])
+        .output()
+        .unwrap();
+    let expected = ragtag()
+        .env("RAGTAG_CONFIG", &config)
+        .args(["query", "task", "--count", &equals, "--path", &fixtures])
+        .output()
+        .unwrap();
+    assert_output_equivalent(&actual, &expected);
+}
+
+#[test]
+fn test_alias_suffix_global_and_positional_order_matrix_matches_direct_argv() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first.yaml");
+    let second = dir.path().join("second.yaml");
+    let yaml =
+        "aliases:\n  - name: a\n    arguments: query\n  - name: p\n    arguments: \"query task\"\n";
+    fs::write(&first, yaml).unwrap();
+    fs::write(&second, yaml).unwrap();
+    let first = first.to_str().unwrap().to_string();
+    let second = second.to_str().unwrap().to_string();
+    let second_equals = format!("--config={second}");
+
+    let replacements = [
+        (vec!["a", "--no-color"], vec!["query", "--no-color"]),
+        (
+            vec!["a", "--config", first.as_str()],
+            vec!["query", "--config", first.as_str()],
+        ),
+        (
+            vec!["a", second_equals.as_str()],
+            vec!["query", second_equals.as_str()],
+        ),
+        (
+            vec![
+                "a",
+                "--no-color",
+                "--config",
+                first.as_str(),
+                second_equals.as_str(),
+            ],
+            vec![
+                "query",
+                "--no-color",
+                "--config",
+                first.as_str(),
+                second_equals.as_str(),
+            ],
+        ),
+        (
+            vec!["a", "task", "--no-color"],
+            vec!["query", "task", "--no-color"],
+        ),
+        (
+            vec!["p", "--no-color", "item"],
+            vec!["query", "task", "--no-color", "item"],
+        ),
+        (
+            vec!["p", "item", "--no-color"],
+            vec!["query", "task", "item", "--no-color"],
+        ),
+        (
+            vec![
+                "--no-color",
+                "a",
+                second_equals.as_str(),
+                "task",
+                "--no-color",
+            ],
+            vec![
+                "--no-color",
+                "query",
+                second_equals.as_str(),
+                "task",
+                "--no-color",
+            ],
+        ),
+    ];
+
+    for (actual, expected) in replacements {
+        let actual = actual.into_iter().map(str::to_string).collect::<Vec<_>>();
+        let expected = expected.into_iter().map(str::to_string).collect::<Vec<_>>();
+        assert_alias_case_equivalent(&actual, &expected, Some(&first));
+    }
+}
+
+#[test]
+fn test_alias_suffix_globals_help_version_and_separator_match_direct_argv() {
+    let (_guard, config) = alias_config("aliases:\n  - name: a\n    arguments: \"query task\"\n");
+    let fixtures = fixtures_dir();
+    for suffix in [
+        vec!["--no-color", "--path", fixtures.as_str()],
+        vec!["--path", fixtures.as_str(), "--no-color"],
+        vec!["--help"],
+        vec!["--version"],
+        vec!["--", "--no-color"],
+        vec!["--", "--help"],
+        vec!["--", "--config", "literal.yaml"],
+    ] {
+        let mut actual_args = vec!["--config", config.as_str(), "a"];
+        actual_args.extend(suffix.iter().copied());
+        let mut expected_args = vec!["--config", config.as_str(), "query", "task"];
+        expected_args.extend(suffix.iter().copied());
+        let actual = ragtag()
+            .env_remove("RAGTAG_CONFIG")
+            .args(actual_args)
+            .output()
+            .unwrap();
+        let expected = ragtag()
+            .env_remove("RAGTAG_CONFIG")
+            .args(expected_args)
+            .output()
+            .unwrap();
+        assert_output_equivalent(&actual, &expected);
+    }
+}
+
+#[test]
+fn test_alias_separator_and_help_version_matrix_matches_terminal_clap() {
+    let (_guard, config) = alias_config(
+        "aliases:\n  - name: a\n    arguments: \"query task\"\n  - name: configured-help\n    arguments: \"query --help\"\n  - name: configured-version\n    arguments: \"query --version\"\n",
+    );
+
+    for (actual, expected) in [
+        (vec!["a", "-h"], vec!["query", "task", "-h"]),
+        (vec!["a", "--help"], vec!["query", "task", "--help"]),
+        (
+            vec!["a", "item", "--help"],
+            vec!["query", "task", "item", "--help"],
+        ),
+        (vec!["a", "--version"], vec!["query", "task", "--version"]),
+        (
+            vec!["a", "item", "--version"],
+            vec!["query", "task", "item", "--version"],
+        ),
+        (
+            vec!["a", "--", "--help"],
+            vec!["query", "task", "--", "--help"],
+        ),
+        (
+            vec!["a", "item", "--", "--help"],
+            vec!["query", "task", "item", "--", "--help"],
+        ),
+        (vec!["configured-help"], vec!["query", "--help"]),
+        (vec!["configured-version"], vec!["query", "--version"]),
+    ] {
+        let actual = actual.into_iter().map(str::to_string).collect::<Vec<_>>();
+        let expected = expected.into_iter().map(str::to_string).collect::<Vec<_>>();
+        assert_alias_case_equivalent(&actual, &expected, Some(&config));
+    }
+
+    for separator_args in [
+        vec!["--".to_string(), "a".to_string()],
+        vec![
+            "--config".to_string(),
+            config.clone(),
+            "--".to_string(),
+            "a".to_string(),
+        ],
+    ] {
+        let output = alias_case_output(&separator_args, Some(&config));
+        assert!(!output.status.success());
+    }
+
+    let after_boundary = vec![
+        "--config".to_string(),
+        config.clone(),
+        "a".to_string(),
+        "--".to_string(),
+        "--config=/definitely/not/selected.yaml".to_string(),
+    ];
+    let direct_after_boundary = vec![
+        "--config".to_string(),
+        config.clone(),
+        "query".to_string(),
+        "task".to_string(),
+        "--".to_string(),
+        "--config=/definitely/not/selected.yaml".to_string(),
+    ];
+    assert_alias_case_equivalent(&after_boundary, &direct_after_boundary, None);
+}
+
+#[test]
+fn test_top_level_help_and_version_are_unchanged_by_configured_aliases() {
+    let (_alias_guard, alias_config_path) =
+        alias_config("aliases:\n  - name: hidden-alias\n    arguments: summary\n");
+    let (_plain_guard, plain_config) = alias_config("");
+
+    for terminal in ["-h", "--help", "--version"] {
+        let actual = alias_case_output(
+            &[
+                "--config".to_string(),
+                alias_config_path.clone(),
+                terminal.to_string(),
+            ],
+            None,
+        );
+        let expected = alias_case_output(
+            &[
+                "--config".to_string(),
+                plain_config.clone(),
+                terminal.to_string(),
+            ],
+            None,
+        );
+        assert_output_equivalent(&actual, &expected);
+    }
+}
+
+#[test]
+fn test_alias_defined_config_token_does_not_reload_startup_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let startup = dir.path().join("startup.yaml");
+    let second = dir.path().join("second.yaml");
+    fs::write(&second, "output:\n  color: never\n").unwrap();
+    fs::write(
+        &startup,
+        format!(
+            "output:\n  color: always\naliases:\n  - name: one-load\n    arguments: \"config get output.color --config {}\"\n",
+            second.display()
+        ),
+    )
+    .unwrap();
+
+    ragtag()
+        .env("RAGTAG_CONFIG", &startup)
+        .arg("one-load")
+        .assert()
+        .code(0)
+        .stdout("always\n");
+}
+
+#[test]
+fn test_alias_option_leading_valid_and_unknown_vectors_reach_final_clap() {
+    let (_guard, config) = alias_config(
+        "aliases:\n  - name: valid-option\n    arguments: \"--no-color task summary --all\"\n  - name: bad-option\n    arguments: \"--bogus task summary\"\n",
+    );
+    let fixtures = fixtures_dir();
+    for (alias, direct) in [
+        (
+            "valid-option",
+            vec!["--no-color", "task", "summary", "--all"],
+        ),
+        ("bad-option", vec!["--bogus", "task", "summary"]),
+    ] {
+        let mut actual_args = vec!["--config", config.as_str(), alias];
+        let mut expected_args = vec!["--config", config.as_str()];
+        expected_args.extend(direct);
+        if alias == "valid-option" {
+            actual_args.extend(["--path", fixtures.as_str()]);
+            expected_args.extend(["--path", fixtures.as_str()]);
+        }
+        let actual = ragtag().args(actual_args).output().unwrap();
+        let expected = ragtag().args(expected_args).output().unwrap();
+        assert_output_equivalent(&actual, &expected);
+    }
+}
+
+#[test]
+fn test_alias_cycles_unknown_inner_prefix_and_combined_ambiguity_are_typed() {
+    let (_guard, config) = alias_config(
+        "aliases:\n  - names: [a, alt-a]\n    arguments: alt-a\n  - name: prefix-target\n    arguments: al\n  - name: sum-all\n    arguments: summary\n  - name: pair-one\n    arguments: summary\n  - name: pair-two\n    arguments: summary\n",
+    );
+    ragtag()
+        .args(["--config", &config, "a"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("a -> alt-a"));
+    ragtag()
+        .args(["--config", &config, "prefix-target"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("alias target \"al\""))
+        .stderr(predicate::str::contains("prefix-target"));
+    ragtag()
+        .args(["--config", &config, "sum"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("summary, sum-all"));
+    ragtag()
+        .args(["--config", &config, "pair"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("pair-one, pair-two"));
+}
+
+#[test]
+fn test_alias_schema_errors_and_every_synonym_collision_fail_before_help() {
+    for (yaml, expected) in [
+        (
+            "aliases:\n  - name: a\n    names: [b]\n    arguments: summary\n",
+            "exactly one of \"name\" or \"names\", not both",
+        ),
+        (
+            "aliases:\n  - arguments: summary\n",
+            "exactly one of \"name\" or \"names\"",
+        ),
+        (
+            "aliases:\n  - names: []\n    arguments: summary\n",
+            "\"names\" must contain at least one name",
+        ),
+        (
+            "aliases:\n  - names: [ok, summary]\n    arguments: query\n",
+            "alias \"summary\" collides with an existing command name",
+        ),
+        (
+            "aliases:\n  - names: [ok, task]\n    arguments: query\n",
+            "alias \"task\" collides with an existing command name",
+        ),
+        (
+            "aliases:\n  - names: [dup, dup]\n    arguments: summary\n",
+            "duplicate alias name \"dup\"",
+        ),
+        (
+            "aliases:\n  - names: [ok, \"\"]\n    arguments: summary\n",
+            "alias name must not be empty",
+        ),
+        (
+            "aliases:\n  - name: [a]\n    arguments: summary\n",
+            "invalid type: sequence",
+        ),
+        (
+            "aliases:\n  - names: a\n    arguments: summary\n",
+            "expected a sequence",
+        ),
+        (
+            "aliases:\n  - name: first\n    arguments: summary\n  - names: [second, first]\n    arguments: query\n",
+            "duplicate alias name \"first\"",
+        ),
+        (
+            "aliases:\n  - name: blank\n    arguments: \"   \"\n",
+            "alias \"blank\" has empty arguments",
+        ),
+        (
+            "aliases:\n  - name: quoted\n    arguments: 'query \"unterminated'\n",
+            "alias \"quoted\" has an invalid arguments string",
+        ),
+    ] {
+        let (_guard, config) = alias_config(yaml);
+        ragtag()
+            .args(["--config", &config, "--help"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(expected));
+    }
+}
+
+#[test]
+fn test_alias_unknown_fields_preserve_additive_config_compatibility() {
+    let (_guard, config) = alias_config(
+        "aliases:\n  - name: compatible\n    arguments: summary\n    description: handy\n    future_metadata:\n      category: reporting\n",
+    );
+    let fixtures = fixtures_dir();
+    let actual = ragtag()
+        .args(["--config", &config, "compatible", "--path", &fixtures])
+        .output()
+        .unwrap();
+    let direct = ragtag()
+        .args(["--config", &config, "summary", "--path", &fixtures])
+        .output()
+        .unwrap();
+    assert_output_equivalent(&actual, &direct);
+    assert_eq!(actual.status.code(), Some(0));
+}
+
+#[test]
+fn test_alias_validation_precedes_extension_initialization_errors() {
+    let (_guard, config) = alias_config(
+        "task:\n  default_status: definitely-invalid\naliases:\n  - name: help\n    arguments: summary\n",
+    );
+    ragtag()
+        .args(["--config", &config, "--help"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "alias \"help\" collides with an existing command name",
+        ))
+        .stderr(predicate::str::contains("invalid default_status").not());
+}
+
+#[test]
+fn test_config_get_aliases_emits_canonical_name_and_ordered_names() {
+    let (_guard, config) = alias_config(
+        "aliases:\n  - names: [single]\n    arguments: summary\n  - names: [active, a]\n    arguments: \"query 'two words'\"\n",
+    );
+    ragtag()
+        .args(["--config", &config, "config", "get", "aliases"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("name: single"))
+        .stdout(predicate::str::contains(r#"names: ["active", "a"]"#))
+        .stdout(predicate::str::contains("query 'two words'"));
+}
+
+#[test]
+fn test_alias_depth_and_argument_limits_report_stable_errors() {
+    let mut depth_yaml = String::from("aliases:\n");
+    for index in 0..33 {
+        let target = if index == 32 {
+            "summary".to_string()
+        } else {
+            format!("a{}", index + 1)
+        };
+        depth_yaml.push_str(&format!("  - name: a{index}\n    arguments: {target}\n"));
+    }
+    let (_guard, config) = alias_config(&depth_yaml);
+    ragtag()
+        .args(["--config", &config, "a0"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("maximum depth of 32"));
+
+    let wide = std::iter::repeat_n("x", 4096).collect::<Vec<_>>().join(" ");
+    let yaml = format!("aliases:\n  - name: wide\n    arguments: \"summary {wide}\"\n");
+    let (_guard, config) = alias_config(&yaml);
+    ragtag()
+        .args(["--config", &config, "wide"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("projected count: 4097"))
+        .stderr(predicate::str::contains("maximum of 4096"));
+}
+
+#[test]
+fn test_alias_depth_32_and_argument_count_4096_reach_terminal_clap() {
+    let mut depth_yaml = String::from("aliases:\n");
+    for index in 0..32 {
+        let target = if index == 31 {
+            "summary".to_string()
+        } else {
+            format!("a{}", index + 1)
+        };
+        depth_yaml.push_str(&format!("  - name: a{index}\n    arguments: {target}\n"));
+    }
+    let (_depth_guard, depth_config) = alias_config(&depth_yaml);
+    let fixtures = fixtures_dir();
+    assert_alias_case_equivalent(
+        &["a0".to_string(), "--path".to_string(), fixtures.clone()],
+        &["summary".to_string(), "--path".to_string(), fixtures],
+        Some(&depth_config),
+    );
+
+    let remainder = std::iter::repeat_n("x", 4095).collect::<Vec<_>>().join(" ");
+    let yaml = format!("aliases:\n  - name: wide\n    arguments: \"summary {remainder}\"\n");
+    let (_wide_guard, wide_config) = alias_config(&yaml);
+    let mut direct = vec!["summary".to_string()];
+    direct.extend(std::iter::repeat_n("x".to_string(), 4095));
+    assert_alias_case_equivalent(&["wide".to_string()], &direct, Some(&wide_config));
+}
+
+#[test]
+fn test_alias_definition_and_name_caps_fail_deterministically_at_257() {
+    let mut definitions = String::from("aliases:\n");
+    for index in 0..257 {
+        definitions.push_str(&format!("  - name: a{index}\n    arguments: summary\n"));
+    }
+    let names = (0..257)
+        .map(|index| format!("n{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let aggregate_names = format!("aliases:\n  - names: [{names}]\n    arguments: summary\n");
+
+    for (yaml, expected) in [
+        (definitions.as_str(), "too many aliases (257)"),
+        (aggregate_names.as_str(), "too many alias names (257)"),
+    ] {
+        let (_guard, config) = alias_config(yaml);
+        ragtag()
+            .args(["--config", &config, "--help"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(expected));
+    }
 }
 
 // === Query boolean filters (shared filter engine) ===

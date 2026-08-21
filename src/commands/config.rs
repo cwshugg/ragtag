@@ -123,6 +123,7 @@ fn format_value(val: &serde_yml::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Alias;
 
     /// Builds a default config for testing.
     fn default_config() -> Config {
@@ -334,5 +335,25 @@ tasks:
             run_get("tasks.default_worktime_units", &config).unwrap(),
             "hours"
         );
+    }
+
+    #[test]
+    fn test_get_aliases_uses_canonical_name_and_names_fields() {
+        let mut config = default_config();
+        config.aliases = vec![
+            Alias {
+                names: vec!["legacy".to_string()],
+                arguments: vec!["summary".to_string()],
+            },
+            Alias {
+                names: vec!["active".to_string(), "a".to_string()],
+                arguments: vec!["query".to_string(), "two words".to_string()],
+            },
+        ];
+        let value = run_get("aliases", &config).unwrap();
+        assert!(value.contains("name: legacy"));
+        assert!(value.contains(r#"names: ["active", "a"]"#));
+        assert!(value.contains("arguments: summary"));
+        assert!(value.contains("arguments: query 'two words'"));
     }
 }

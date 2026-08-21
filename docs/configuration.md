@@ -15,6 +15,28 @@ Both the `.yaml` and `.yml` extensions are searched. A dotfile takes precedence 
 
 The search **stops** when it reaches a directory containing a `.git` folder or the filesystem root. If no config file is found, built-in defaults are used.
 
+### Trust Boundary and Safeguards
+
+Configuration is trusted input. When ragtag runs inside a repository, it may
+automatically load that repository's config before parsing the requested
+command. Review config files in untrusted repositories before running ragtag.
+In particular:
+
+* Aliases can select any ragtag command and flags. They cannot invoke a shell
+  or replace a real command name, but an unfamiliar alias can run file-writing
+  operations such as `file touch`, choose absolute output paths, request
+  `--edit` using your `EDITOR`, or alter query behavior.
+* Discovery settings such as `ignore_patterns` can omit files from query and
+  summary output.
+* For scripts and CI, place `--config /trusted/path.yaml` before the command
+  name, or set `RAGTAG_CONFIG` to a reviewed file. Avoid relying on
+  auto-discovery in repositories you do not trust.
+* Inspect unfamiliar alias names before invoking them, especially names that
+  resemble project-specific commands.
+
+Config files must be regular files and are limited to 1 MiB. Larger files and
+special or unbounded sources such as `/dev/zero` are rejected before parsing.
+
 ### Override With `--config`
 
 You can skip auto-discovery and specify an explicit config file path:
@@ -23,7 +45,31 @@ You can skip auto-discovery and specify an explicit config file path:
 ragtag --config /path/to/.ragtag.yaml summary
 ```
 
-If the specified file does not exist, ragtag exits with an error.
+The flag that selects startup configuration must appear before the command
+name. A different `--config` parsed after the command is rejected because
+aliases and extensions have already been initialized. If the specified file
+does not exist, ragtag exits with an error.
+
+The raw startup scan recognizes only these leading root options:
+
+* `--config PATH`
+* `--config=PATH`
+* `--no-color`, which is skipped while scanning continues
+
+Scanning stops at the outer command token, a literal `--`, or any other option,
+including `-h`, `--help`, and `--version`.
+
+Within that prefix, the last valid split `--config PATH` or
+`--config=PATH` selector wins. For split syntax, a literal `--` in the value
+position terminates the scan and is not used as a path. If an earlier valid
+selector was already seen, `--config --` leaves that earlier selection intact.
+
+The single terminal clap parse may later encounter another global config
+spelling. A post-command selector that resolves to the same file already
+loaded is accepted as redundant and does not reload it. A different original
+selector is rejected. A selector introduced by an alias is terminal syntax
+only: clap may accept it, but it never changes or reloads startup
+configuration.
 
 ### Override With `RAGTAG_CONFIG`
 
@@ -67,8 +113,9 @@ output:
   color: "auto"
 
 # User-defined command aliases (empty by default — there are no built-in aliases).
-# Each entry has a `name` (invoked as `ragtag <name>`) and an `arguments` string
-# that is split with shell-like quoting and executed as if typed directly.
+# Each entry has exactly one naming form: `name` (one string) or `names`
+# (a nonempty ordered list of peer names), plus one shell-like `arguments`
+# string.
 aliases: []
 
 # File creation settings.
@@ -158,7 +205,8 @@ tasks:
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `aliases` | list of objects | `[]` | User-defined command aliases (see [Aliases](#aliases-1)) |
-| `aliases[].name` | string | (required) | The alias name, invoked as `ragtag <name>` |
+| `aliases[].name` | string | conditional | Single alias name; required when `names` is absent and mutually exclusive with it |
+| `aliases[].names` | nonempty list of strings | conditional | Ordered peer names; required when `name` is absent and mutually exclusive with it |
 | `aliases[].arguments` | string | (required) | Command string the alias expands to (split with shell-like quoting) |
 
 ### Task Extension Options
@@ -200,19 +248,27 @@ empty unless you define one.
 
 ```yaml
 aliases:
-  # Example: run `ragtag active` to list active tasks.
-  - name: "active"
+  # Both names invoke the same definition.
+  - names: ["active", "a"]
     arguments: "query task --filter status=active"
-  # Example: run `ragtag t` to get a display showing only the active or priority-0 tasks.
-  - name: "t"
+  # This alias composes through the exact `active` name.
+  - name: "active-count"
+    arguments: "active --count"
+  # Run `ragtag focus` to show only active or priority-0 tasks.
+  - name: "focus"
     arguments: "task summary --filter \"(status = active OR priority = 0) AND (status != done AND status != abandoned)\""
-  # Example: `run ragtag tt` as a shorthand version of `ragtag task summary`
-  - name: "tt"
-    arguments: "task summary"
 ```
 
-With the config above, `ragtag tt` behaves exactly like
-`ragtag task summary`.
+Each definition must specify exactly one of `name` or `names`. `name` is a
+string. `names` is a nonempty ordered sequence of strings whose entries are
+peer invocation names. A one-element `names` sequence is accepted and is
+serialized canonically as `name`; two or more names serialize as `names`.
+Comma-delimited strings and token-array forms for `arguments` are not accepted.
+
+`ragtag config get aliases` uses ragtag's human-readable flow-style rendering,
+not YAML. Its field selection is canonical: a single-name definition uses
+`name`, multiple names retain their configured order under `names`, and
+`arguments` remains one shell-quoted string rather than a token sequence.
 
 **Behavior:**
 
@@ -220,22 +276,53 @@ With the config above, `ragtag tt` behaves exactly like
   shell-word semantics (via the `shlex` crate), so quoting is respected:
   `arguments: 'task get "two words"'` yields `task`, `get`, `two words`.
 * **Trailing arguments are appended.** Anything you type after the alias name is
-  appended to the expansion. `ragtag my-alias --count` runs
-  `ragtag task summary --count`.
+  appended to the expansion. With the example above, `ragtag active --count`
+  adds `--count` to the expanded `query task` command.
 * **Prefix inference includes aliases.** ragtag infers unambiguous subcommand
-  prefixes, and aliases participate too: `ragtag my` resolves to `my-alias`. An
+  prefixes, and aliases participate too: `ragtag foc` resolves to `focus`. An
   ambiguous prefix that matches multiple commands and/or aliases is an error,
-  just as with built-in commands.
-* **No recursion.** An alias always expands to built-in or extension commands
-  only — an alias never expands into another alias.
+  just as with built-in commands. Prefix matches through peer names of one
+  definition count as one candidate and use the first configured name as the
+  canonical spelling.
+* **Exact aliases precede real-prefix inference.** An exact alias name wins even
+  when that spelling is also a prefix of a real command. For example, defining
+  an alias named `t` would make `ragtag t` invoke that alias rather than infer
+  `task`.
+* **Exact composition.** If the first expansion token exactly matches any name
+  of another alias definition, that token is recursively replaced. Prefixes do
+  not compose. For `active-count` above, the final order is the inner
+  `active` arguments, `--count`, and then any original suffix.
+* **Terminal clap behavior.** Built-in and extension prefixes, command options,
+  help, and version are interpreted only after expansion by the real command
+  tree. Aliases are not listed in top-level help.
+* **Separator boundary.** A literal `--` before a prospective alias prevents
+  alias recognition. A separator after a resolved alias remains in the suffix,
+  where the expanded terminal command interprets it.
+* **One config load.** The last leading `--config PATH` or `--config=PATH`
+  before the outer command selects startup configuration. Configuration is not
+  reloaded after expansion. A different original `--config` after the command
+  is rejected, while an alias-defined `--config` token remains terminal syntax
+  only and cannot switch the loaded config.
+* **OS-native argv boundary.** Original tokens are preserved without Unicode
+  conversion through scanning, expansion, and assembly. Individual terminal
+  clap arguments may still require Unicode; OS-path parsers such as
+  `--config` retain native path values.
 
 **Validation (checked at startup):**
 
-* An alias `name` must not be empty.
-* An alias `name` must not collide with a real command name — a built-in
-  (`summary`, `query`, `config`, `file`) or an extension command (`task`). Collisions
-  are a config error.
-* Alias names must be unique.
+* At most 256 definitions and 256 names in aggregate are allowed.
+* Every definition must have one naming form, at least one nonempty name, and
+  a nonempty tokenized `arguments` value.
+* Every name must be unique across all definitions and must not collide with a
+  built-in (including `help`) or extension command.
+
+Composition is limited to 32 active definitions and 4096 expanded arguments.
+Definition identity, not the selected synonym, is used for cycle detection.
+Ambiguous outer prefixes, cycles, exceeded limits, and definite unknown
+terminal targets report deterministic errors without executing external
+programs. These alias-engine and configuration errors exit with status `1`.
+If expansion succeeds but the terminal command rejects its command-line
+syntax, clap reports that grammar error and exits with status `2`.
 
 ## File Creation
 

@@ -6,6 +6,10 @@
 use std::process::ExitCode;
 
 use ragtag::cli;
+use ragtag::cli::aliases::{
+    assemble_terminal_argv, expand_alias, resolve_outer_command, scan_outer_command, AliasIndex,
+    OuterResolution, OuterScan,
+};
 use ragtag::commands;
 use ragtag::config;
 use ragtag::discovery::IgnoreWalker;
@@ -29,25 +33,29 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), RagtagError> {
+    // Preserve the process arguments as OS-native values for all startup scans
+    // and for exact suffix composition.
+    let original_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+
     // Create and register extensions
     let mut registry = ExtensionRegistry::new();
     registry.register(Box::new(TaskExtension::new()))?;
 
-    // Resolve the config path up front (before building the CLI), because
-    // aliases come from config and must be registered as subcommands before
-    // clap parses the arguments.
-    let raw_args: Vec<String> = std::env::args().collect();
-    let config_path = cli::resolve_config_path_from_args(&raw_args);
+    // Select and load configuration exactly once from the immutable original
+    // argv before any alias-defined tokens exist.
+    let config_path = cli::resolve_config_path_from_args(&original_args);
     let cwd = std::env::current_dir().map_err(RagtagError::Io)?;
     let loaded = config::load_config(config_path.as_deref(), &cwd)?;
     let app_config = &loaded.config;
 
-    // Validate aliases against the set of real command names (built-ins +
-    // extension commands) so collisions are caught before anything executes.
+    // Validate aliases against the registered real command tree before
+    // extension initialization so config-shape errors retain startup
+    // precedence over extension-specific initialization errors.
     let command_names = cli::real_command_names(&registry);
     app_config.validate_aliases(&command_names)?;
+    let aliases = AliasIndex::new(&app_config.aliases);
 
-    // Initialize extensions with config
+    // Initialize extensions with config before terminal parsing and dispatch.
     for ext in registry.all_mut() {
         let config_value = ext
             .config_key()
@@ -55,50 +63,41 @@ fn run() -> Result<(), RagtagError> {
         ext.init(config_value)?;
     }
 
-    // Build CLI (including alias subcommands) and parse args
-    let matches = cli::build_cli(&registry, &app_config.aliases).get_matches();
+    let mut alias_defined_config_paths = Vec::new();
+    let terminal_args = match scan_outer_command(&original_args) {
+        OuterScan::Command(command_index) => match resolve_outer_command(
+            original_args[command_index].as_os_str(),
+            &command_names,
+            &aliases,
+        )? {
+            OuterResolution::Alias {
+                definition_index,
+                selected_name,
+            } => {
+                let expansion = expand_alias(
+                    &aliases,
+                    definition_index,
+                    &selected_name,
+                    &original_args[command_index + 1..],
+                    &command_names,
+                )?;
+                alias_defined_config_paths = expansion.alias_defined_config_paths();
+                assemble_terminal_argv(&original_args, command_index, expansion)
+            }
+            OuterResolution::Real | OuterResolution::None => original_args.clone(),
+        },
+        OuterScan::Terminal => original_args.clone(),
+    };
 
-    // Global flags (those marked `.global(true)`) are propagated by clap to the
-    // root matches regardless of where they appear on the command line, so they
-    // are resolved here from the top-level matches and passed explicitly into
-    // dispatch. This keeps global-flag behavior identical for directly-typed
-    // and alias-expanded commands, since the re-parsed expanded matches do not
-    // carry the user's original global flags.
+    // This is the process's only clap parse, always against the real tree.
+    let matches = cli::build_real_cli(&registry).get_matches_from(terminal_args);
+    reconcile_terminal_config(
+        &matches,
+        loaded.source_path.as_deref(),
+        &alias_defined_config_paths,
+        &cwd,
+    )?;
     let no_color = matches.get_flag("no-color");
-
-    // One-shot alias expansion: if the matched subcommand is an alias, rebuild
-    // the argv from the alias's expansion plus any trailing user args, re-parse,
-    // and dispatch the expanded command. Expansion happens exactly once — the
-    // expanded command is NOT itself treated as an alias, so aliases never
-    // chain into other aliases.
-    if let Some((name, sub_m)) = matches.subcommand() {
-        if let Some(alias) = app_config.aliases.iter().find(|a| a.name == name) {
-            let trailing: Vec<String> = sub_m
-                .get_many::<String>("args")
-                .map(|vals| vals.cloned().collect())
-                .unwrap_or_default();
-            let mut argv = Vec::with_capacity(1 + trailing.len());
-            argv.push("ragtag".to_string());
-            argv.extend(alias.arguments.iter().cloned());
-            argv.extend(trailing);
-            let expanded = cli::build_cli(&registry, &app_config.aliases).get_matches_from(argv);
-            // A global flag may appear before the alias name (captured in the
-            // top-level matches) or trailing after the alias's own arguments,
-            // where clap folds it into the alias subcommand's trailing args and
-            // it surfaces only in the re-parsed expanded matches. Resolve each
-            // global flag from both sources so an alias honors it in every
-            // position, identically to the fully-expanded direct command.
-            let no_color = no_color || expanded.get_flag("no-color");
-            return dispatch(
-                &expanded,
-                no_color,
-                app_config,
-                &loaded.root_dir,
-                &cwd,
-                &registry,
-            );
-        }
-    }
 
     dispatch(
         &matches,
@@ -110,17 +109,56 @@ fn run() -> Result<(), RagtagError> {
     )
 }
 
+/// Reconciles terminal clap's config value with the startup config selection.
+///
+/// A selector introduced by a trusted alias is accepted as terminal syntax but
+/// never reloads configuration. An original post-command selector is accepted
+/// only when it resolves to the same file already loaded (using canonical
+/// paths when available and lexical paths as a fallback). A different selector
+/// fails with `InvalidConfig`, because aliases and extensions were initialized
+/// before the process's single clap parse. This function never reads or reloads
+/// a config file.
+fn reconcile_terminal_config(
+    matches: &clap::ArgMatches,
+    loaded_path: Option<&std::path::Path>,
+    alias_defined_paths: &[std::path::PathBuf],
+    startup_cwd: &std::path::Path,
+) -> Result<(), RagtagError> {
+    let Some(parsed_path) = matches.get_one::<std::path::PathBuf>("config") else {
+        return Ok(());
+    };
+
+    if alias_defined_paths.iter().any(|path| path == parsed_path) {
+        return Ok(());
+    }
+
+    let parsed_resolved = if parsed_path.is_absolute() {
+        parsed_path.clone()
+    } else {
+        startup_cwd.join(parsed_path)
+    };
+    let matches_loaded = loaded_path.is_some_and(|loaded_path| {
+        match (
+            std::fs::canonicalize(&parsed_resolved),
+            std::fs::canonicalize(loaded_path),
+        ) {
+            (Ok(parsed), Ok(loaded)) => parsed == loaded,
+            _ => parsed_resolved == loaded_path,
+        }
+    });
+    if matches_loaded {
+        return Ok(());
+    }
+
+    Err(RagtagError::InvalidConfig(
+        "--config must appear before the command name so configuration is loaded before alias expansion"
+            .to_string(),
+    ))
+}
+
 /// Dispatches a parsed set of top-level matches to the appropriate command.
 ///
-/// This is the single dispatch path shared by directly-typed commands and by
-/// alias-expanded commands. Global flags (e.g. `no-color`) are resolved by the
-/// caller from the original top-level matches and passed in via `no_color`, so
-/// they are honored identically regardless of whether the command was typed
-/// directly or reached through an alias expansion.
-///
-/// Aliases are NOT expanded here — an alias name that reaches this function
-/// (e.g., an alias whose arguments reference another alias) is treated as an
-/// unknown command, which prevents alias chaining.
+/// This is the alias-unaware dispatch path shared by direct and expanded argv.
 fn dispatch(
     matches: &clap::ArgMatches,
     no_color: bool,
@@ -143,7 +181,7 @@ fn dispatch(
                 Ok(())
             }
             _ => {
-                let _ = cli::build_cli(registry, &app_config.aliases)
+                let _ = cli::build_real_cli(registry)
                     .find_subcommand_mut("config")
                     .expect("config subcommand exists")
                     .print_help();
@@ -197,7 +235,7 @@ fn dispatch(
         }
         None => {
             // No subcommand — print help
-            let _ = cli::build_cli(registry, &app_config.aliases).print_help();
+            let _ = cli::build_real_cli(registry).print_help();
             println!();
             Ok(())
         }
