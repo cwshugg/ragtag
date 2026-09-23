@@ -6,10 +6,7 @@
 
 use crate::config::Config;
 use crate::error::RagtagError;
-use crate::extensions::task::config::TaskConfig;
-
-/// Config key for the task extension section.
-const TASKS_CONFIG_KEY: &str = "tasks";
+use crate::extensions::task::{config::TaskConfig, TASKS_CONFIG_KEY};
 
 /// Runs the `config get` command.
 ///
@@ -21,27 +18,10 @@ const TASKS_CONFIG_KEY: &str = "tasks";
 ///
 /// Returns `RagtagError::InvalidConfig` if the key is unknown or
 /// traversal fails (e.g., indexing through a scalar value).
-pub fn run_get(key: &str, config: &Config) -> Result<String, RagtagError> {
-    run_get_with_redaction(key, config, &mut |_| false)
-}
-
-/// Runs `config get` while replacing environment-derived string values.
-pub fn run_get_redacted<F>(
+pub fn run_get<F>(
     key: &str,
     config: &Config,
     mut is_environment_derived: F,
-) -> Result<String, RagtagError>
-where
-    F: FnMut(&str) -> bool,
-{
-    run_get_with_redaction(key, config, &mut is_environment_derived)
-}
-
-/// Resolves and formats a config key with caller-supplied value provenance.
-fn run_get_with_redaction<F>(
-    key: &str,
-    config: &Config,
-    is_environment_derived: &mut F,
 ) -> Result<String, RagtagError>
 where
     F: FnMut(&str) -> bool,
@@ -106,7 +86,7 @@ where
         }
     }
 
-    Ok(format_value(current, is_environment_derived))
+    Ok(format_value(current, &mut is_environment_derived))
 }
 
 /// Formats a `serde_yml::Value` for human-readable output.
@@ -172,55 +152,45 @@ mod tests {
         Config::default()
     }
 
-    #[test]
-    fn test_get_respect_gitignore() {
-        let config = default_config();
-        let result = run_get("respect_gitignore", &config).unwrap();
-        assert_eq!(result, "true");
+    /// Reads config without environment-derived values.
+    fn get(key: &str, config: &Config) -> Result<String, RagtagError> {
+        run_get(key, config, |_| false)
     }
 
     #[test]
-    fn test_get_skip_hidden() {
+    fn test_get_scalar_defaults() {
         let config = default_config();
-        let result = run_get("skip_hidden", &config).unwrap();
-        assert_eq!(result, "true");
-    }
-
-    #[test]
-    fn test_get_max_file_size() {
-        let config = default_config();
-        let result = run_get("max_file_size", &config).unwrap();
-        assert_eq!(result, "10485760");
-    }
-
-    #[test]
-    fn test_get_max_depth_null() {
-        let config = default_config();
-        let result = run_get("max_depth", &config).unwrap();
-        assert_eq!(result, "null");
+        for (key, expected) in [
+            ("respect_gitignore", "true"),
+            ("skip_hidden", "true"),
+            ("max_file_size", "10485760"),
+            ("max_depth", "null"),
+            ("output.color", "auto"),
+            ("files.default_directory", "."),
+            ("files.filename_format", "%Y-%m-%d_%H-%M-%S.md"),
+            ("tasks.tag_name", "task"),
+            ("tasks.default_owner", "me"),
+            ("tasks.default_worktime_units", "hours"),
+            ("tasks.default_status", "new"),
+        ] {
+            assert_eq!(get(key, &config).unwrap(), expected, "key: {key}");
+        }
     }
 
     #[test]
     fn test_get_max_depth_some() {
         let mut config = default_config();
         config.max_depth = Some(10);
-        let result = run_get("max_depth", &config).unwrap();
+        let result = get("max_depth", &config).unwrap();
         assert_eq!(result, "10");
-    }
-
-    #[test]
-    fn test_get_output_color() {
-        let config = default_config();
-        let result = run_get("output.color", &config).unwrap();
-        assert_eq!(result, "auto");
     }
 
     #[test]
     fn test_get_file_defaults_and_overrides() {
         let config = default_config();
-        assert_eq!(run_get("files.default_directory", &config).unwrap(), ".");
+        assert_eq!(get("files.default_directory", &config).unwrap(), ".");
         assert_eq!(
-            run_get("files.filename_format", &config).unwrap(),
+            get("files.filename_format", &config).unwrap(),
             "%Y-%m-%d_%H-%M-%S.md"
         );
 
@@ -228,69 +198,38 @@ mod tests {
             "files:\n  default_directory: notes\n  filename_format: \"%Y%m%d-%3f.txt\"\n",
         )
         .unwrap();
+        assert_eq!(get("files.default_directory", &config).unwrap(), "notes");
         assert_eq!(
-            run_get("files.default_directory", &config).unwrap(),
-            "notes"
-        );
-        assert_eq!(
-            run_get("files.filename_format", &config).unwrap(),
+            get("files.filename_format", &config).unwrap(),
             "%Y%m%d-%3f.txt"
         );
     }
 
     #[test]
-    fn test_get_tasks_tag_name() {
-        let config = default_config();
-        let result = run_get("tasks.tag_name", &config).unwrap();
-        assert_eq!(result, "task");
-    }
-
-    #[test]
-    fn test_get_tasks_default_owner() {
-        let config = default_config();
-        let result = run_get("tasks.default_owner", &config).unwrap();
-        assert_eq!(result, "me");
-    }
-
-    #[test]
-    fn test_get_tasks_default_worktime_units() {
-        let config = default_config();
-        let result = run_get("tasks.default_worktime_units", &config).unwrap();
-        assert_eq!(result, "hours");
-    }
-
-    #[test]
-    fn test_get_tasks_default_status() {
-        let config = default_config();
-        let result = run_get("tasks.default_status", &config).unwrap();
-        assert_eq!(result, "new");
-    }
-
-    #[test]
     fn test_get_tasks_exclude_status_categories() {
         let config = default_config();
-        let result = run_get("tasks.exclude_status_categories", &config).unwrap();
+        let result = get("tasks.exclude_status_categories", &config).unwrap();
         assert_eq!(result, r#"["done", "abandoned"]"#);
     }
 
     #[test]
     fn test_get_tasks_status_keywords_done() {
         let config = default_config();
-        let result = run_get("tasks.status_keywords.done", &config).unwrap();
+        let result = get("tasks.status_keywords.done", &config).unwrap();
         assert_eq!(result, r#"["done", "finished", "complete", "completed"]"#);
     }
 
     #[test]
     fn test_get_tasks_status_keywords_active() {
         let config = default_config();
-        let result = run_get("tasks.status_keywords.active", &config).unwrap();
+        let result = get("tasks.status_keywords.active", &config).unwrap();
         assert_eq!(result, r#"["active", "underway", "working", "wip"]"#);
     }
 
     #[test]
     fn test_get_ignore_patterns_empty() {
         let config = default_config();
-        let result = run_get("ignore_patterns", &config).unwrap();
+        let result = get("ignore_patterns", &config).unwrap();
         assert_eq!(result, "[]");
     }
 
@@ -298,14 +237,14 @@ mod tests {
     fn test_get_ignore_patterns_populated() {
         let mut config = default_config();
         config.ignore_patterns = vec!["*.git".to_string(), "node_modules".to_string()];
-        let result = run_get("ignore_patterns", &config).unwrap();
+        let result = get("ignore_patterns", &config).unwrap();
         assert_eq!(result, r#"["*.git", "node_modules"]"#);
     }
 
     #[test]
     fn test_get_unknown_key() {
         let config = default_config();
-        let result = run_get("nonexistent_field", &config);
+        let result = get("nonexistent_field", &config);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown config key"));
@@ -315,7 +254,7 @@ mod tests {
     #[test]
     fn test_get_traversal_through_scalar() {
         let config = default_config();
-        let result = run_get("max_file_size.foo", &config);
+        let result = get("max_file_size.foo", &config);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("is not a section"));
@@ -324,7 +263,7 @@ mod tests {
     #[test]
     fn test_get_unknown_nested_key() {
         let config = default_config();
-        let result = run_get("tasks.nonexistent", &config);
+        let result = get("tasks.nonexistent", &config);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown config key"));
@@ -334,7 +273,7 @@ mod tests {
     #[test]
     fn test_get_empty_key() {
         let config = default_config();
-        let result = run_get("", &config);
+        let result = get("", &config);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("config key must not be empty"));
@@ -343,7 +282,7 @@ mod tests {
     #[test]
     fn test_get_whitespace_key() {
         let config = default_config();
-        let result = run_get("   ", &config);
+        let result = get("   ", &config);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("config key must not be empty"));
@@ -356,7 +295,7 @@ mod tests {
             "custom_thing".to_string(),
             serde_yml::Value::Mapping(serde_yml::Mapping::new()),
         );
-        let result = run_get("custom_thing", &config);
+        let result = get("custom_thing", &config);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown config key"));
@@ -370,12 +309,30 @@ tasks:
   default_owner: "alice"
 "#;
         let config: Config = serde_yml::from_str(yaml).unwrap();
-        assert_eq!(run_get("tasks.tag_name", &config).unwrap(), "todo");
-        assert_eq!(run_get("tasks.default_owner", &config).unwrap(), "alice");
+        assert_eq!(get("tasks.tag_name", &config).unwrap(), "todo");
+        assert_eq!(get("tasks.default_owner", &config).unwrap(), "alice");
         // Defaults should still apply for unspecified fields.
         assert_eq!(
-            run_get("tasks.default_worktime_units", &config).unwrap(),
+            get("tasks.default_worktime_units", &config).unwrap(),
             "hours"
+        );
+    }
+
+    #[test]
+    fn test_get_applies_value_provenance() {
+        let config: Config =
+            serde_yml::from_str("tasks:\n  default_owner: environment-secret\n").unwrap();
+
+        assert_eq!(
+            run_get("tasks.default_owner", &config, |_| false).unwrap(),
+            "environment-secret"
+        );
+        assert_eq!(
+            run_get("tasks.default_owner", &config, |value| {
+                value == "environment-secret"
+            })
+            .unwrap(),
+            "<environment-derived>"
         );
     }
 
@@ -392,7 +349,7 @@ tasks:
                 arguments: vec!["query".to_string(), "two words".to_string()],
             },
         ];
-        let value = run_get("aliases", &config).unwrap();
+        let value = get("aliases", &config).unwrap();
         assert!(value.contains("name: legacy"));
         assert!(value.contains(r#"names: ["active", "a"]"#));
         assert!(value.contains("arguments: summary"));

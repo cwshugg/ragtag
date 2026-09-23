@@ -224,7 +224,7 @@ fn dispatch(
                 let key = get_matches
                     .get_one::<String>("key")
                     .expect("key is required");
-                let value = commands::config::run_get_redacted(key, app_config, |value| {
+                let value = commands::config::run_get(key, app_config, |value| {
                     loaded_config.is_environment_derived_value(value)
                 })?;
                 println!("{value}");

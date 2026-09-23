@@ -50,7 +50,6 @@ fn parse_config(content: &str) -> Result<(Config, InterpolationProvenance), Conf
 }
 
 /// A validated configuration together with its lexical ragtag root.
-#[derive(Clone)]
 pub struct LoadedConfig {
     /// Parsed and validated application configuration.
     pub config: Config,
@@ -507,10 +506,12 @@ custom_extension:
     #[test]
     fn environment_derived_typed_errors_never_retain_resolved_values() {
         const SECRET: &str = "sentinel-secret-must-not-leak";
-        let error = parse_config_with("output:\n  color: \"$SECRET_COLOR\"\n", &mut |name| {
+        let error = match parse_config_with("output:\n  color: \"$SECRET_COLOR\"\n", &mut |name| {
             (name == "SECRET_COLOR").then(|| SECRET.to_string())
-        })
-        .unwrap_err();
+        }) {
+            Ok(_) => panic!("secret color must fail typed config parsing"),
+            Err(error) => error,
+        };
 
         let public_error = match error {
             ConfigParseFailure::EnvironmentDerived => RagtagError::EnvironmentDerivedConfig,

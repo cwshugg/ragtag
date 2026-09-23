@@ -4,18 +4,9 @@ use serde_yml::Value;
 use std::collections::HashSet;
 
 /// Values that originated from environment interpolation.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(crate) struct InterpolationProvenance {
     sensitive_values: HashSet<String>,
-}
-
-impl std::fmt::Debug for InterpolationProvenance {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("InterpolationProvenance")
-            .field("derived_value_count", &self.sensitive_values.len())
-            .finish()
-    }
 }
 
 impl InterpolationProvenance {

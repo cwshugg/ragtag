@@ -4613,7 +4613,7 @@ fn test_environment_derived_values_are_absent_from_config_errors_and_alias_failu
             "files:\n  filename_format: \"$SECRET_VALUE\"\n",
             "sentinel-secret-must-not-leak%",
         ),
-        ("task:\n  default_status: \"$SECRET_VALUE\"\n", SECRET),
+        ("tasks:\n  default_status: \"$SECRET_VALUE\"\n", SECRET),
     ] {
         let (_guard, config) = alias_config(yaml);
         ragtag()
@@ -4648,7 +4648,7 @@ fn test_environment_derived_values_are_absent_from_config_errors_and_alias_failu
 fn test_environment_derived_task_validation_never_prints_resolved_values() {
     const SECRET: &str = "sentinel-task-validation-secret";
     let (_guard, category_config) =
-        alias_config("task:\n  exclude_status_categories:\n    - \"$SECRET_CATEGORY\"\n");
+        alias_config("tasks:\n  exclude_status_categories:\n    - \"$SECRET_CATEGORY\"\n");
     let category_output = ragtag()
         .args(["--config", &category_config, "--help"])
         .env("SECRET_CATEGORY", SECRET)
@@ -4661,7 +4661,7 @@ fn test_environment_derived_task_validation_never_prints_resolved_values() {
     assert!(!category_stderr.contains(SECRET));
     assert!(category_stderr.contains("tasks.exclude_status_categories[0]"));
 
-    let (_guard, status_config) = alias_config("task:\n  default_status: \"$SECRET_STATUS\"\n");
+    let (_guard, status_config) = alias_config("tasks:\n  default_status: \"$SECRET_STATUS\"\n");
     let status_output = ragtag()
         .args(["--config", &status_config, "--help"])
         .env("SECRET_STATUS", SECRET)
@@ -4671,6 +4671,30 @@ fn test_environment_derived_task_validation_never_prints_resolved_values() {
     assert!(!status_output.status.success());
     assert!(!String::from_utf8_lossy(&status_output.stdout).contains(SECRET));
     assert!(!String::from_utf8_lossy(&status_output.stderr).contains(SECRET));
+}
+
+#[test]
+fn test_tasks_config_drives_inspection_and_runtime_behavior() {
+    let (_guard, config) = alias_config("tasks:\n  default_owner: canonical-owner\n");
+
+    ragtag()
+        .args(["--config", &config, "config", "get", "tasks.default_owner"])
+        .assert()
+        .success()
+        .stdout("canonical-owner\n");
+
+    ragtag()
+        .args([
+            "--config",
+            &config,
+            "task",
+            "create",
+            "--title",
+            "Configured owner",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("owner=\"canonical-owner\""));
 }
 
 #[test]
@@ -5707,7 +5731,7 @@ fn test_alias_unknown_metadata_fields_are_ignored() {
 #[test]
 fn test_alias_validation_precedes_extension_initialization_errors() {
     let (_guard, config) = alias_config(
-        "task:\n  default_status: definitely-invalid\naliases:\n  - name: help\n    arguments: summary\n",
+        "tasks:\n  default_status: definitely-invalid\naliases:\n  - name: help\n    arguments: summary\n",
     );
     ragtag()
         .args(["--config", &config, "--help"])

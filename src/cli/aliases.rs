@@ -187,6 +187,31 @@ pub struct Expansion {
     environment_derived: bool,
 }
 
+/// One expanded alias token together with its security provenance.
+#[derive(Debug, PartialEq, Eq)]
+struct ExpandedToken {
+    value: OsString,
+    environment_derived: bool,
+}
+
+impl ExpandedToken {
+    /// Creates an expanded configured token.
+    fn configured(value: String, environment_derived: bool) -> Self {
+        Self {
+            value: OsString::from(value),
+            environment_derived,
+        }
+    }
+
+    /// Creates an untouched token supplied by the original CLI.
+    fn original(value: OsString) -> Self {
+        Self {
+            value,
+            environment_derived: false,
+        }
+    }
+}
+
 impl Expansion {
     /// Returns config paths introduced by trusted alias definitions.
     ///
@@ -302,22 +327,19 @@ where
 {
     let outer = &aliases.definitions[definition_index];
     let mut chain = vec![selected_name.to_string()];
-    let (outer_arguments, mut working_environment) =
-        interpolate_alias_arguments(&outer.arguments, lookup);
-    let mut environment_derived = working_environment.iter().any(|derived| *derived);
+    let outer_arguments = interpolate_alias_arguments(&outer.arguments, lookup);
     let initial_count =
         checked_projected_count(outer_arguments.len(), 0, original_suffix.len(), &chain)?;
     let mut working = Vec::with_capacity(initial_count);
-    working.extend(outer_arguments.into_iter().map(OsString::from));
-    working.extend(original_suffix.iter().cloned());
-    working_environment.extend(std::iter::repeat_n(false, original_suffix.len()));
+    working.extend(outer_arguments);
+    working.extend(original_suffix.iter().cloned().map(ExpandedToken::original));
 
     let mut active_definitions = HashSet::new();
     active_definitions.insert(definition_index);
 
     while let Some(reference_name) = working
         .first()
-        .and_then(|token| token.to_str())
+        .and_then(|token| token.value.to_str())
         .map(str::to_string)
     {
         let Some(next_index) = aliases.definition_for_name(&reference_name) else {
@@ -325,7 +347,9 @@ where
         };
 
         let mut next_chain = chain.clone();
-        let reference_is_derived = working_environment.first().copied().unwrap_or(false);
+        let reference_is_derived = working
+            .first()
+            .is_some_and(|token| token.environment_derived);
         next_chain.push(if reference_is_derived {
             aliases.canonical_name(next_index).to_string()
         } else {
@@ -341,23 +365,23 @@ where
             });
         }
 
-        let (replacement, replacement_environment) =
+        let mut replacement =
             interpolate_alias_arguments(&aliases.definitions[next_index].arguments, lookup);
-        environment_derived |= replacement_environment.iter().any(|derived| *derived);
+        if reference_is_derived {
+            for token in &mut replacement {
+                token.environment_derived = true;
+            }
+        }
         let projected = checked_projected_count(working.len(), 1, replacement.len(), &next_chain)?;
         let mut next = Vec::with_capacity(projected);
-        next.extend(replacement.into_iter().map(OsString::from));
+        next.extend(replacement);
         next.extend(working.into_iter().skip(1));
-        let mut next_environment = Vec::with_capacity(projected);
-        next_environment.extend(replacement_environment);
-        next_environment.extend(working_environment.into_iter().skip(1));
         working = next;
-        working_environment = next_environment;
         chain = next_chain;
         active_definitions.insert(next_index);
     }
 
-    if let Some(target) = working.first().and_then(|token| token.to_str()) {
+    if let Some(target) = working.first().and_then(|token| token.value.to_str()) {
         if !target.starts_with('-') {
             let exact = real_names.iter().any(|name| name == target);
             let has_prefix = real_names.iter().any(|name| name.starts_with(target));
@@ -368,23 +392,26 @@ where
     }
 
     let configured_len = working.len() - original_suffix.len();
+    let environment_derived = working.iter().any(|token| token.environment_derived);
     Ok(Expansion {
-        working,
+        working: working.into_iter().map(|token| token.value).collect(),
         configured_len,
         environment_derived,
     })
 }
 
 /// Interpolates each trusted alias token without reparsing inserted values.
-fn interpolate_alias_arguments<F>(arguments: &[String], lookup: &mut F) -> (Vec<String>, Vec<bool>)
+fn interpolate_alias_arguments<F>(arguments: &[String], lookup: &mut F) -> Vec<ExpandedToken>
 where
     F: FnMut(&str) -> Option<String>,
 {
-    let expanded = arguments
+    arguments
         .iter()
-        .map(|argument| interpolate_string_with_status(argument, lookup))
-        .collect::<Vec<_>>();
-    expanded.into_iter().unzip()
+        .map(|argument| {
+            let (value, environment_derived) = interpolate_string_with_status(argument, lookup);
+            ExpandedToken::configured(value, environment_derived)
+        })
+        .collect()
 }
 
 /// Assembles argv for the single terminal clap parse without changing tokens.
@@ -888,20 +915,23 @@ mod tests {
             "$EMPTY".to_string(),
             "literal".to_string(),
         ];
-        let (expanded, derived) = interpolate_alias_arguments(&arguments, &mut |name| match name {
+        let expanded = interpolate_alias_arguments(&arguments, &mut |name| match name {
             "VALUE" => Some("\" --no-color \\ config get output.color".to_string()),
             "EMPTY" => None,
             _ => unreachable!(),
         });
 
-        assert_eq!(derived, [true, true, false]);
         assert_eq!(
             expanded,
             [
-                "prefix=\" --no-color \\ config get output.color",
-                "",
-                "literal"
+                ("prefix=\" --no-color \\ config get output.color", true),
+                ("", true),
+                ("literal", false),
             ]
+            .map(|(value, environment_derived)| ExpandedToken {
+                value: OsString::from(value),
+                environment_derived,
+            })
         );
     }
 }
