@@ -113,7 +113,18 @@ Searches for tags matching a name and prints their locations.
 ragtag query todo
 ragtag query task --filter status=active --filter priority=0
 ragtag query task --count
+ragtag query idea --randomize --limit 5
+ragtag query idea --randomize 42 --limit 5
+ragtag query idea --randomize=42
 ```
+
+`--limit N` limits output only after all matching tags have been collected and
+filtered; `--limit 0` produces no results (and a count of `0`). Bare
+`--randomize` uses a fresh system-random seed for presentation or random
+selection. `--randomize SEED` and `--randomize=SEED` accept a `u64`; identical
+seeds reproduce the same order when the filtered input list is identical.
+Randomization occurs before limiting, count output, default formatting, and
+extension formatting.
 
 ### `ragtag config get <KEY>`
 
@@ -263,3 +274,4 @@ See the [configuration reference](docs/configuration.md) for full details.
 * [Task Management Guide](docs/task-management.md) — using `@task` tags for task tracking
 * [Configuration Reference](docs/configuration.md) — YAML config file options
 * [CLI Reference](docs/cli-reference.md) — full command-line reference
+* [Release Guide](docs/releasing.md) — Cargo-driven draft release process

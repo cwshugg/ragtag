@@ -16,6 +16,17 @@ use crate::models::Tag;
 use crate::output::format::colorize_path;
 use crate::parser;
 
+/// Controls whether and how the final query result list is shuffled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Randomization {
+    /// Preserve discovery order.
+    Disabled,
+    /// Generate a new seed from the operating system.
+    Fresh,
+    /// Use the caller's reproducible seed.
+    Seeded(u64),
+}
+
 /// Runs the query command.
 pub fn run(
     matches: &clap::ArgMatches,
@@ -24,11 +35,57 @@ pub fn run(
     color_mode: &ColorMode,
     stdout: &mut dyn Write,
 ) -> Result<(), RagtagError> {
+    run_with_seed_source(
+        matches,
+        config,
+        registry,
+        color_mode,
+        stdout,
+        fresh_random_seed,
+    )
+}
+
+/// Generates a presentation-quality seed from the operating system.
+fn fresh_random_seed() -> Result<u64, RagtagError> {
+    let mut bytes = [0_u8; size_of::<u64>()];
+    getrandom::fill(&mut bytes).map_err(|error| {
+        RagtagError::Io(std::io::Error::other(format!(
+            "failed to generate query randomization seed: {error}"
+        )))
+    })?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+/// Resolves the typed randomization mode from parsed clap matches.
+fn randomization_from_matches(matches: &clap::ArgMatches) -> Randomization {
+    if let Some(seed) = matches.get_one::<u64>("randomize") {
+        Randomization::Seeded(*seed)
+    } else if matches.contains_id("randomize") {
+        Randomization::Fresh
+    } else {
+        Randomization::Disabled
+    }
+}
+
+/// Runs the query command with an injectable fresh-seed source.
+///
+/// Seeded mode never calls `fresh_seed`, keeping production and deterministic
+/// tests on the same shuffle implementation.
+fn run_with_seed_source(
+    matches: &clap::ArgMatches,
+    config: &Config,
+    registry: &ExtensionRegistry,
+    color_mode: &ColorMode,
+    stdout: &mut dyn Write,
+    fresh_seed: impl FnOnce() -> Result<u64, RagtagError>,
+) -> Result<(), RagtagError> {
     let tag_name = matches.get_one::<String>("TAG_NAME");
 
     let path_str = cli::resolve_path(matches);
     let path = Path::new(&path_str);
     let count_only = matches.get_flag("count");
+    let limit = matches.get_one::<usize>("limit").copied();
+    let randomization = randomization_from_matches(matches);
 
     let filters: Vec<String> = matches
         .get_many::<String>("filter")
@@ -68,6 +125,8 @@ pub fn run(
         }
     }
 
+    finalize_results(&mut matching_tags, randomization, limit, fresh_seed)?;
+
     if count_only {
         writeln!(stdout, "{}", matching_tags.len()).map_err(RagtagError::Io)?;
         return Ok(());
@@ -89,6 +148,27 @@ pub fn run(
         }
     }
 
+    Ok(())
+}
+
+/// Shuffles filtered results with pinned fastrand 2.4.1 WyRand, then truncates.
+fn finalize_results<T>(
+    results: &mut Vec<T>,
+    randomization: Randomization,
+    limit: Option<usize>,
+    fresh_seed: impl FnOnce() -> Result<u64, RagtagError>,
+) -> Result<(), RagtagError> {
+    let seed = match randomization {
+        Randomization::Disabled => None,
+        Randomization::Fresh => Some(fresh_seed()?),
+        Randomization::Seeded(seed) => Some(seed),
+    };
+    if let Some(seed) = seed {
+        fastrand::Rng::with_seed(seed).shuffle(results);
+    }
+    if let Some(limit) = limit {
+        results.truncate(limit);
+    }
     Ok(())
 }
 
@@ -250,5 +330,80 @@ mod tests {
         assert!(apply_filter(&tag, "owner=").unwrap());
         // `owner!=` is the complement and does not match.
         assert!(!apply_filter(&tag, "owner!=").unwrap());
+    }
+
+    #[test]
+    fn test_finalize_results_limit_preserves_order_and_accepts_zero() {
+        let mut limited = vec![1, 2, 3, 4];
+        finalize_results(&mut limited, Randomization::Disabled, Some(2), || {
+            panic!("seed source must not run when randomization is disabled")
+        })
+        .unwrap();
+        assert_eq!(limited, [1, 2]);
+
+        let mut empty = vec![1, 2, 3, 4];
+        finalize_results(&mut empty, Randomization::Disabled, Some(0), || {
+            panic!("seed source must not run when randomization is disabled")
+        })
+        .unwrap();
+        assert!(empty.is_empty());
+
+        let mut unchanged = vec![1, 2, 3, 4];
+        finalize_results(&mut unchanged, Randomization::Disabled, None, || {
+            panic!("seed source must not run when randomization is disabled")
+        })
+        .unwrap();
+        assert_eq!(unchanged, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_seeded_shuffle_has_stable_algorithm_contract() {
+        let mut results = vec![0, 1, 2, 3, 4, 5, 6, 7];
+
+        finalize_results(&mut results, Randomization::Seeded(42), None, || {
+            panic!("seeded mode must not request a fresh seed")
+        })
+        .unwrap();
+
+        assert_eq!(results, [4, 2, 1, 6, 0, 3, 5, 7]);
+    }
+
+    #[test]
+    fn test_query_command_uses_fresh_seed_before_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tags.md");
+        std::fs::write(&path, "@tag(id=1)\n@tag(id=2)\n@tag(id=3)\n@tag(id=4)\n").unwrap();
+        let registry = ExtensionRegistry::new();
+        let matches = cli::build_real_cli(&registry)
+            .try_get_matches_from([
+                "ragtag",
+                "query",
+                "tag",
+                "--path",
+                path.to_str().unwrap(),
+                "--randomize",
+                "--limit",
+                "2",
+            ])
+            .unwrap();
+        let query_matches = matches.subcommand_matches("query").unwrap();
+        let mut output = Vec::new();
+
+        run_with_seed_source(
+            query_matches,
+            &Config::default(),
+            &registry,
+            &ColorMode::Never,
+            &mut output,
+            || Ok(42),
+        )
+        .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert_eq!(output.lines().count(), 2);
+        assert!(output.contains("@tag(id=1)"));
+        assert!(output.contains("@tag(id=3)"));
+        assert!(!output.contains("@tag(id=2)"));
+        assert!(!output.contains("@tag(id=4)"));
     }
 }

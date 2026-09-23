@@ -1,191 +1,191 @@
 name: Release
 
-# Release pipeline for the `ragtag` crate.
-# Builds cross-platform release binaries and publishes them to a GitHub Release.
-# This workflow is SEPARATE from the CI/QA pipeline (ci.yml).
+# Cargo metadata is the only release-version source. Pushes are candidates only
+# when the root manifest changes; manual runs recover the selected master
+# commit's Cargo version and cannot override it.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [master]
+    paths:
+      - Cargo.toml
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release Version (e.g. v1.2.3)"
-        required: true
-        type: string
 
-# Least privilege at the top level: read-only by default.
-# Jobs that publish the release opt in to `contents: write` individually.
 permissions:
   contents: read
-
-# Serialize releases for the same ref. Never cancel an in-flight release: a
-# half-cancelled run could leave a release with a partial set of assets.
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Resolve the release tag/version and create a DRAFT GitHub Release for it.
-  # The release is only published (draft -> public) by `publish-release` after
-  # every matrix build has succeeded, so consumers never see a partial release.
-  # ---------------------------------------------------------------------------
-  create-release:
-    name: Create draft GitHub Release
+  detect:
+    name: Detect Cargo version change
     runs-on: ubuntu-latest
     permissions:
-      contents: write # required to create/update the GitHub Release (and tag on manual runs)
+      contents: read
     outputs:
-      version: ${{ steps.resolve.outputs.version }}
-      # The exact commit the release is built from. Used so every build job
-      # checks out identical source (provenance) and so the git tag created
-      # when the draft is published points at this commit.
-      sha: ${{ github.sha }}
+      build: ${{ steps.release.outputs.build }}
+      matrix: ${{ steps.release.outputs.matrix }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Resolve release tag
-        id: resolve
-        shell: bash
-        # Untrusted input (the workflow_dispatch tag) is passed via env and
-        # referenced as a quoted shell variable, so it is treated as DATA and
-        # never expanded into the script source (avoids script injection).
+      - name: Require the release branch
+        if: github.event_name == 'workflow_dispatch'
         env:
-          INPUT_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_REF: ${{ github.ref }}
         run: |
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            version="${INPUT_TAG}"
-          else
-            version="${GITHUB_REF_NAME}"
-          fi
-          if [ -z "${version}" ]; then
-            echo "::error::Could not determine release tag/version."
+          set -euo pipefail
+          if [[ "${RELEASE_REF}" != "refs/heads/master" ]]; then
+            echo "::error::Manual releases must run from the master branch."
             exit 1
           fi
-          # Enforce the expected tag format (v<major>[.<minor>...]) and fail
-          # fast on anything unexpected before it is used downstream.
-          case "${version}" in
-            v[0-9]*) ;;
-            *)
-              echo "::error::Unexpected tag format '${version}'. Expected 'v<MAJOR>.<MINOR>.<PATCH>' (e.g. v1.2.3)."
-              exit 1
-              ;;
-          esac
-          echo "Resolved release version: ${version}"
-          printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Create or update the draft GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          tag_name: ${{ steps.resolve.outputs.version }}
-          name: ${{ steps.resolve.outputs.version }}
-          # Pin the (future) tag to the exact built commit. On a tag push the
-          # tag already exists; on workflow_dispatch the git tag is only
-          # created when the draft is published, at this commitish.
-          target_commitish: ${{ github.sha }}
-          draft: true # keep hidden until all binaries have been uploaded
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-  # ---------------------------------------------------------------------------
-  # Build the release binary for each target and upload the packaged artifacts
-  # (archives + SHA256 checksums) to the draft release created above.
-  # ---------------------------------------------------------------------------
-  upload-assets:
-    name: Build & upload (${{ matrix.target }})
-    needs: create-release
-    permissions:
-      contents: write # required to upload release assets
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-          # macOS
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          # Windows
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-          # NOTE: aarch64-pc-windows-msvc is cross-compiled on an x86_64 runner
-          # and cannot be executed/tested here, so this artifact is PROVIDED BUT
-          # UNVERIFIED. The draft->publish flow limits blast radius; document
-          # this caveat in the release notes.
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout repository
+      - name: Checkout complete release history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Build from the exact commit resolved by create-release so manual
-          # (workflow_dispatch) and tag-push runs compile identical source,
-          # keeping binary/tag provenance consistent. A commit SHA is used
-          # rather than refs/tags/<version> because a DRAFT release does not
-          # create the git tag until it is published.
-          ref: ${{ needs.create-release.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Install pinned Rust toolchain
-        # SHA-pinned to dtolnay/rust-toolchain@master; concrete toolchain below.
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.90.0
+
+      - name: Resolve Cargo release metadata
+        id: release
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: >-
+          python3 .github/scripts/release_meta.py detect
+          --event "${EVENT_NAME}"
+          --head "${HEAD_SHA}"
+          --before "${BEFORE_SHA}"
+          --github-output "${GITHUB_OUTPUT}"
+          --github-repository "${REPOSITORY}"
+
+  build:
+    name: Build package (${{ matrix.target }})
+    if: needs.detect.outputs.build == 'true'
+    needs: detect
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.90.0
           targets: ${{ matrix.target }}
 
-      - name: Build binary and upload to the GitHub Release
+      - name: Build and package binary
         uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
-          # Binary name (matches [package].name / [[bin]] in Cargo.toml).
           bin: ragtag
-          # Build for the matrix target. For aarch64-unknown-linux-gnu this
-          # action automatically uses `cross` for cross-compilation.
           target: ${{ matrix.target }}
-          # Archive base name -> ragtag-<version>-<target>(.tar.gz | .zip)
-          archive: $bin-$tag-$target
-          # Distribute .tar.gz on Unix and .zip on Windows.
+          archive: ragtag-v${{ needs.detect.outputs.version }}-${{ matrix.target }}
           tar: unix
           zip: windows
-          # Generate SHA256 checksum files alongside each archive.
           checksum: sha256
-          # Include the README and LICENSE inside each archive.
           include: README.md,LICENSE
-          # Build against the committed Cargo.lock for reproducible releases.
           locked: true
-          # Upload to the release for this tag (works for tag pushes and manual runs).
-          ref: refs/tags/${{ needs.create-release.outputs.version }}
-          # Built-in token; no hardcoded secrets.
-          token: ${{ github.token }}
+          dry-run: true
+          dry-run-intended: true
 
-  # ---------------------------------------------------------------------------
-  # Flip the draft release to published, but only after every matrix build has
-  # succeeded. This guarantees a public release always ships the full asset set.
-  # ---------------------------------------------------------------------------
-  publish-release:
-    name: Publish GitHub Release
-    needs: [create-release, upload-assets]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # required to update (publish) the GitHub Release
-    steps:
-      - name: Publish the release (draft -> public)
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          tag_name: ${{ needs.create-release.outputs.version }}
-          # Ensure the tag GitHub creates on publish points at the built commit.
-          target_commitish: ${{ needs.create-release.outputs.sha }}
-          draft: false
-          prerelease: false
+      - name: Retain independent build digests
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_VERSION: ${{ needs.detect.outputs.version }}
+        run: >-
+          python3 .github/scripts/release_meta.py manifest
+          --directory .
+          --target "${RELEASE_TARGET}"
+          --version "${RELEASE_VERSION}"
+          --output "build-digests/${RELEASE_TARGET}.json"
+
+      - name: Stage packaged release files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-${{ matrix.target }}
+          path: |
+            ragtag-v${{ needs.detect.outputs.version }}-${{ matrix.target }}.${{ matrix.extension }}
+            ragtag-v${{ needs.detect.outputs.version }}-${{ matrix.target }}.${{ matrix.extension }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stage independent build digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: digest-${{ matrix.target }}
+          path: build-digests/${{ matrix.target }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  draft:
+    name: Create, repair, or verify draft release
+    if: needs.detect.outputs.build == 'true'
+    needs: [detect, build]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ragtag-draft-release-${{ needs.detect.outputs.tag }}
+      cancel-in-progress: false
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout tested release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download all platform packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download independent build digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: digest-*
+          path: build-digests
+          merge-multiple: true
+
+      - name: Generate commit-bound artifact attestations
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: Create, repair, or verify draft
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.detect.outputs.prerelease }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.detect.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.detect.outputs.version }}
+        run: >-
+          python3 .github/scripts/release_meta.py ensure-draft
+          --directory dist
+          --manifests build-digests
+          --repository "${GH_REPO}"
+          --tag "${RELEASE_TAG}"
+          --version "${RELEASE_VERSION}"
+          --sha "${RELEASE_SHA}"
+          --prerelease "${PRERELEASE}"
