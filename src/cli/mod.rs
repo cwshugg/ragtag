@@ -16,6 +16,16 @@ pub const RAGTAG_CONFIG_ENV: &str = "RAGTAG_CONFIG";
 /// Environment variable name for specifying the default search path.
 pub const RAGTAG_PATH_ENV: &str = "RAGTAG_PATH";
 
+/// Parses a deterministic query-randomization seed with ambiguity guidance.
+fn parse_randomize_seed(value: &str) -> Result<u64, String> {
+    value.parse::<u64>().map_err(|_| {
+        format!(
+            "{value:?} is not an unsigned 64-bit seed; if it is the query \
+             expression, place it before --randomize or after --"
+        )
+    })
+}
+
 /// Classification shared by the raw config and outer-command scanners.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RootToken {
@@ -303,6 +313,30 @@ pub fn build_real_cli(registry: &ExtensionRegistry) -> Command {
                         .long("count")
                         .help("Show count only")
                         .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("limit")
+                        .long("limit")
+                        .help("Return at most this many final results (zero returns none)")
+                        .value_name("INTEGER")
+                        .allow_negative_numbers(true)
+                        .value_parser(clap::value_parser!(usize)),
+                )
+                .arg(
+                    Arg::new("randomize")
+                        .long("randomize")
+                        .help("Randomize results, optionally using a reproducible u64 seed")
+                        .long_help(
+                            "Randomize final result order before applying --limit. \
+                             With no SEED, uses fresh system randomness. With SEED, \
+                             produces reproducible ordering. Because SEED is optional, \
+                             place TAG_NAME before --randomize or after -- when ambiguous.",
+                        )
+                        .value_name("SEED")
+                        .num_args(0..=1)
+                        .allow_negative_numbers(true)
+                        .value_parser(parse_randomize_seed)
+                        .action(clap::ArgAction::Set),
                 ),
         );
 

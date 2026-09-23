@@ -622,6 +622,367 @@ fn test_query_filter() {
         .success();
 }
 
+#[test]
+fn test_query_help_documents_limit_and_randomize() {
+    ragtag()
+        .args(["query", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--limit <INTEGER>"))
+        .stdout(predicate::str::contains("--randomize [<SEED>]"))
+        .stdout(predicate::str::contains(
+            "With no SEED, uses fresh system randomness",
+        ))
+        .stdout(predicate::str::contains(
+            "place TAG_NAME before --randomize or after --",
+        ));
+}
+
+#[test]
+fn test_query_limit_truncates_output_and_count_and_zero_is_empty() {
+    let path = format!("{}/simple_tags.txt", fixtures_dir());
+
+    let limited = ragtag()
+        .args([
+            "--no-color",
+            "query",
+            "tag",
+            "--path",
+            &path,
+            "--limit",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(limited.status.success());
+    assert_eq!(
+        String::from_utf8(limited.stdout).unwrap().lines().count(),
+        2
+    );
+
+    ragtag()
+        .args(["query", "tag", "--path", &path, "--limit", "2", "--count"])
+        .assert()
+        .success()
+        .stdout("2\n");
+
+    ragtag()
+        .args(["query", "tag", "--path", &path, "--limit", "0"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+    ragtag()
+        .args(["query", "tag", "--path", &path, "--count", "--limit", "0"])
+        .assert()
+        .success()
+        .stdout("0\n");
+}
+
+#[test]
+fn test_query_limit_rejects_negative_and_non_integer_values() {
+    for invalid in ["-1", "one", "1.5"] {
+        ragtag()
+            .args(["query", "tag", "--limit", invalid])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("invalid value"));
+    }
+}
+
+#[test]
+fn test_query_limit_missing_value_does_not_consume_following_options() {
+    let following_options: &[&[&str]] = &[
+        &["--count"],
+        &["--randomize"],
+        &["--help"],
+        &["--path", "somewhere"],
+        &["--filter", "key=value"],
+    ];
+
+    for options in following_options {
+        ragtag()
+            .args(["query", "tag", "--limit"])
+            .args(*options)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "a value is required for '--limit <INTEGER>'",
+            ))
+            .stderr(predicate::str::contains("invalid value").not());
+    }
+}
+
+#[test]
+fn test_query_randomize_preserves_all_matching_results() {
+    let path = format!("{}/simple_tags.txt", fixtures_dir());
+    let baseline = ragtag()
+        .args(["--no-color", "query", "tag", "--path", &path])
+        .output()
+        .unwrap();
+    let randomized = ragtag()
+        .args(["--no-color", "query", "tag", "--path", &path, "--randomize"])
+        .output()
+        .unwrap();
+    assert!(baseline.status.success());
+    assert!(randomized.status.success());
+
+    let mut baseline_lines: Vec<_> = String::from_utf8(baseline.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let mut randomized_lines: Vec<_> = String::from_utf8(randomized.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    baseline_lines.sort_unstable();
+    randomized_lines.sort_unstable();
+    assert_eq!(randomized_lines, baseline_lines);
+}
+
+#[test]
+fn test_query_seeded_randomize_forms_and_limits_are_deterministic() {
+    let path = format!("{}/simple_tags.txt", fixtures_dir());
+    let spaced = ragtag()
+        .args([
+            "--no-color",
+            "query",
+            "tag",
+            "--path",
+            &path,
+            "--randomize",
+            "42",
+        ])
+        .output()
+        .unwrap();
+    let equals = ragtag()
+        .args([
+            "--no-color",
+            "query",
+            "tag",
+            "--path",
+            &path,
+            "--randomize=42",
+        ])
+        .output()
+        .unwrap();
+    let seed_before_query = ragtag()
+        .args([
+            "--no-color",
+            "query",
+            "--randomize",
+            "42",
+            "tag",
+            "--path",
+            &path,
+        ])
+        .output()
+        .unwrap();
+
+    assert!(spaced.status.success());
+    assert_output_equivalent(&equals, &spaced);
+    assert_output_equivalent(&seed_before_query, &spaced);
+
+    let full_lines = String::from_utf8(spaced.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for options in [
+        ["--randomize=42", "--limit", "2"],
+        ["--limit", "2", "--randomize=42"],
+    ] {
+        let output = ragtag()
+            .args(["--no-color", "query", "tag", "--path", &path])
+            .args(options)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let lines: Vec<_> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(lines, full_lines[..2]);
+    }
+}
+
+#[test]
+fn test_query_seeded_randomize_accepts_u64_boundaries() {
+    let path = format!("{}/simple_tags.txt", fixtures_dir());
+    for seed in ["0", "18446744073709551615"] {
+        let first = ragtag()
+            .args([
+                "--no-color",
+                "query",
+                "tag",
+                "--path",
+                &path,
+                "--randomize",
+                seed,
+            ])
+            .output()
+            .unwrap();
+        let second = ragtag()
+            .args([
+                "--no-color",
+                "query",
+                "tag",
+                "--path",
+                &path,
+                &format!("--randomize={seed}"),
+            ])
+            .output()
+            .unwrap();
+        assert!(first.status.success());
+        assert_output_equivalent(&second, &first);
+    }
+}
+
+#[test]
+fn test_query_randomize_rejects_invalid_seeds_with_ambiguity_guidance() {
+    for invalid in ["-1", "18446744073709551616", "1.5", "not-a-seed"] {
+        ragtag()
+            .args(["query", "tag", "--randomize", invalid])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("is not an unsigned 64-bit seed"))
+            .stderr(predicate::str::contains(
+                "place it before --randomize or after --",
+            ));
+    }
+}
+
+#[test]
+fn test_query_unseeded_randomize_handles_options_and_positional_boundaries() {
+    let path = format!("{}/simple_tags.txt", fixtures_dir());
+    ragtag()
+        .args(["query", "tag", "--randomize", "--path", &path, "--count"])
+        .assert()
+        .success()
+        .stdout("3\n");
+    ragtag()
+        .args([
+            "query",
+            "tag",
+            "--randomize",
+            "--limit",
+            "2",
+            "--count",
+            "--path",
+            &path,
+        ])
+        .assert()
+        .success()
+        .stdout("2\n");
+    ragtag()
+        .args([
+            "query",
+            "tag",
+            "--randomize",
+            "--filter",
+            "key=value",
+            "--path",
+            &path,
+            "--count",
+        ])
+        .assert()
+        .success()
+        .stdout("1\n");
+    ragtag()
+        .args(["query", "tag", "--randomize", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--randomize [<SEED>]"));
+
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("tags.md"), "@tag(id=1)\n").unwrap();
+    ragtag()
+        .current_dir(directory.path())
+        .args(["query", "--randomize", "--", "tag"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("@tag(id=1)"));
+
+    ragtag()
+        .args(["query", "--randomize", "tag"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "\"tag\" is not an unsigned 64-bit seed",
+        ))
+        .stderr(predicate::str::contains(
+            "place it before --randomize or after --",
+        ));
+}
+
+#[test]
+fn test_query_randomize_rejects_repeated_occurrences() {
+    for arguments in [
+        vec!["query", "tag", "--randomize", "--randomize"],
+        vec!["query", "tag", "--randomize=1", "--randomize=2"],
+    ] {
+        ragtag()
+            .args(arguments)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "the argument '--randomize [<SEED>]' cannot be used multiple times",
+            ));
+    }
+}
+
+#[test]
+fn test_query_limit_and_seeded_randomize_apply_before_all_output_modes() {
+    let path = format!("{}/tasks.md", fixtures_dir());
+    let first = ragtag()
+        .args([
+            "--no-color",
+            "query",
+            "task",
+            "--path",
+            &path,
+            "--randomize=42",
+            "--limit",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    let second = ragtag()
+        .args([
+            "--no-color",
+            "query",
+            "task",
+            "--path",
+            &path,
+            "--randomize",
+            "42",
+            "--limit",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    assert_output_equivalent(&second, &first);
+    assert_eq!(String::from_utf8(first.stdout).unwrap().lines().count(), 1);
+
+    ragtag()
+        .args([
+            "query",
+            "task",
+            "--path",
+            &path,
+            "--randomize=42",
+            "--limit",
+            "1",
+            "--count",
+        ])
+        .assert()
+        .success()
+        .stdout("1\n");
+}
+
 // === Tasks Create ===
 
 #[test]

@@ -168,6 +168,8 @@ ragtag query <TAG_NAME> [OPTIONS]
 | `--path <PATH>` | `.` | Search path (file or directory) |
 | `--filter <EXPR>` | — | Boolean filter expression (repeatable, AND-combined). See [Filter Expressions](#filter-expressions) |
 | `--count` | — | Print only the count of matching tags |
+| `--limit <INTEGER>` | — | Return at most this many final results; `0` returns none |
+| `--randomize [SEED]` | — | Randomize before `--limit`; an optional `u64` seed makes ordering reproducible |
 
 **Output (default):**
 
@@ -187,6 +189,35 @@ notes/bugs.md:42: @todo(priority=0, owner="bob")
 Filters use the shared boolean [Filter Expressions](#filter-expressions) syntax,
 so `--filter '(priority = 0 OR owner = alice) AND status != done'` works, with
 optional whitespace around operators.
+
+Result ordering options apply after the complete matching collection has been
+collected and filtered but before every output mode, including
+extension-specific formatting and `--count`. In other words, `--limit` limits
+output after collection; it does not stop file discovery or parsing early.
+Bare `--randomize` obtains a fresh nondeterministic seed from the operating
+system. `--randomize SEED` and `--randomize=SEED` accept values from `0` through
+`18446744073709551615`. The same seed and identical final pre-shuffle result
+list produce the same order. The implementation pins `fastrand 2.4.1` and its
+WyRand shuffle sequence; seeded output is stable across Ragtag `1.x`, while a
+future major version may deliberately change the algorithm.
+
+The space-separated seed is optional, so a positional query immediately after
+`--randomize` is ambiguous and is parsed as a seed. Put the query first:
+
+```bash
+ragtag query idea --randomize
+ragtag query idea --randomize 42 --limit 5
+```
+
+Alternatively, use `--` before a query that follows an unseeded flag:
+
+```bash
+ragtag query --randomize -- idea
+```
+
+`--randomize --limit 5` shuffles the complete matching collection and then
+keeps up to five entries. Flag order does not change processing order.
+`--limit` accepts non-negative integers only.
 
 ### `config`
 
