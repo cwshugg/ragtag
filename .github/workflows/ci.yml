@@ -56,22 +56,12 @@ jobs:
       - name: Test
         run: cargo test --locked --verbose
 
-      - name: Test release metadata automation
-        run: python3 -m unittest discover -s .github/scripts -p "test_*.py" -v
-
-      - name: Lint release automation
-        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
-        with:
-          args: check
-          src: .github/scripts
-          version: 0.13.2
-
-      - name: Check release automation formatting
-        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
-        with:
-          args: format --check
-          src: .github/scripts
-          version: 0.13.2
+      - name: Test CI and release workflow contracts
+        run: >-
+          python3 -m unittest discover
+          -s .github/scripts
+          -p "test_workflows.py"
+          -v
 
       - name: Install pinned actionlint
         # The archive digest comes from the v1.7.12 release checksums asset;
