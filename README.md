@@ -221,6 +221,8 @@ aliases:
     arguments: "query task --filter status=active"
   - name: "active-count"
     arguments: "active --count"
+  - name: "mine"
+    arguments: "query task --filter owner=$RAGTAG_OWNER"
   - names: ["quicknote", "qn"]
     arguments: "file touch --tag \"quicknote\" --edit"
 ```
@@ -236,8 +238,12 @@ Aliases participate in outer-command prefix inference and may compose when the
 first configured argument exactly names another alias. Alias names are absent
 from top-level help and may not collide with real commands. Configuration is
 loaded once from the original command line, and a leading `--` disables alias
-recognition. See the [configuration reference](docs/configuration.md#aliases)
-for composition order, limits, boundary behavior, and error details.
+recognition. Alias argument templates interpolate the current process
+environment on every invocation after shell-like splitting. Each environment
+value remains data inside its configured token, so spaces, quotes, backslashes,
+and option-like text cannot add arguments or alter command structure. See the
+[configuration reference](docs/configuration.md#aliases) for composition
+order, interpolation, limits, boundary behavior, and error details.
 
 ## Global Flags
 
@@ -266,6 +272,13 @@ untrusted checkout because it controls aliases, discovery behavior, and
 file-writing options. For automation, use a reviewed config via a leading
 `--config <PATH>` or `RAGTAG_CONFIG`. Config files must be regular files no
 larger than 1 MiB.
+After YAML parsing, `$NAME` and `${NAME}` references in configuration string
+values are expanded once from the environment; undefined names become empty,
+`$$` emits a literal dollar, and malformed references remain literal. Mapping
+keys and YAML structure are not expanded. Alias `arguments` are deferred until
+each invocation. `config get` prints `<environment-derived>` instead of
+resolved environment content. Command-line arguments are never expanded by
+ragtag.
 See the [configuration reference](docs/configuration.md) for full details.
 
 ## Documentation
@@ -274,4 +287,4 @@ See the [configuration reference](docs/configuration.md) for full details.
 * [Task Management Guide](docs/task-management.md) — using `@task` tags for task tracking
 * [Configuration Reference](docs/configuration.md) — YAML config file options
 * [CLI Reference](docs/cli-reference.md) — full command-line reference
-* [Release Guide](docs/releasing.md) — Cargo-driven draft release process
+* [Release Guide](docs/releasing.md) — cross-platform draft release process

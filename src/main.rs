@@ -47,12 +47,18 @@ fn run() -> Result<(), RagtagError> {
     let cwd = std::env::current_dir().map_err(RagtagError::Io)?;
     let loaded = config::load_config(config_path.as_deref(), &cwd)?;
     let app_config = &loaded.config;
+    let config_uses_environment = loaded.has_environment_interpolation();
 
     // Validate aliases against the registered real command tree before
     // extension initialization so config-shape errors retain startup
     // precedence over extension-specific initialization errors.
     let command_names = cli::real_command_names(&registry);
-    app_config.validate_aliases(&command_names)?;
+    if let Err(error) = app_config.validate_aliases(&command_names) {
+        if config_uses_environment {
+            return Err(RagtagError::EnvironmentDerivedConfig);
+        }
+        return Err(error);
+    }
     let aliases = AliasIndex::new(&app_config.aliases);
 
     // Initialize extensions with config before terminal parsing and dispatch.
@@ -60,27 +66,48 @@ fn run() -> Result<(), RagtagError> {
         let config_value = ext
             .config_key()
             .and_then(|key| app_config.extension_configs.get(key));
-        ext.init(config_value)?;
+        if let Err(error) = ext.init(config_value) {
+            if config_uses_environment {
+                return Err(RagtagError::EnvironmentDerivedConfig);
+            }
+            return Err(error);
+        }
     }
 
     let mut alias_defined_config_paths = Vec::new();
+    let mut environment_alias = None;
     let terminal_args = match scan_outer_command(&original_args) {
-        OuterScan::Command(command_index) => match resolve_outer_command(
+        OuterScan::Command(command_index) => match match resolve_outer_command(
             original_args[command_index].as_os_str(),
             &command_names,
             &aliases,
-        )? {
+        ) {
+            Ok(resolution) => resolution,
+            Err(_) if config_uses_environment => {
+                return Err(RagtagError::EnvironmentDerivedConfigCommand);
+            }
+            Err(error) => return Err(error),
+        } {
             OuterResolution::Alias {
                 definition_index,
                 selected_name,
             } => {
-                let expansion = expand_alias(
+                let expansion = match expand_alias(
                     &aliases,
                     definition_index,
                     &selected_name,
                     &original_args[command_index + 1..],
                     &command_names,
-                )?;
+                ) {
+                    Ok(expansion) => expansion,
+                    Err(_) if config_uses_environment => {
+                        return Err(RagtagError::EnvironmentDerivedConfigCommand);
+                    }
+                    Err(error) => return Err(error),
+                };
+                if expansion.has_environment_interpolation() {
+                    environment_alias = Some(selected_name.clone());
+                }
                 alias_defined_config_paths = expansion.alias_defined_config_paths();
                 assemble_terminal_argv(&original_args, command_index, expansion)
             }
@@ -90,7 +117,20 @@ fn run() -> Result<(), RagtagError> {
     };
 
     // This is the process's only clap parse, always against the real tree.
-    let matches = cli::build_real_cli(&registry).get_matches_from(terminal_args);
+    let matches = match cli::build_real_cli(&registry).try_get_matches_from(terminal_args) {
+        Ok(matches) => matches,
+        Err(error)
+            if (config_uses_environment || environment_alias.is_some()) && error.use_stderr() =>
+        {
+            if config_uses_environment {
+                return Err(RagtagError::EnvironmentDerivedConfigCommand);
+            }
+            return Err(RagtagError::EnvironmentDerivedAliasCommand {
+                alias: environment_alias.clone().expect("checked as present"),
+            });
+        }
+        Err(error) => error.exit(),
+    };
     reconcile_terminal_config(
         &matches,
         loaded.source_path.as_deref(),
@@ -99,14 +139,21 @@ fn run() -> Result<(), RagtagError> {
     )?;
     let no_color = matches.get_flag("no-color");
 
-    dispatch(
+    let result = dispatch(
         &matches,
         no_color,
-        app_config,
+        &loaded,
         &loaded.root_dir,
         &cwd,
         &registry,
-    )
+    );
+    match result {
+        Err(_) if config_uses_environment => Err(RagtagError::EnvironmentDerivedConfigCommand),
+        Err(_) if environment_alias.is_some() => Err(RagtagError::EnvironmentDerivedAliasCommand {
+            alias: environment_alias.expect("checked as present"),
+        }),
+        other => other,
+    }
 }
 
 /// Reconciles terminal clap's config value with the startup config selection.
@@ -162,11 +209,12 @@ fn reconcile_terminal_config(
 fn dispatch(
     matches: &clap::ArgMatches,
     no_color: bool,
-    app_config: &config::Config,
+    loaded_config: &config::LoadedConfig,
     root_dir: &std::path::Path,
     startup_cwd: &std::path::Path,
     registry: &ExtensionRegistry,
 ) -> Result<(), RagtagError> {
+    let app_config = &loaded_config.config;
     // Resolve color mode from the caller-supplied global flag.
     let color_mode = output::resolve_color_mode(no_color, &app_config.output.color);
 
@@ -176,7 +224,9 @@ fn dispatch(
                 let key = get_matches
                     .get_one::<String>("key")
                     .expect("key is required");
-                let value = commands::config::run_get(key, app_config)?;
+                let value = commands::config::run_get(key, app_config, |value| {
+                    loaded_config.is_environment_derived_value(value)
+                })?;
                 println!("{value}");
                 Ok(())
             }

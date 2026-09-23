@@ -67,8 +67,8 @@ pub fn collect_tasks(
     for file_path in &files {
         let content = match std::fs::read_to_string(file_path) {
             Ok(c) => c,
-            Err(e) => {
-                log::warn!("skipping unreadable file {}: {}", file_path.display(), e);
+            Err(error) => {
+                log::warn!("skipping an unreadable input file ({:?})", error.kind());
                 continue;
             }
         };
@@ -150,7 +150,7 @@ pub fn get_task_field_str<'a>(task: &'a TaskTag, field: &str) -> Cow<'a, str> {
             .map_or_else(|| Cow::Owned(String::new()), Cow::Borrowed),
         "worktime_units" => Cow::Borrowed(&task.worktime_units),
         _ => {
-            log::warn!("unknown task field \"{field}\" in filter/sort expression");
+            log::warn!("filter/sort expression references an unknown task field");
             Cow::Owned(String::new())
         }
     }
@@ -189,8 +189,8 @@ pub fn find_task_by_id(
     for file_path in &files {
         let content = match std::fs::read_to_string(file_path) {
             Ok(c) => c,
-            Err(e) => {
-                log::warn!("skipping unreadable file {}: {}", file_path.display(), e);
+            Err(error) => {
+                log::warn!("skipping an unreadable input file ({:?})", error.kind());
                 continue;
             }
         };
@@ -199,13 +199,8 @@ pub fn find_task_by_id(
             if tag.name == config.tag_name {
                 match TaskTag::from_tag(tag, config) {
                     Ok(task) => all_tasks.push((task, file_path.clone())),
-                    Err(e) => {
-                        log::warn!(
-                            "failed to parse task tag at {}:{}: {}",
-                            file_path.display(),
-                            tag.location.line,
-                            e
-                        );
+                    Err(_) => {
+                        log::warn!("failed to parse a task tag at line {}", tag.location.line);
                     }
                 }
             }

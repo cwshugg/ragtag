@@ -81,7 +81,14 @@ Notes:
 
 * **One or multiple names.** Each definition specifies exactly one of `name`
   or a nonempty ordered `names` list. All names invoke the same definition.
-* **Shell-like splitting.** The `arguments` string is split with quoting respected (e.g., `arguments: 'task get "two words"'`).
+* **Split first, then interpolate each token.** The trusted `arguments`
+  template is shell-split during config loading. `$NAME` and `${NAME}` inside
+  each stored token use the current environment when invoked. With
+  `OWNER='Alice Smith'`, `arguments: "query task --filter owner=$OWNER"`
+  keeps `owner=Alice Smith` in one token. Environment-provided spaces, quotes,
+  backslashes, and option-like text never create new arguments or syntax.
+  `$$` emits a literal dollar, undefined names become empty, and malformed
+  braced forms remain one literal unit.
 * **Trailing args are appended** after the alias's own arguments.
 * **Prefix inference includes aliases** — an ambiguous prefix across commands and aliases errors just like any other ambiguous prefix.
   Prefix matches through multiple peer names of one definition count as one
@@ -92,7 +99,8 @@ Notes:
 * **Composition uses exact names.** If token zero of an expansion exactly names
   another alias, that definition expands too. Recursive prefixes do not
   compose. Inner arguments come first, followed by each outer remainder and
-  then the original invocation suffix.
+  then the original invocation suffix. Each composed definition evaluates its
+  own template at the actual invocation step.
 * **Aliases are config-only.** They do not appear in top-level help. Every name
   is checked at startup against built-ins (including `help`), extension
   commands, duplicates, and empty names.
@@ -109,8 +117,10 @@ Notes:
   prefixes, and exceeded limits produce explicit errors.
 * **Exit status distinguishes error ownership.** Alias-engine errors such as
   ambiguity, cycles, unknown targets, and exceeded limits exit with status `1`.
-  Syntax rejected by the expanded terminal command is reported by clap and
-  exits with status `2`.
+  Without interpolation, syntax rejected by the expanded terminal command is
+  reported by clap and exits with status `2`. Errors involving
+  environment-derived alias data use a generic status-`1` diagnostic that
+  never echoes the resolved value.
 * **OS-native argv is preserved through alias processing.** Original tokens
   retain their platform-native values through scanning, composition, and
   terminal argv assembly. Configured alias tokens are YAML strings. The final
@@ -243,7 +253,14 @@ ragtag config get <KEY>
 
 **Output:**
 
-Prints the resolved value to stdout. Strings are printed without quotes, numbers and booleans as-is, sequences in bracket notation, and mappings in brace notation.
+Prints the inspected value to stdout. Strings are printed without quotes,
+numbers and booleans as-is, sequences in bracket notation, and mappings in
+brace notation.
+
+String fields produced by generic environment interpolation are displayed as
+`<environment-derived>` rather than exposing their resolved contents. This
+also applies to undefined and defined-empty references. Alias `arguments`
+remain their canonical unexpanded templates.
 
 **Examples:**
 
@@ -303,8 +320,9 @@ or treats an existing target as success.
     resolved from the working directory in which ragtag started.
 * Missing parent directories are created recursively after all tags and any
     requested editor configuration have been validated.
-* Paths are lexical and are not restricted to the ragtag root. Tildes and
-    environment variables are not expanded.
+* Paths are lexical and are not restricted to the ragtag root. Tildes are not
+    expanded. Environment references in an explicit command-line `--path` are
+    not expanded by ragtag.
 * Without `--path`, `files.filename_format` is evaluated using the current UTC
     time and appended to `files.default_directory`. A relative configured
     directory is based on the ragtag root: the selected config file's directory,
@@ -966,6 +984,12 @@ All errors are printed to stderr with a descriptive message.
 | `NO_COLOR` | When set, disables colored output. Overrides the `output.color` config setting but is itself overridden by the `--no-color` CLI flag. |
 
 **Precedence order:** CLI flag > environment variable > default value.
+
+These direct fallbacks are separate from generic configuration interpolation.
+After YAML parsing, ragtag expands environment references in configuration
+string values as documented in
+[Environment Interpolation](configuration.md#environment-interpolation).
+Command-line arguments are not interpolated by ragtag.
 
 For example, to always search a specific directory for tasks without passing `--path` every time:
 

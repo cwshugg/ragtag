@@ -1,191 +1,102 @@
 name: Release
 
-# Cargo metadata is the only release-version source. Pushes are candidates only
-# when the root manifest changes; manual runs recover the selected master
-# commit's Cargo version and cannot override it.
+# Creates a draft release from the Cargo.toml version, then builds and uploads
+# the same six target packages published by v1.0.4. Automation never publishes
+# the draft.
+
 on:
   push:
-    branches: [master]
+    branches:
+      - master
     paths:
-      - Cargo.toml
+      - "Cargo.toml"
+      - "Cargo.lock"
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
-  contents: read
-
-env:
-  CARGO_TERM_COLOR: always
+  contents: write
 
 jobs:
-  detect:
-    name: Detect Cargo version change
+  prepare:
+    name: Create draft release
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     outputs:
-      build: ${{ steps.release.outputs.build }}
-      matrix: ${{ steps.release.outputs.matrix }}
-      prerelease: ${{ steps.release.outputs.prerelease }}
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
+      should_release: ${{ steps.meta.outputs.should_release }}
+      tag: ${{ steps.meta.outputs.tag }}
+
     steps:
-      - name: Require the release branch
-        if: github.event_name == 'workflow_dispatch'
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Determine version and tag
+        id: meta
+        shell: pwsh
         env:
-          RELEASE_REF: ${{ github.ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & './.github/workflows/scripts/resolve-release-meta.ps1'
+
+      - name: Create the draft release
+        if: steps.meta.outputs.should_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
           set -euo pipefail
-          if [[ "${RELEASE_REF}" != "refs/heads/master" ]]; then
-            echo "::error::Manual releases must run from the master branch."
-            exit 1
-          fi
+          echo "Creating draft release ${TAG} at ${GITHUB_SHA}"
+          gh release create "${TAG}" \
+            --draft \
+            --title "ragtag ${TAG}" \
+            --generate-notes \
+            --target "${GITHUB_SHA}"
 
-      - name: Checkout complete release history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: 1.90.0
-
-      - name: Resolve Cargo release metadata
-        id: release
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
-          EVENT_NAME: ${{ github.event_name }}
-          GITHUB_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.sha }}
-          REPOSITORY: ${{ github.repository }}
-        run: >-
-          python3 .github/scripts/release_meta.py detect
-          --event "${EVENT_NAME}"
-          --head "${HEAD_SHA}"
-          --before "${BEFORE_SHA}"
-          --github-output "${GITHUB_OUTPUT}"
-          --github-repository "${REPOSITORY}"
-
-  build:
-    name: Build package (${{ matrix.target }})
-    if: needs.detect.outputs.build == 'true'
-    needs: detect
-    permissions:
-      contents: read
+  upload-assets:
+    name: Build and upload (${{ matrix.target }})
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
     runs-on: ${{ matrix.os }}
+
     steps:
-      - name: Checkout release commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
-          persist-credentials: false
 
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - name: Install stable Rust target
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1; stable via input
         with:
-          toolchain: 1.90.0
+          toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Build and package binary
+      - name: Build, package, checksum, and upload
         uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: ragtag
           target: ${{ matrix.target }}
-          archive: ragtag-v${{ needs.detect.outputs.version }}-${{ matrix.target }}
+          archive: $bin-$tag-$target
           tar: unix
           zip: windows
           checksum: sha256
           include: README.md,LICENSE
           locked: true
-          dry-run: true
-          dry-run-intended: true
-
-      - name: Retain independent build digests
-        shell: bash
-        env:
-          RELEASE_TARGET: ${{ matrix.target }}
-          RELEASE_VERSION: ${{ needs.detect.outputs.version }}
-        run: >-
-          python3 .github/scripts/release_meta.py manifest
-          --directory .
-          --target "${RELEASE_TARGET}"
-          --version "${RELEASE_VERSION}"
-          --output "build-digests/${RELEASE_TARGET}.json"
-
-      - name: Stage packaged release files
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: package-${{ matrix.target }}
-          path: |
-            ragtag-v${{ needs.detect.outputs.version }}-${{ matrix.target }}.${{ matrix.extension }}
-            ragtag-v${{ needs.detect.outputs.version }}-${{ matrix.target }}.${{ matrix.extension }}.sha256
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Stage independent build digest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: digest-${{ matrix.target }}
-          path: build-digests/${{ matrix.target }}.json
-          if-no-files-found: error
-          retention-days: 7
-
-  draft:
-    name: Create, repair, or verify draft release
-    if: needs.detect.outputs.build == 'true'
-    needs: [detect, build]
-    runs-on: ubuntu-latest
-    concurrency:
-      group: ragtag-draft-release-${{ needs.detect.outputs.tag }}
-      cancel-in-progress: false
-    permissions:
-      attestations: write
-      contents: write
-      id-token: write
-    steps:
-      - name: Checkout tested release tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Download all platform packages
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: package-*
-          path: dist
-          merge-multiple: true
-
-      - name: Download independent build digests
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: digest-*
-          path: build-digests
-          merge-multiple: true
-
-      - name: Generate commit-bound artifact attestations
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: dist/*
-
-      - name: Create, repair, or verify draft
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          PRERELEASE: ${{ needs.detect.outputs.prerelease }}
-          RELEASE_SHA: ${{ github.sha }}
-          RELEASE_TAG: ${{ needs.detect.outputs.tag }}
-          RELEASE_VERSION: ${{ needs.detect.outputs.version }}
-        run: >-
-          python3 .github/scripts/release_meta.py ensure-draft
-          --directory dist
-          --manifests build-digests
-          --repository "${GH_REPO}"
-          --tag "${RELEASE_TAG}"
-          --version "${RELEASE_VERSION}"
-          --sha "${RELEASE_SHA}"
-          --prerelease "${PRERELEASE}"
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
+          token: ${{ github.token }}

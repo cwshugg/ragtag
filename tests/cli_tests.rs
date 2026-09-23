@@ -4505,6 +4505,199 @@ fn assert_alias_case_equivalent(
 }
 
 #[test]
+fn test_config_environment_interpolation_reaches_typed_core_and_extension_values() {
+    const SECRET_OWNER: &str = "sentinel-config-output-must-not-leak";
+    let (_guard, config) = alias_config(
+        r#"
+ignore_patterns: ["$IGNORE_PATTERN"]
+output:
+  color: "$COLOR_MODE"
+files:
+  default_directory: "${NOTES_DIRECTORY}"
+  filename_format: "$FILENAME_FORMAT"
+tasks:
+  default_owner: "$DEFAULT_OWNER"
+"#,
+    );
+
+    for key in [
+        "ignore_patterns",
+        "output.color",
+        "files.default_directory",
+        "files.filename_format",
+        "tasks.default_owner",
+    ] {
+        ragtag()
+            .args(["--config", &config, "config", "get", key])
+            .env("IGNORE_PATTERN", "target/")
+            .env("COLOR_MODE", "never")
+            .env("NOTES_DIRECTORY", "notes")
+            .env("FILENAME_FORMAT", "fixed.md")
+            .env("DEFAULT_OWNER", SECRET_OWNER)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("<environment-derived>"))
+            .stdout(predicate::str::contains("target/").not())
+            .stdout(predicate::str::contains(SECRET_OWNER).not());
+    }
+
+    let (_guard, config) = alias_config("tasks:\n  default_owner: \"$UNDEFINED_OWNER\"\n");
+    ragtag()
+        .args(["--config", &config, "config", "get", "tasks.default_owner"])
+        .env_remove("UNDEFINED_OWNER")
+        .assert()
+        .success()
+        .stdout("<environment-derived>\n");
+}
+
+#[test]
+fn test_alias_environment_interpolation_is_deferred_quoted_and_recursive() {
+    let notes = tempfile::tempdir().unwrap();
+    let spaced = notes.path().join("notes with spaces");
+    fs::create_dir(&spaced).unwrap();
+    fs::write(spaced.join("one.md"), "@task(status=active)\n").unwrap();
+    let (_guard, config) = alias_config(
+        r#"
+aliases:
+  - name: dynamic
+    arguments: '$INNER --count'
+  - name: inner
+    arguments: 'query $TAG --path "$NOTES_PATH"'
+"#,
+    );
+
+    ragtag()
+        .args(["--config", &config, "config", "get", "aliases"])
+        .env("INNER", "inner")
+        .env("TAG", "task")
+        .env("NOTES_PATH", &spaced)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("arguments: '$INNER' --count"))
+        .stdout(predicate::str::contains("arguments: query '$TAG'"))
+        .stdout(predicate::str::contains(spaced.display().to_string()).not());
+
+    ragtag()
+        .args(["--config", &config, "dynamic"])
+        .env("INNER", "inner")
+        .env("TAG", "task")
+        .env("NOTES_PATH", &spaced)
+        .assert()
+        .success()
+        .stdout("1\n");
+}
+
+#[test]
+fn test_command_line_arguments_are_not_interpolated_by_ragtag() {
+    let dir = tempfile::tempdir().unwrap();
+
+    ragtag()
+        .current_dir(dir.path())
+        .args(["file", "touch", "--path", "$TARGET"])
+        .env("TARGET", "expanded.md")
+        .assert()
+        .success()
+        .stdout(format!("{}\n", dir.path().join("$TARGET").display()));
+
+    assert!(dir.path().join("$TARGET").is_file());
+    assert!(!dir.path().join("expanded.md").exists());
+}
+
+#[test]
+fn test_environment_derived_values_are_absent_from_config_errors_and_alias_failures() {
+    const SECRET: &str = "sentinel-secret-must-not-leak";
+
+    for (yaml, value) in [
+        ("output:\n  color: \"$SECRET_VALUE\"\n", SECRET),
+        (
+            "files:\n  filename_format: \"$SECRET_VALUE\"\n",
+            "sentinel-secret-must-not-leak%",
+        ),
+        ("tasks:\n  default_status: \"$SECRET_VALUE\"\n", SECRET),
+    ] {
+        let (_guard, config) = alias_config(yaml);
+        ragtag()
+            .args(["--config", &config, "--help"])
+            .env("SECRET_VALUE", value)
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(SECRET).not())
+            .stderr(predicate::str::contains("environment").or(predicate::str::contains("config")));
+    }
+
+    let (_guard, config) = alias_config(
+        "aliases:\n  - name: secret-key\n    arguments: 'config get $SECRET_KEY'\n  - name: secret-option\n    arguments: 'query --randomize=$SECRET_OPTION task'\n",
+    );
+    for (alias, variable) in [
+        ("secret-key", "SECRET_KEY"),
+        ("secret-option", "SECRET_OPTION"),
+    ] {
+        ragtag()
+            .args(["--config", &config, alias])
+            .env(variable, SECRET)
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(
+                "command failed after environment interpolation",
+            ))
+            .stderr(predicate::str::contains(SECRET).not());
+    }
+}
+
+#[test]
+fn test_environment_derived_task_validation_never_prints_resolved_values() {
+    const SECRET: &str = "sentinel-task-validation-secret";
+    let (_guard, category_config) =
+        alias_config("tasks:\n  exclude_status_categories:\n    - \"$SECRET_CATEGORY\"\n");
+    let category_output = ragtag()
+        .args(["--config", &category_config, "--help"])
+        .env("SECRET_CATEGORY", SECRET)
+        .env("RUST_LOG", "trace")
+        .output()
+        .unwrap();
+    assert!(category_output.status.success());
+    assert!(!String::from_utf8_lossy(&category_output.stdout).contains(SECRET));
+    let category_stderr = String::from_utf8_lossy(&category_output.stderr);
+    assert!(!category_stderr.contains(SECRET));
+    assert!(category_stderr.contains("tasks.exclude_status_categories[0]"));
+
+    let (_guard, status_config) = alias_config("tasks:\n  default_status: \"$SECRET_STATUS\"\n");
+    let status_output = ragtag()
+        .args(["--config", &status_config, "--help"])
+        .env("SECRET_STATUS", SECRET)
+        .env("RUST_LOG", "trace")
+        .output()
+        .unwrap();
+    assert!(!status_output.status.success());
+    assert!(!String::from_utf8_lossy(&status_output.stdout).contains(SECRET));
+    assert!(!String::from_utf8_lossy(&status_output.stderr).contains(SECRET));
+}
+
+#[test]
+fn test_tasks_config_drives_inspection_and_runtime_behavior() {
+    let (_guard, config) = alias_config("tasks:\n  default_owner: canonical-owner\n");
+
+    ragtag()
+        .args(["--config", &config, "config", "get", "tasks.default_owner"])
+        .assert()
+        .success()
+        .stdout("canonical-owner\n");
+
+    ragtag()
+        .args([
+            "--config",
+            &config,
+            "task",
+            "create",
+            "--title",
+            "Configured owner",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("owner=\"canonical-owner\""));
+}
+
+#[test]
 fn test_alias_expands_to_same_output() {
     // `ragtag my-alias` must produce byte-identical output to the expanded
     // `ragtag task summary`.
@@ -5436,7 +5629,7 @@ fn test_alias_cycles_unknown_inner_prefix_and_combined_ambiguity_are_typed() {
         .args(["--config", &config, "prefix-target"])
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("alias target \"al\""))
+        .stderr(predicate::str::contains("alias target is not a command"))
         .stderr(predicate::str::contains("prefix-target"));
     ragtag()
         .args(["--config", &config, "sum"])
@@ -5497,10 +5690,6 @@ fn test_alias_schema_errors_and_every_synonym_collision_fail_before_help() {
             "aliases:\n  - name: blank\n    arguments: \"   \"\n",
             "alias \"blank\" has empty arguments",
         ),
-        (
-            "aliases:\n  - name: quoted\n    arguments: 'query \"unterminated'\n",
-            "alias \"quoted\" has an invalid arguments string",
-        ),
     ] {
         let (_guard, config) = alias_config(yaml);
         ragtag()
@@ -5509,10 +5698,20 @@ fn test_alias_schema_errors_and_every_synonym_collision_fail_before_help() {
             .code(1)
             .stderr(predicate::str::contains(expected));
     }
+
+    let (_guard, config) =
+        alias_config("aliases:\n  - name: quoted\n    arguments: 'query \"$SECRET'\n");
+    ragtag()
+        .args(["--config", &config, "--help"])
+        .env("SECRET", "sensitive-value")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("invalid arguments string"))
+        .stderr(predicate::str::contains("sensitive-value").not());
 }
 
 #[test]
-fn test_alias_unknown_fields_preserve_additive_config_compatibility() {
+fn test_alias_unknown_metadata_fields_are_ignored() {
     let (_guard, config) = alias_config(
         "aliases:\n  - name: compatible\n    arguments: summary\n    description: handy\n    future_metadata:\n      category: reporting\n",
     );
@@ -5532,7 +5731,7 @@ fn test_alias_unknown_fields_preserve_additive_config_compatibility() {
 #[test]
 fn test_alias_validation_precedes_extension_initialization_errors() {
     let (_guard, config) = alias_config(
-        "task:\n  default_status: definitely-invalid\naliases:\n  - name: help\n    arguments: summary\n",
+        "tasks:\n  default_status: definitely-invalid\naliases:\n  - name: help\n    arguments: summary\n",
     );
     ragtag()
         .args(["--config", &config, "--help"])

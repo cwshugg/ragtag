@@ -17,6 +17,9 @@ use crate::error::RagtagError;
 use crate::extensions::{ExtensionContext, TagExtension, ValidationMessage};
 use crate::models::Tag;
 
+/// Canonical top-level configuration key for the task extension.
+pub(crate) const TASKS_CONFIG_KEY: &str = "tasks";
+
 /// The task extension implementing `TagExtension`.
 pub struct TaskExtension {
     config: config::TaskConfig,
@@ -51,7 +54,7 @@ impl TagExtension for TaskExtension {
     }
 
     fn config_key(&self) -> Option<&str> {
-        Some("task")
+        Some(TASKS_CONFIG_KEY)
     }
 
     fn init(&mut self, config_value: Option<&serde_yml::Value>) -> Result<(), RagtagError> {

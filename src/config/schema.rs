@@ -66,20 +66,26 @@ impl<'de> Deserialize<'de> for ColorMode {
 /// ordered, nonempty `names` sequence of peer invocation names. If expansion
 /// token zero exactly names another alias, composition continues recursively.
 ///
-/// In the YAML config, `arguments` is written as a single shell-like string
-/// (e.g., `arguments: "task summary"`). It is split into individual tokens
-/// with shell-like quoting semantics (via the `shlex` crate) at load time and
-/// stored as a `Vec<String>`. When serialized, the tokens are joined back into
-/// a single shell-quoted string so the external YAML shape is preserved.
-/// Serialization is canonical: exactly one configured name is emitted as
-/// `name`, while two or more ordered peer names are emitted as `names`. A
-/// one-element input `names` sequence therefore serializes back as `name`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// In YAML, `arguments` is one shell-like template string. It is split into
+/// tokens without expanding environment references. Each token is interpolated
+/// independently at invocation time. Serialization joins the tokens back into
+/// one canonical shell-quoted string.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Alias {
     /// The ordered peer names that invoke this alias definition.
     pub names: Vec<String>,
-    /// The tokens the alias expands to (e.g., `["task", "summary"]`).
+    /// The deferred alias argument tokens.
     pub arguments: Vec<String>,
+}
+
+impl std::fmt::Debug for Alias {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Alias")
+            .field("name_count", &self.names.len())
+            .field("argument_count", &self.arguments.len())
+            .finish()
+    }
 }
 
 impl<'de> Deserialize<'de> for Alias {
@@ -115,17 +121,16 @@ impl<'de> Deserialize<'de> for Alias {
                 ));
             }
         };
-        let primary_name = &names[0];
         let arguments = shlex::split(&raw.arguments).ok_or_else(|| {
             serde::de::Error::custom(format!(
-                "alias \"{}\" has an invalid arguments string: {:?}",
-                primary_name, raw.arguments
+                "alias \"{}\" has an invalid arguments string",
+                names[0]
             ))
         })?;
         if arguments.is_empty() {
             return Err(serde::de::Error::custom(format!(
                 "alias \"{}\" has empty arguments",
-                primary_name
+                names[0]
             )));
         }
         Ok(Alias { names, arguments })
@@ -139,8 +144,6 @@ impl Serialize for Alias {
     {
         use serde::ser::SerializeStruct;
 
-        // Join the tokens back into a single shell-quoted string so the
-        // serialized form matches the documented single-string config shape.
         let joined = shlex::try_join(self.arguments.iter().map(String::as_str))
             .map_err(serde::ser::Error::custom)?;
         let mut state = serializer.serialize_struct("Alias", 2)?;
@@ -171,13 +174,23 @@ impl Default for OutputConfig {
 }
 
 /// Configuration for files created by the built-in file command.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct FileConfig {
     /// Directory used when `file touch` has no explicit path.
     pub default_directory: PathBuf,
     /// Chrono strftime pattern used to generate the default filename.
     pub filename_format: String,
+}
+
+impl std::fmt::Debug for FileConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FileConfig")
+            .field("default_directory", &"<redacted>")
+            .field("filename_format", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Default for FileConfig {
@@ -217,7 +230,7 @@ impl FileConfig {
 /// The core ragtag configuration.
 ///
 /// All fields have defaults, so a minimal or empty YAML file is valid.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     /// Regex patterns for file paths to ignore.
@@ -240,6 +253,23 @@ pub struct Config {
     /// Keys are extension config section names in the YAML file (e.g., "tasks" for the task extension).
     #[serde(flatten)]
     pub extension_configs: HashMap<String, serde_yml::Value>,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Config")
+            .field("ignore_patterns", &"<redacted>")
+            .field("respect_gitignore", &self.respect_gitignore)
+            .field("skip_hidden", &self.skip_hidden)
+            .field("max_depth", &self.max_depth)
+            .field("max_file_size", &self.max_file_size)
+            .field("output", &"<redacted>")
+            .field("files", &"<redacted>")
+            .field("aliases", &"<redacted>")
+            .field("extension_configs", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Default for Config {
@@ -304,7 +334,7 @@ impl Config {
     /// - an empty names vector or individual name,
     /// - any name that collides with a real command name,
     /// - any duplicate name within or across definitions,
-    /// - an alias whose `arguments` expand to no tokens.
+    /// - an alias whose `arguments` token list is empty.
     pub fn validate_aliases(
         &self,
         real_command_names: &[String],
@@ -353,9 +383,6 @@ impl Config {
                     )));
                 }
             }
-            // Ensure the alias actually expands to a command. A parseable
-            // but empty token list (e.g., a whitespace-only arguments string)
-            // is rejected here as well as at deserialization time.
             if alias.arguments.is_empty() {
                 return Err(crate::error::RagtagError::InvalidConfig(format!(
                     "alias \"{}\" has empty arguments",
@@ -561,7 +588,7 @@ tasks:
     }
 
     #[test]
-    fn aliases_ignore_unknown_fields_for_additive_compatibility() {
+    fn aliases_ignore_unknown_metadata_fields() {
         let alias: Alias = serde_yml::from_str(
             "name: legacy\narguments: summary\ndescription: handy\nfuture_metadata:\n  category: reporting\n",
         )
@@ -611,6 +638,10 @@ tasks:
         ] {
             assert!(serde_yml::from_str::<Alias>(yaml).is_err(), "{yaml}");
         }
+
+        let deferred: Alias =
+            serde_yml::from_str("name: a\narguments: 'query \"$RUNTIME\"'\n").unwrap();
+        assert_eq!(deferred.arguments, ["query", "$RUNTIME"]);
     }
 
     #[test]

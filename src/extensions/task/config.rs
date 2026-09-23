@@ -11,7 +11,7 @@ use crate::error::RagtagError;
 pub const ALLOWED_WORKTIME_UNITS: &[&str] = &["hours", "days", "weeks"];
 
 /// Configuration for the task extension.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TaskConfig {
     /// The tag name used for tasks (default: "task").
@@ -28,6 +28,19 @@ pub struct TaskConfig {
     /// Defaults to ["done", "abandoned"]. These use the category names
     /// (the keys in status_keywords), not individual keyword values.
     pub exclude_status_categories: Vec<String>,
+}
+
+impl std::fmt::Debug for TaskConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TaskConfig")
+            .field("values", &"<redacted>")
+            .field(
+                "exclude_status_category_count",
+                &self.exclude_status_categories.len(),
+            )
+            .finish()
+    }
 }
 
 impl Default for TaskConfig {
@@ -50,8 +63,7 @@ impl TaskConfig {
             return Err(RagtagError::ExtensionError {
                 extension_name: "Task Manager".to_string(),
                 message: format!(
-                    "invalid default_worktime_units \"{}\" — allowed values: {}",
-                    self.default_worktime_units,
+                    "invalid tasks.default_worktime_units — allowed values: {}",
                     ALLOWED_WORKTIME_UNITS.join(", ")
                 ),
             });
@@ -63,10 +75,8 @@ impl TaskConfig {
         {
             return Err(RagtagError::ExtensionError {
                 extension_name: "Task Manager".to_string(),
-                message: format!(
-                    "invalid default_status \"{}\" — must be a recognized status keyword",
-                    self.default_status
-                ),
+                message: "invalid tasks.default_status — must be a recognized status keyword"
+                    .to_string(),
             });
         }
 
@@ -74,13 +84,11 @@ impl TaskConfig {
         // `exclude_status_categories`.  `get_excluded_keywords()` stays silent
         // so the message is never repeated on every list/summary invocation.
         const VALID_CATEGORIES: &[&str] = &["done", "active", "blocked", "abandoned", "inactive"];
-        for cat in &self.exclude_status_categories {
+        for (index, cat) in self.exclude_status_categories.iter().enumerate() {
             if !VALID_CATEGORIES.contains(&cat.as_str()) {
                 eprintln!(
-                    "ragtag warning: unknown status category \"{}\" in \
-                     exclude_status_categories (valid values: done, active, blocked, \
-                     abandoned, inactive) — entry will be ignored",
-                    cat
+                    "ragtag warning: tasks.exclude_status_categories[{index}] is unknown \
+                     (valid values: done, active, blocked, abandoned, inactive) — entry will be ignored"
                 );
             }
         }
@@ -122,9 +130,11 @@ impl TaskConfig {
 
     /// Deserializes from a raw YAML value.
     pub fn from_config_value(val: &serde_yml::Value) -> Result<Self, RagtagError> {
-        serde_yml::from_value(val.clone()).map_err(|e| RagtagError::ExtensionError {
+        serde_yml::from_value(val.clone()).map_err(|_| RagtagError::ExtensionError {
             extension_name: "Task Manager".to_string(),
-            message: format!("invalid task configuration: {e}"),
+            message:
+                "invalid task configuration; review tasks field names and expected value types"
+                    .to_string(),
         })
     }
 }
@@ -132,7 +142,7 @@ impl TaskConfig {
 /// Status keywords grouped by category.
 ///
 /// Each category maps to a color for output formatting.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct StatusKeywords {
     pub done: Vec<String>,
@@ -140,6 +150,19 @@ pub struct StatusKeywords {
     pub blocked: Vec<String>,
     pub abandoned: Vec<String>,
     pub inactive: Vec<String>,
+}
+
+impl std::fmt::Debug for StatusKeywords {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StatusKeywords")
+            .field("done_count", &self.done.len())
+            .field("active_count", &self.active.len())
+            .field("blocked_count", &self.blocked.len())
+            .field("abandoned_count", &self.abandoned.len())
+            .field("inactive_count", &self.inactive.len())
+            .finish()
+    }
 }
 
 impl Default for StatusKeywords {
@@ -194,20 +217,58 @@ mod tests {
 
     #[test]
     fn test_validate_bad_worktime_units() {
+        const SECRET: &str = "sentinel-worktime-secret";
         let config = TaskConfig {
-            default_worktime_units: "fortnights".to_string(),
+            default_worktime_units: SECRET.to_string(),
             ..Default::default()
         };
-        assert!(config.validate().is_err());
+        let error = config.validate().unwrap_err();
+        assert!(!error.to_string().contains(SECRET));
+        assert!(!format!("{error:?}").contains(SECRET));
+        assert!(error.to_string().contains("tasks.default_worktime_units"));
     }
 
     #[test]
     fn test_validate_bad_status() {
+        const SECRET: &str = "sentinel-status-secret";
         let config = TaskConfig {
-            default_status: "unknown_status".to_string(),
+            default_status: SECRET.to_string(),
             ..Default::default()
         };
-        assert!(config.validate().is_err());
+        let error = config.validate().unwrap_err();
+        assert!(!error.to_string().contains(SECRET));
+        assert!(!format!("{error:?}").contains(SECRET));
+        assert!(error.to_string().contains("tasks.default_status"));
+    }
+
+    #[test]
+    fn test_deserialization_errors_do_not_include_values() {
+        const SECRET: &str = "sentinel-deserialization-secret";
+        let yaml = serde_yml::from_str::<serde_yml::Value>(&format!(
+            "exclude_status_categories: {SECRET}\n"
+        ))
+        .unwrap();
+        let error = TaskConfig::from_config_value(&yaml).unwrap_err();
+        assert!(!error.to_string().contains(SECRET));
+        assert!(!format!("{error:?}").contains(SECRET));
+        assert!(error.to_string().contains("expected value types"));
+    }
+
+    #[test]
+    fn test_debug_output_redacts_task_configuration_values() {
+        const SECRET: &str = "sentinel-task-debug-secret";
+        let config = TaskConfig {
+            default_status: SECRET.to_string(),
+            exclude_status_categories: vec![SECRET.to_string()],
+            status_keywords: StatusKeywords {
+                active: vec![SECRET.to_string()],
+                ..StatusKeywords::default()
+            },
+            ..TaskConfig::default()
+        };
+
+        assert!(!format!("{config:?}").contains(SECRET));
+        assert!(!format!("{:?}", config.status_keywords).contains(SECRET));
     }
 
     #[test]

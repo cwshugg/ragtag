@@ -23,6 +23,18 @@ pub enum RagtagError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
+    /// Environment-derived configuration failed validation without disclosure.
+    #[error(
+        "error: configuration is invalid after environment interpolation; review referenced variables and expected field types"
+    )]
+    EnvironmentDerivedConfig,
+
+    /// A command using environment-derived configuration failed safely.
+    #[error(
+        "error: command failed while using environment-derived configuration; review referenced variables and command inputs"
+    )]
+    EnvironmentDerivedConfigCommand,
+
     /// The config file contains invalid values.
     #[error("error: invalid config: {0}")]
     InvalidConfig(String),
@@ -166,14 +178,18 @@ pub enum RagtagError {
         chain: Vec<String>,
     },
 
-    /// An alias terminated at a definite unknown command target.
+    /// A command using environment-derived data failed without disclosure.
     #[error(
-        "error: alias target \"{target}\" is not a command (chain: {})",
-        chain.join(" -> ")
+        "error: alias \"{alias}\" command failed after environment interpolation; review its variable values and expected arguments"
     )]
+    EnvironmentDerivedAliasCommand {
+        /// Alias spelling selected by the user.
+        alias: String,
+    },
+
+    /// An alias terminated at a definite unknown command target.
+    #[error("error: alias target is not a command (chain: {})", chain.join(" -> "))]
     AliasTargetUnknown {
-        /// Unknown terminal target.
-        target: String,
         /// Selected and referenced spellings in expansion order.
         chain: Vec<String>,
     },
@@ -262,12 +278,11 @@ mod tests {
         assert!(saturated.to_string().contains("usize::MAX"));
 
         let unknown = RagtagError::AliasTargetUnknown {
-            target: "missing".to_string(),
             chain: vec!["a".to_string(), "b".to_string()],
         };
         assert_eq!(
             unknown.to_string(),
-            "error: alias target \"missing\" is not a command (chain: a -> b)"
+            "error: alias target is not a command (chain: a -> b)"
         );
     }
 }

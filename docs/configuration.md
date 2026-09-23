@@ -82,6 +82,61 @@ ragtag summary
 
 The `--config` CLI flag takes precedence over `RAGTAG_CONFIG`. If neither is set, walk-up discovery is used.
 
+## Environment Interpolation
+
+After parsing the YAML document, ragtag interpolates every YAML string value
+before typed configuration is deserialized or consumed. Mapping keys, YAML
+tags, scalar types, sequences, mappings, and document structure are never
+changed. This applies uniformly to core settings, paths, status values, colors,
+lists, alias metadata, and known or unknown extension configuration.
+
+Two reference forms are supported, using names that match
+`[A-Za-z_][A-Za-z0-9_]*`:
+
+```yaml
+files:
+  default_directory: "${RAGTAG_NOTES_DIR}"
+tasks:
+  default_owner: "$USER"
+ignore_patterns:
+  - "^${BUILD_DIRECTORY}/"
+```
+
+The interpolation rules are:
+
+* `$NAME` and `${NAME}` read `NAME` from the process environment.
+* An undefined variable and a defined-but-empty variable both produce an empty
+  string.
+* Unbraced names consume the longest valid name. For example, `$HOME_DIR`
+  reads `HOME_DIR`, not `HOME` followed by `_DIR`.
+* `$$` produces one literal `$` and prevents the second dollar from beginning
+  a reference. For example, `$$HOME` becomes the literal `$HOME`.
+* Expansion is one pass. If `FIRST` contains `$SECOND`, expanding `$FIRST`
+  produces the literal text `$SECOND`; it is not expanded again.
+* Invalid or incomplete forms are preserved as one literal unit, including
+  `$`, `${`, `${}`, `${9NAME}`, `${BAD-NAME}`, `${MISSING`, `$9`, and `$-`.
+  Dollars inside a malformed braced form are never scanned separately. For
+  example, `${BAD-$GOOD}` remains unchanged even when `GOOD` is defined.
+* Environment text is inserted only into an existing YAML string value. A
+  value such as `[one, two]` remains a string and cannot inject a sequence or
+  alter document structure.
+
+Alias `arguments` are the sole deferred value. Ragtag shell-splits their trusted
+template during configuration loading without expanding references. Each
+stored token is interpolated independently from the current process environment
+when the alias is invoked. See [Aliases](#aliases) for token behavior.
+
+To avoid disclosing environment-derived values, typed configuration and
+runtime errors do not echo resolved content. `ragtag config get` prints
+`<environment-derived>` for any string field produced by interpolation,
+including undefined or defined-empty references. Alias inspection prints the
+canonical unexpanded argument template.
+
+Ragtag does not interpolate command-line arguments. The invoking shell is
+responsible for expansion there. `RAGTAG_CONFIG` and `RAGTAG_PATH` retain their
+existing roles as direct environment fallbacks; their values are not passed
+through this config interpolation engine.
+
 ## Complete Schema
 
 Below is a fully-specified config file showing all options and their default values:
@@ -207,7 +262,7 @@ tasks:
 | `aliases` | list of objects | `[]` | User-defined command aliases (see [Aliases](#aliases-1)) |
 | `aliases[].name` | string | conditional | Single alias name; required when `names` is absent and mutually exclusive with it |
 | `aliases[].names` | nonempty list of strings | conditional | Ordered peer names; required when `name` is absent and mutually exclusive with it |
-| `aliases[].arguments` | string | (required) | Command string the alias expands to (split with shell-like quoting) |
+| `aliases[].arguments` | string | (required) | Shell-split template whose stored tokens are interpolated independently at invocation |
 
 ### Task Extension Options
 
@@ -268,13 +323,31 @@ Comma-delimited strings and token-array forms for `arguments` are not accepted.
 `ragtag config get aliases` uses ragtag's human-readable flow-style rendering,
 not YAML. Its field selection is canonical: a single-name definition uses
 `name`, multiple names retain their configured order under `names`, and
-`arguments` remains one shell-quoted string rather than a token sequence.
+`arguments` remains one canonical shell-quoted string rather than a token
+sequence. Environment references remain unexpanded in this output.
+
+The exported Rust `Alias.arguments` field is `Vec<String>`. YAML
+deserialization performs the shell-like split, and serialization joins those
+tokens into the canonical string form.
 
 **Behavior:**
 
-* **Shell-like argument splitting.** The `arguments` string is split using
-  shell-word semantics (via the `shlex` crate), so quoting is respected:
-  `arguments: 'task get "two words"'` yields `task`, `get`, `two words`.
+* **Shell-like argument splitting before interpolation.** The trusted
+  `arguments` template is split using shell-word semantics (via the `shlex`
+  crate) while config loads. Quotes and whitespace in the template define
+  token boundaries. With `TASK_OWNER='Alice Smith'`,
+  `arguments: "query task --filter owner=$TASK_OWNER"` produces one filter
+  token, `owner=Alice Smith`. Quotes, backslashes, whitespace, or option-like
+  text supplied by the environment remain opaque data in that same token and
+  cannot create arguments or quoting structure.
+* **Invocation-time environment.** Alias argument templates are not expanded
+  while loading config. Each definition is expanded once when reached during
+  an invocation, including recursively composed aliases. Every stored token is
+  expanded independently and exactly once when its definition is reached.
+  Environment changes after config loading therefore affect the next
+  invocation. Dollar escaping, undefined variables, invalid forms, and
+  single-pass behavior match
+  [Environment Interpolation](#environment-interpolation).
 * **Trailing arguments are appended.** Anything you type after the alias name is
   appended to the expansion. With the example above, `ragtag active --count`
   adds `--count` to the expanded `query task` command.
@@ -312,7 +385,8 @@ not YAML. Its field selection is canonical: a single-name definition uses
 
 * At most 256 definitions and 256 names in aggregate are allowed.
 * Every definition must have one naming form, at least one nonempty name, and
-  a nonempty tokenized `arguments` value.
+  a shell-parseable `arguments` template that produces at least one token.
+  Environment-derived values are never reparsed as shell-like text.
 * Every name must be unique across all definitions and must not collide with a
   built-in (including `help`) or extension command.
 
@@ -321,8 +395,9 @@ Definition identity, not the selected synonym, is used for cycle detection.
 Ambiguous outer prefixes, cycles, exceeded limits, and definite unknown
 terminal targets report deterministic errors without executing external
 programs. These alias-engine and configuration errors exit with status `1`.
-If expansion succeeds but the terminal command rejects its command-line
-syntax, clap reports that grammar error and exits with status `2`.
+When no environment reference participates, terminal clap grammar errors exit
+with status `2`. Failures involving an environment-derived alias token use a
+generic status-`1` error so the resolved value cannot appear in diagnostics.
 
 ## File Creation
 
@@ -354,13 +429,17 @@ The default format has one-second resolution. If the generated target already
 exists, creation fails without overwriting, suffixing, incrementing, or
 retrying. The same exclusive behavior applies to explicit targets.
 
-Configuration and CLI paths are literal operating-system paths. Ragtag does
-not expand `~` or environment variables. Explicit relative `--path` values are
-different from `files.default_directory`: they are resolved from the startup
-working directory, not the ragtag root. Explicit absolute and parent paths are
-supported, and missing parent directories are created recursively.
+Ragtag does not expand `~`. Configuration path values such as
+`files.default_directory` support the generic environment interpolation
+described above. Command-line paths are left untouched by ragtag; the invoking
+shell is responsible for any command-line expansion. Explicit relative
+`--path` values are different from `files.default_directory`: they are resolved
+from the startup working directory, not the ragtag root. Explicit absolute and
+parent paths are supported, and missing parent directories are created
+recursively.
 
-Both resolved values can be inspected:
+Both configured values can be inspected. Environment-derived values display
+the redaction marker described above:
 
 ```bash
 ragtag config get files.default_directory
@@ -422,10 +501,11 @@ ignore_patterns:
 # .ragtag.yaml — handy shorthands
 aliases:
   - name: "todo"
-    arguments: "query task --filter status=active"
+    arguments: 'query task --filter "owner=$TASK_OWNER"'
   - name: "ts"
     arguments: "task summary"
 ```
 
-Now `ragtag todo` runs `ragtag query task --filter status=active`, and
+With `TASK_OWNER='Alice Smith'`, `ragtag todo` runs
+`ragtag query task --filter 'owner=Alice Smith'`, and
 `ragtag ts --path src` runs `ragtag task summary --path src`.
