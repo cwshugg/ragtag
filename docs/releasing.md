@@ -65,51 +65,6 @@ The manual **Run workflow** action on the `Release` workflow is a draft recovery
 operation for the selected `master` commit. It has no version input and
 therefore cannot bypass Cargo metadata.
 
-## Protected Publication
-
-Publishing uses the separate **Publish Release** workflow. It is
-`workflow_dispatch`-only, has no inputs, rejects forks and non-`master` refs,
-and derives the exact version and tag from Cargo metadata at the selected
-commit.
-
-Configure a GitHub environment named `release-publication` before enabling this
-workflow:
-
-* add at least one required human reviewer;
-* enable **Prevent self-review**;
-* restrict deployment branches to protected branches or a custom `master`
-  policy;
-* do not configure environment secrets, because publication uses only the
-  scoped `GITHUB_TOKEN`.
-
-The write-capable publication job references this environment, so GitHub pauses
-it for approval before issuing its job token. After approval, the job verifies
-that the environment still reports required reviewers and a restricted branch
-policy. It then:
-
-1. Finds a successful first-party `Release` workflow run for the exact current
-   commit and downloads that run's immutable digest artifacts. Digest artifacts
-   are retained for 30 days, so approve or rerun draft creation within that
-   window.
-2. Requires the exact Cargo-derived tag to target that commit and requires one
-   complete, correctly titled draft with the expected prerelease state.
-3. Downloads all remote assets and verifies their bytes against the retained
-   digests, their checksum pairs, and attestations bound to this repository,
-   `.github/workflows/release.yml`, `refs/heads/master`, and the exact commit.
-4. Re-fetches the tag and complete draft. It compares the release ID, release
-   metadata, every asset ID, API SHA-256 digest, size, state, and timestamps
-   with the verified snapshot.
-5. Publishes that exact release ID using the re-fetched ETag as an `If-Match`
-   precondition, then verifies that the same tag, release ID, and assets became
-   public.
-
-Draft creation and publication share a non-cancelling per-tag concurrency
-group, preventing the project workflows from repairing a draft while it is
-being published. The publication job needs only `actions: read`,
-`attestations: read`, and `contents: write`; it does not receive an OIDC token.
-Pull requests, pushes, forks, and failed non-`master` preflight jobs never reach
-the write-capable job.
-
 ## Required Repository Rules
 
 The workflow can detect a conflicting or moved tag and refuses to retarget it,
@@ -128,23 +83,19 @@ rules preserve the commit identity checked by provenance verification and make
 release tags effectively immutable after creation.
 
 Enable GitHub immutable releases if available, and restrict release-editing
-permission and ruleset bypasses to the smallest maintainer group. The REST API
-does not offer a transaction that combines downloading asset bytes and
-publishing. The workflow narrows the residual race with a final metadata/tag
-re-fetch, immutable per-upload asset digests, shared workflow concurrency, and
-an ETag-conditional publish. A repository administrator who can bypass rules
-or mutate assets outside the workflow during that final API interval remains a
-platform-level trust boundary.
+permission and ruleset bypasses to the smallest maintainer group.
 
 ## Review and Publish
 
-Before approving the protected publication deployment:
+Release automation never publishes a release. It stops after creating,
+repairing, and verifying the GitHub draft. A human publishes the draft manually
+through GitHub after the workflow succeeds; that manual transition is outside
+the workflow and is not claimed to be atomic with automated verification.
+
+Before selecting **Publish release** in the GitHub Releases interface:
 
 * Confirm the tag and draft target the intended `master` commit.
 * Confirm the title is `ragtag v<version>` and prerelease state matches SemVer.
 * Confirm there are six archives and six matching `.sha256` files.
 * Review generated notes and the Windows ARM64 cross-compilation limitation.
-
-Do not publish through the Releases web interface. Approve the
-`release-publication` deployment so verification and the conditional
-draft-to-public mutation remain in one protected job.
+* Confirm the successful workflow run verified the final remote draft assets.

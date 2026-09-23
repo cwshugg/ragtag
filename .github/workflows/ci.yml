@@ -55,3 +55,25 @@ jobs:
 
       - name: Test
         run: cargo test --locked --verbose
+
+      - name: Test release metadata automation
+        run: python3 -m unittest discover -s .github/scripts -p "test_*.py" -v
+
+      - name: Lint release automation
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          args: check
+          src: .github/scripts
+          version: 0.13.2
+
+      - name: Check release automation formatting
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          args: format --check
+          src: .github/scripts
+          version: 0.13.2
+
+      - name: Lint GitHub Actions workflows
+        uses: raven-actions/actionlint@3a24062651993d40fed1019b58ac6fbdfbf276cc # v2.0.1
+        with:
+          version: 1.7.12
