@@ -3,6 +3,7 @@
 //! Handles config schema definitions, YAML deserialization, and
 //! walk-up file discovery with `.git` boundary detection.
 
+pub(crate) mod interpolation;
 pub mod loader;
 pub mod schema;
 

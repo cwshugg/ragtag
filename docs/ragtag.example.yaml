@@ -12,6 +12,12 @@
 # including file-writing commands. Config must be a regular file no larger
 # than 1 MiB.
 #
+# YAML string values support one-pass `$NAME` and `${NAME}` environment
+# interpolation after parsing. Undefined names become empty, `$$` emits a
+# literal dollar, and malformed references remain literal. Keys and YAML
+# structure are never expanded. Alias `arguments` are deferred until each
+# invocation so they use the current environment.
+#
 # Every field below has a default value — an empty file (or no file at all)
 # is perfectly valid. Only override what you need.
 # =============================================================================
@@ -52,8 +58,8 @@ max_file_size: 10485760
 #
 # Used by `ragtag file touch` when `--path` is omitted. A relative directory
 # is based on the selected config file's directory, or the startup working
-# directory when there is no config. Paths are literal: `~` and environment
-# variables are not expanded.
+# directory when there is no config. `~` is not expanded; environment
+# references use the generic config interpolation described above.
 files:
   # May be relative, absolute, or contain parent components.
   # Missing parent directories are created recursively.
@@ -84,9 +90,11 @@ output:
 #
 # User-defined command aliases. Empty by default — there are no built-in
 # aliases. Each definition uses either `name` or a nonempty ordered `names`
-# list. Running `ragtag <name>` expands `arguments` (split with shell-like
-# quoting), appends trailing argv, and composes when expansion token zero
-# exactly names another alias. Outer prefixes are inferred when unambiguous.
+# list. Ragtag splits `arguments` with shell-like quoting at config load, then
+# interpolates each stored token independently at invocation. Environment
+# spaces, quotes, and backslashes remain data inside one token. Trailing argv
+# is appended, and composition occurs when token zero exactly names another
+# alias. Outer prefixes are inferred when unambiguous.
 # Names must be nonempty, unique, and distinct from real commands, including
 # `help`. Limits are 256 definitions, 256 aggregate names, 32 composed
 # definitions, and 4096 expanded arguments. A leading `--` prevents alias
@@ -99,6 +107,9 @@ aliases: []
   #   arguments: "query task --filter status=active"
   # - name: "active-count"
   #   arguments: "active --count"
+  # - name: "mine"
+  #   # The variable's complete value remains in this configured filter token.
+  #   arguments: "query task --filter owner=$RAGTAG_OWNER"
 
 
 # ---------------------------------------------------------------------------

@@ -34,8 +34,8 @@ pub fn run(
     for file_path in &files {
         let content = match std::fs::read_to_string(file_path) {
             Ok(c) => c,
-            Err(e) => {
-                log::warn!("skipping unreadable file {}: {}", file_path.display(), e);
+            Err(error) => {
+                log::warn!("skipping an unreadable input file ({:?})", error.kind());
                 continue;
             }
         };

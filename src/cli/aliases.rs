@@ -4,6 +4,7 @@
 //! argv assembly. The real clap command tree owns terminal value parsing, so
 //! individual command arguments may still impose Unicode requirements.
 
+use crate::config::interpolation::interpolate_string_with_status;
 use crate::config::Alias;
 use crate::error::RagtagError;
 use std::collections::{HashMap, HashSet};
@@ -182,6 +183,8 @@ pub struct Expansion {
     pub working: Vec<OsString>,
     /// Number of leading working tokens supplied by alias definitions.
     configured_len: usize,
+    /// Whether any alias token contained an environment reference.
+    environment_derived: bool,
 }
 
 impl Expansion {
@@ -214,6 +217,11 @@ impl Expansion {
             }
         }
         paths
+    }
+
+    /// Returns whether invocation-time interpolation supplied token data.
+    pub fn has_environment_interpolation(&self) -> bool {
+        self.environment_derived
     }
 }
 
@@ -266,13 +274,43 @@ pub fn expand_alias(
     original_suffix: &[OsString],
     real_names: &[String],
 ) -> Result<Expansion, RagtagError> {
+    expand_alias_with(
+        aliases,
+        definition_index,
+        selected_name,
+        original_suffix,
+        real_names,
+        &mut |name| std::env::var(name).ok(),
+    )
+}
+
+/// Expands an alias with an injected environment lookup.
+///
+/// Each definition's pre-tokenized arguments are interpolated once per token.
+/// Environment text therefore remains opaque argument data and cannot alter
+/// token boundaries or shell-like quoting.
+fn expand_alias_with<F>(
+    aliases: &AliasIndex<'_>,
+    definition_index: usize,
+    selected_name: &str,
+    original_suffix: &[OsString],
+    real_names: &[String],
+    lookup: &mut F,
+) -> Result<Expansion, RagtagError>
+where
+    F: FnMut(&str) -> Option<String>,
+{
     let outer = &aliases.definitions[definition_index];
     let mut chain = vec![selected_name.to_string()];
+    let (outer_arguments, mut working_environment) =
+        interpolate_alias_arguments(&outer.arguments, lookup);
+    let mut environment_derived = working_environment.iter().any(|derived| *derived);
     let initial_count =
-        checked_projected_count(outer.arguments.len(), 0, original_suffix.len(), &chain)?;
+        checked_projected_count(outer_arguments.len(), 0, original_suffix.len(), &chain)?;
     let mut working = Vec::with_capacity(initial_count);
-    working.extend(outer.arguments.iter().map(OsString::from));
+    working.extend(outer_arguments.into_iter().map(OsString::from));
     working.extend(original_suffix.iter().cloned());
+    working_environment.extend(std::iter::repeat_n(false, original_suffix.len()));
 
     let mut active_definitions = HashSet::new();
     active_definitions.insert(definition_index);
@@ -287,7 +325,12 @@ pub fn expand_alias(
         };
 
         let mut next_chain = chain.clone();
-        next_chain.push(reference_name);
+        let reference_is_derived = working_environment.first().copied().unwrap_or(false);
+        next_chain.push(if reference_is_derived {
+            aliases.canonical_name(next_index).to_string()
+        } else {
+            reference_name.clone()
+        });
         if active_definitions.contains(&next_index) {
             return Err(RagtagError::AliasCycle { chain: next_chain });
         }
@@ -298,12 +341,18 @@ pub fn expand_alias(
             });
         }
 
-        let replacement = &aliases.definitions[next_index].arguments;
+        let (replacement, replacement_environment) =
+            interpolate_alias_arguments(&aliases.definitions[next_index].arguments, lookup);
+        environment_derived |= replacement_environment.iter().any(|derived| *derived);
         let projected = checked_projected_count(working.len(), 1, replacement.len(), &next_chain)?;
         let mut next = Vec::with_capacity(projected);
-        next.extend(replacement.iter().map(OsString::from));
+        next.extend(replacement.into_iter().map(OsString::from));
         next.extend(working.into_iter().skip(1));
+        let mut next_environment = Vec::with_capacity(projected);
+        next_environment.extend(replacement_environment);
+        next_environment.extend(working_environment.into_iter().skip(1));
         working = next;
+        working_environment = next_environment;
         chain = next_chain;
         active_definitions.insert(next_index);
     }
@@ -313,10 +362,7 @@ pub fn expand_alias(
             let exact = real_names.iter().any(|name| name == target);
             let has_prefix = real_names.iter().any(|name| name.starts_with(target));
             if !exact && !has_prefix {
-                return Err(RagtagError::AliasTargetUnknown {
-                    target: target.to_string(),
-                    chain,
-                });
+                return Err(RagtagError::AliasTargetUnknown { chain });
             }
         }
     }
@@ -325,7 +371,20 @@ pub fn expand_alias(
     Ok(Expansion {
         working,
         configured_len,
+        environment_derived,
     })
+}
+
+/// Interpolates each trusted alias token without reparsing inserted values.
+fn interpolate_alias_arguments<F>(arguments: &[String], lookup: &mut F) -> (Vec<String>, Vec<bool>)
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let expanded = arguments
+        .iter()
+        .map(|argument| interpolate_string_with_status(argument, lookup))
+        .collect::<Vec<_>>();
+    expanded.into_iter().unzip()
 }
 
 /// Assembles argv for the single terminal clap parse without changing tokens.
@@ -578,7 +637,9 @@ mod tests {
 
         let definitions = vec![Alias {
             names: vec!["wide".to_string()],
-            arguments: vec!["summary".to_string(); MAX_EXPANDED_ARGUMENTS],
+            arguments: std::iter::repeat_n("summary", MAX_EXPANDED_ARGUMENTS)
+                .map(str::to_string)
+                .collect(),
         }];
         let aliases = AliasIndex::new(&definitions);
         assert!(expand_alias(&aliases, 0, "wide", &[], &["summary".to_string()]).is_ok());
@@ -665,8 +726,8 @@ mod tests {
         let error = expand_alias(&aliases, 0, "outer-prefix", &[], &real).unwrap_err();
         assert!(matches!(
             error,
-            RagtagError::AliasTargetUnknown { target, chain }
-                if target == "in" && chain == ["outer-prefix"]
+            RagtagError::AliasTargetUnknown { chain }
+                if chain == ["outer-prefix"]
         ));
         for (definition_index, selected_name) in
             [(2, "real-prefix"), (3, "real-exact"), (4, "real-ambiguous")]
@@ -704,6 +765,143 @@ mod tests {
         assert_eq!(
             terminal.last().cloned().unwrap().into_vec(),
             vec![0xff, b'x']
+        );
+    }
+
+    #[test]
+    fn invocation_environment_is_deferred_single_pass_and_preserves_token_boundaries() {
+        let definitions = vec![Alias {
+            names: vec!["dynamic".to_string()],
+            arguments: vec![
+                "query".to_string(),
+                "task".to_string(),
+                "--filter".to_string(),
+                "owner=$OWNER".to_string(),
+                "--path".to_string(),
+                "$PATH_VALUE".to_string(),
+            ],
+        }];
+        let aliases = AliasIndex::new(&definitions);
+        let real = vec!["query".to_string()];
+        let mut values = HashMap::from([
+            ("OWNER", "Alice Smith".to_string()),
+            ("PATH_VALUE", "$LITERAL".to_string()),
+        ]);
+
+        let first = expand_alias_with(&aliases, 0, "dynamic", &[], &real, &mut |name| {
+            values.get(name).cloned()
+        })
+        .unwrap();
+        assert_eq!(
+            first.working,
+            [
+                "query",
+                "task",
+                "--filter",
+                "owner=Alice Smith",
+                "--path",
+                "$LITERAL"
+            ]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>()
+        );
+        assert!(first.has_environment_interpolation());
+
+        values.insert("OWNER", "Bob \"Admin\" \\ --no-color".to_string());
+        values.insert("PATH_VALUE", "notes with spaces".to_string());
+        let second = expand_alias_with(&aliases, 0, "dynamic", &[], &real, &mut |name| {
+            values.get(name).cloned()
+        })
+        .unwrap();
+        assert_eq!(
+            second.working,
+            [
+                "query",
+                "task",
+                "--filter",
+                "owner=Bob \"Admin\" \\ --no-color",
+                "--path",
+                "notes with spaces",
+            ]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn recursive_aliases_interpolate_each_template_at_invocation_time() {
+        let definitions = vec![
+            Alias {
+                names: vec!["outer".to_string()],
+                arguments: vec!["$INNER".to_string(), "--count".to_string()],
+            },
+            Alias {
+                names: vec!["inner".to_string()],
+                arguments: vec!["query".to_string(), "$TAG".to_string()],
+            },
+        ];
+        let aliases = AliasIndex::new(&definitions);
+        let values = HashMap::from([("INNER", "inner".to_string()), ("TAG", "task".to_string())]);
+        let expansion = expand_alias_with(
+            &aliases,
+            0,
+            "outer",
+            &[],
+            &["query".to_string()],
+            &mut |name| values.get(name).cloned(),
+        )
+        .unwrap();
+        assert_eq!(
+            expansion.working,
+            ["query", "task", "--count"]
+                .into_iter()
+                .map(OsString::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn original_cli_suffix_is_never_environment_interpolated() {
+        let definitions = vec![alias(&["q"], &["query"])];
+        let values = HashMap::from([("TAG", "task".to_string())]);
+        let expansion = expand_alias_with(
+            &AliasIndex::new(&definitions),
+            0,
+            "q",
+            &[OsString::from("$TAG")],
+            &["query".to_string()],
+            &mut |name| values.get(name).cloned(),
+        )
+        .unwrap();
+        assert_eq!(
+            expansion.working,
+            [OsString::from("query"), OsString::from("$TAG")]
+        );
+    }
+
+    #[test]
+    fn environment_quotes_backslashes_spaces_and_options_remain_opaque_data() {
+        let arguments = vec![
+            "prefix=$VALUE".to_string(),
+            "$EMPTY".to_string(),
+            "literal".to_string(),
+        ];
+        let (expanded, derived) = interpolate_alias_arguments(&arguments, &mut |name| match name {
+            "VALUE" => Some("\" --no-color \\ config get output.color".to_string()),
+            "EMPTY" => None,
+            _ => unreachable!(),
+        });
+
+        assert_eq!(derived, [true, true, false]);
+        assert_eq!(
+            expanded,
+            [
+                "prefix=\" --no-color \\ config get output.color",
+                "",
+                "literal"
+            ]
         );
     }
 }

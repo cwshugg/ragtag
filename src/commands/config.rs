@@ -22,6 +22,30 @@ const TASKS_CONFIG_KEY: &str = "tasks";
 /// Returns `RagtagError::InvalidConfig` if the key is unknown or
 /// traversal fails (e.g., indexing through a scalar value).
 pub fn run_get(key: &str, config: &Config) -> Result<String, RagtagError> {
+    run_get_with_redaction(key, config, &mut |_| false)
+}
+
+/// Runs `config get` while replacing environment-derived string values.
+pub fn run_get_redacted<F>(
+    key: &str,
+    config: &Config,
+    mut is_environment_derived: F,
+) -> Result<String, RagtagError>
+where
+    F: FnMut(&str) -> bool,
+{
+    run_get_with_redaction(key, config, &mut is_environment_derived)
+}
+
+/// Resolves and formats a config key with caller-supplied value provenance.
+fn run_get_with_redaction<F>(
+    key: &str,
+    config: &Config,
+    is_environment_derived: &mut F,
+) -> Result<String, RagtagError>
+where
+    F: FnMut(&str) -> bool,
+{
     // Reject empty or whitespace-only keys.
     if key.trim().is_empty() {
         return Err(RagtagError::InvalidConfig(
@@ -82,25 +106,34 @@ pub fn run_get(key: &str, config: &Config) -> Result<String, RagtagError> {
         }
     }
 
-    Ok(format_value(current))
+    Ok(format_value(current, is_environment_derived))
 }
 
 /// Formats a `serde_yml::Value` for human-readable output.
 ///
 /// Strings are printed without quotes, numbers and booleans as-is,
 /// sequences in JSON-like bracket notation, and mappings in braces.
-fn format_value(val: &serde_yml::Value) -> String {
+fn format_value<F>(val: &serde_yml::Value, is_environment_derived: &mut F) -> String
+where
+    F: FnMut(&str) -> bool,
+{
     match val {
         serde_yml::Value::Null => "null".to_string(),
         serde_yml::Value::Bool(b) => b.to_string(),
         serde_yml::Value::Number(n) => n.to_string(),
+        serde_yml::Value::String(s) if is_environment_derived(s) => {
+            "<environment-derived>".to_string()
+        }
         serde_yml::Value::String(s) => s.clone(),
         serde_yml::Value::Sequence(seq) => {
             let items: Vec<String> = seq
                 .iter()
                 .map(|v| match v {
+                    serde_yml::Value::String(s) if is_environment_derived(s) => {
+                        "\"<environment-derived>\"".to_string()
+                    }
                     serde_yml::Value::String(s) => format!("\"{s}\""),
-                    other => format_value(other),
+                    other => format_value(other, is_environment_derived),
                 })
                 .collect();
             format!("[{}]", items.join(", "))
@@ -109,15 +142,24 @@ fn format_value(val: &serde_yml::Value) -> String {
             let items: Vec<String> = map
                 .iter()
                 .map(|(k, v)| {
-                    let key_str = format_value(k);
-                    let val_str = format_value(v);
+                    let key_str = match k {
+                        serde_yml::Value::String(key) => key.clone(),
+                        other => format_plain_value(other),
+                    };
+                    let val_str = format_value(v, is_environment_derived);
                     format!("{key_str}: {val_str}")
                 })
                 .collect();
             format!("{{{}}}", items.join(", "))
         }
-        serde_yml::Value::Tagged(tagged) => format_value(&tagged.value),
+        serde_yml::Value::Tagged(tagged) => format_value(&tagged.value, is_environment_derived),
     }
+}
+
+/// Formats a mapping key without applying value provenance.
+fn format_plain_value(value: &serde_yml::Value) -> String {
+    let mut never_redact: fn(&str) -> bool = |_| false;
+    format_value(value, &mut never_redact)
 }
 
 #[cfg(test)]
