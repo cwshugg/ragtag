@@ -37,6 +37,17 @@ pub fn validate_filter_expr(expr: &FilterExpr) -> Result<(), RagtagError> {
     filter::validate(expr, &validate_task_filter)
 }
 
+/// Returns whether any parsed condition targets `field` exactly.
+pub fn references_field(expr: &FilterExpr, field: &str) -> bool {
+    match expr {
+        FilterExpr::Condition(condition) => filter::split_condition(condition)
+            .is_some_and(|(condition_field, _, _)| condition_field == field),
+        FilterExpr::And(left, right) | FilterExpr::Or(left, right) => {
+            references_field(left, field) || references_field(right, field)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,6 +62,7 @@ mod tests {
             description: None,
             owner: owner.to_string(),
             status: status.to_string(),
+            task_type: crate::extensions::task::models::TaskType::Item,
             priority,
             worktime_spent: None,
             worktime_estimate: Some(4.0),
@@ -58,7 +70,6 @@ mod tests {
             time_last_updated: None,
             worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
-            raw_span: 0..50,
         }
     }
 
@@ -162,6 +173,26 @@ mod tests {
         assert!(!evaluate_filter(
             &parse_filter_expr("status='>3'").unwrap(),
             &task
+        ));
+    }
+
+    #[test]
+    fn test_references_field_requires_exact_parsed_field_name() {
+        assert!(references_field(
+            &parse_filter_expr("type=project").unwrap(),
+            "type"
+        ));
+        assert!(references_field(
+            &parse_filter_expr("owner=alice AND type=item").unwrap(),
+            "type"
+        ));
+        assert!(!references_field(
+            &parse_filter_expr("prototype=project").unwrap(),
+            "type"
+        ));
+        assert!(!references_field(
+            &parse_filter_expr("title=type").unwrap(),
+            "type"
         ));
     }
 }

@@ -15,9 +15,8 @@ use chrono::Utc;
 
 use super::super::config::TaskConfig;
 use super::create::escape_for_tag;
-use super::find_task_by_id;
+use super::{mutate_task, TaskMutation};
 use crate::cli;
-use crate::edit::{edit_task_tag, write_file_atomically};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -83,59 +82,33 @@ pub fn run(
     let path_str = cli::resolve_path(matches);
     let path = Path::new(&path_str);
 
-    let (task, content) = find_task_by_id(id, path, config, ctx)?;
-
-    // Compute the final worktime value based on the adjustment type.
-    let current = task.worktime_spent.unwrap_or(0.0);
-    let worktime = match adjustment {
-        TimeAdjustment::Set(n) => n,
-        TimeAdjustment::Add(n) => current + n,
-        TimeAdjustment::Subtract(n) => (current - n).max(0.0),
-    };
-
-    // Compute the auto-updated timestamp and format attribute values.
-    let now_ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let ts_formatted = format!("\"{}\"", escape_for_tag(&now_ts));
-
-    // Format the worktime value: drop trailing ".0" for whole numbers.
-    // Only use the integer path if the value fits in i64 range to avoid
-    // silent saturation for extremely large floats.
-    let wt_formatted =
-        if worktime.fract() == 0.0 && worktime >= i64::MIN as f64 && worktime <= i64::MAX as f64 {
+    mutate_task(id, path, no_edit, config, ctx, |task| {
+        let current = task.worktime_spent.unwrap_or(0.0);
+        let worktime = match adjustment {
+            TimeAdjustment::Set(n) => n,
+            TimeAdjustment::Add(n) => current + n,
+            TimeAdjustment::Subtract(n) => (current - n).max(0.0),
+        };
+        let now_ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let ts_formatted = format!("\"{}\"", escape_for_tag(&now_ts));
+        // Drop trailing ".0" only when integer conversion is in range.
+        let wt_formatted = if worktime.fract() == 0.0
+            && worktime >= i64::MIN as f64
+            && worktime <= i64::MAX as f64
+        {
             format!("{}", worktime as i64)
         } else {
             format!("{worktime}")
         };
-
-    let original_tag = &content[task.raw_span.clone()];
-
-    // Apply the worktime_spent change and the auto-managed timestamp in a
-    // single format-preserving edit.
-    let modified_tag = edit_task_tag(
-        original_tag,
-        &[
-            ("worktime_spent", &wt_formatted),
-            ("time_last_updated", &ts_formatted),
-        ],
-    )?;
-
-    if no_edit {
-        writeln!(ctx.stdout, "{modified_tag}").map_err(RagtagError::Io)?;
-    } else {
-        let mut new_content = String::with_capacity(content.len());
-        new_content.push_str(&content[..task.raw_span.start]);
-        new_content.push_str(&modified_tag);
-        new_content.push_str(&content[task.raw_span.end..]);
-        write_file_atomically(&task.location.file_path, &new_content)?;
-        writeln!(
-            ctx.stdout,
-            "Updated task {} (worktime_spent → {})",
-            task.id, wt_formatted
-        )
-        .map_err(RagtagError::Io)?;
-    }
-
-    Ok(())
+        Ok(TaskMutation::new(
+            vec![
+                ("worktime_spent".to_string(), wt_formatted.clone()),
+                ("time_last_updated".to_string(), ts_formatted),
+            ],
+            task.task_type.clone(),
+            format!("Updated task {} (worktime_spent → {wt_formatted})", task.id),
+        ))
+    })
 }
 
 #[cfg(test)]

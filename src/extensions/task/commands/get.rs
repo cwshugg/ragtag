@@ -12,7 +12,7 @@ use crate::cli;
 use crate::config::ColorMode;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
-use crate::output::format::colorize_path;
+use crate::output::format::{colorize_path, terminal_safe};
 
 /// Indicates how a search string matched tasks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,7 +111,7 @@ fn format_results(
     color_mode: &ColorMode,
 ) -> String {
     match matches.len() {
-        0 => format!("No task found for \"{search}\".\n"),
+        0 => format!("No task found for \"{}\".\n", terminal_safe(search)),
         1 => {
             let task = matches[0];
             format!("{}\n", format_task_detail(task, config, color_mode))
@@ -120,24 +120,32 @@ fn format_results(
             let disambiguation_hint = match match_type {
                 MatchType::ExactId => {
                     format!(
-                        "Multiple tasks share the exact ID \"{search}\". Task IDs must be unique.\n"
+                        "Multiple tasks share the exact ID \"{}\". Task IDs must be unique.\n",
+                        terminal_safe(search)
                     )
                 }
                 MatchType::PrefixId => {
                     format!(
-                        "Multiple tasks match id prefix \"{search}\". Please provide a longer ID string.\n"
+                        "Multiple tasks match id prefix \"{}\". Please provide a longer ID string.\n",
+                        terminal_safe(search)
                     )
                 }
                 MatchType::TitleSubstring => {
                     format!(
-                        "Multiple tasks match title \"{search}\". Narrow your search or use a task ID.\n"
+                        "Multiple tasks match title \"{}\". Narrow your search or use a task ID.\n",
+                        terminal_safe(search)
                     )
                 }
             };
             let mut output = disambiguation_hint;
             for task in matches {
                 let path = colorize_path(&task.location.file_path, color_mode);
-                output.push_str(&format!("{} {} {}\n", task.id, path, task.title));
+                output.push_str(&format!(
+                    "{} {} {}\n",
+                    terminal_safe(&task.id),
+                    path,
+                    terminal_safe(&task.title)
+                ));
             }
             output
         }
@@ -164,6 +172,7 @@ mod tests {
             description: None,
             owner: owner.to_string(),
             status: status.to_string(),
+            task_type: crate::extensions::task::models::TaskType::Item,
             priority,
             worktime_spent: None,
             worktime_estimate: Some(4.0),
@@ -171,7 +180,6 @@ mod tests {
             time_last_updated: None,
             worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
-            raw_span: 0..50,
         }
     }
 

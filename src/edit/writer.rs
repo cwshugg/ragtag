@@ -3,17 +3,133 @@
 //! Provides safe file editing via a tempfile + rename strategy that
 //! preserves file permissions and ensures atomic replacement.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::ops::Range;
 use std::path::Path;
+use std::time::SystemTime;
 
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
 use crate::error::RagtagError;
 use crate::parser;
 
 use super::scan::attr_value_end;
+
+/// Stable properties used with raw bytes to identify a selected file version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileIdentity {
+    len: u64,
+    modified: Option<SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    change_seconds: i64,
+    #[cfg(unix)]
+    change_nanoseconds: i64,
+}
+
+impl FileIdentity {
+    /// Captures the available platform identity and change metadata.
+    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+            #[cfg(unix)]
+            change_seconds: metadata.ctime(),
+            #[cfg(unix)]
+            change_nanoseconds: metadata.ctime_nsec(),
+        }
+    }
+}
+
+/// The exact UTF-8 bytes and source identity used to select a task.
+#[derive(Debug, Clone)]
+pub(crate) struct FileSnapshot {
+    content: String,
+    identity: FileIdentity,
+}
+
+impl FileSnapshot {
+    /// Returns the raw text captured from the opened source file.
+    pub(crate) fn content(&self) -> &str {
+        &self.content
+    }
+}
+
+/// Reads one stable source snapshot from a single opened file handle.
+///
+/// Read-only callers retain normal symbolic-link traversal. Checked mutation
+/// rejects symbolic links separately before creating any replacement file.
+pub(crate) fn read_file_snapshot(file_path: &Path) -> Result<FileSnapshot, RagtagError> {
+    let mut file = std::fs::File::open(file_path).map_err(|source| RagtagError::FileRead {
+        path: file_path.to_path_buf(),
+        source,
+    })?;
+
+    let identity_before =
+        FileIdentity::from_metadata(&file.metadata().map_err(|source| RagtagError::FileRead {
+            path: file_path.to_path_buf(),
+            source,
+        })?);
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|source| RagtagError::FileRead {
+            path: file_path.to_path_buf(),
+            source,
+        })?;
+    let identity_after =
+        FileIdentity::from_metadata(&file.metadata().map_err(|source| RagtagError::FileRead {
+            path: file_path.to_path_buf(),
+            source,
+        })?);
+    if identity_before != identity_after || identity_after.len != bytes.len() as u64 {
+        return Err(RagtagError::SourceConflict(file_path.to_path_buf()));
+    }
+    let content = String::from_utf8(bytes).map_err(|source| RagtagError::FileRead {
+        path: file_path.to_path_buf(),
+        source: std::io::Error::new(std::io::ErrorKind::InvalidData, source),
+    })?;
+    Ok(FileSnapshot {
+        content,
+        identity: identity_after,
+    })
+}
+
+/// Verifies that a pathname still identifies the exact selected source bytes.
+pub(crate) fn verify_file_snapshot(
+    file_path: &Path,
+    expected: &FileSnapshot,
+) -> Result<(), RagtagError> {
+    let current = read_file_snapshot(file_path)?;
+    if current.identity != expected.identity || current.content != expected.content {
+        return Err(RagtagError::SourceConflict(file_path.to_path_buf()));
+    }
+    Ok(())
+}
+
+/// Verifies an exact snapshot while requiring a non-symlink pathname.
+fn verify_regular_file_snapshot(
+    file_path: &Path,
+    expected: &FileSnapshot,
+) -> Result<std::fs::Permissions, RagtagError> {
+    let metadata =
+        std::fs::symlink_metadata(file_path).map_err(|source| RagtagError::FileRead {
+            path: file_path.to_path_buf(),
+            source,
+        })?;
+    if metadata.file_type().is_symlink() {
+        return Err(RagtagError::SymlinkEdit(file_path.to_path_buf()));
+    }
+    verify_file_snapshot(file_path, expected)?;
+    Ok(metadata.permissions())
+}
 
 /// Trait for in-place file editing, enabling testability.
 pub trait FileEditor {
@@ -231,6 +347,48 @@ pub fn write_file_atomically(file_path: &Path, content: &str) -> Result<(), Ragt
     Ok(())
 }
 
+/// Checked writer with a deterministic test seam before final verification.
+pub(crate) fn write_file_atomically_if_unchanged_with_hook(
+    file_path: &Path,
+    expected: &FileSnapshot,
+    content: &str,
+    before_final_verification: impl FnOnce(),
+) -> Result<(), RagtagError> {
+    let original_perms = verify_regular_file_snapshot(file_path, expected)?;
+    let parent = file_path.parent().ok_or_else(|| RagtagError::FileWrite {
+        path: file_path.to_path_buf(),
+        source: std::io::Error::other("cannot determine parent directory"),
+    })?;
+    let mut tmpfile =
+        tempfile::NamedTempFile::new_in(parent).map_err(|source| RagtagError::FileWrite {
+            path: file_path.to_path_buf(),
+            source,
+        })?;
+    tmpfile
+        .write_all(content.as_bytes())
+        .and_then(|()| tmpfile.as_file().sync_all())
+        .map_err(|source| RagtagError::FileWrite {
+            path: file_path.to_path_buf(),
+            source,
+        })?;
+    std::fs::set_permissions(tmpfile.path(), original_perms).map_err(|source| {
+        RagtagError::FileWrite {
+            path: file_path.to_path_buf(),
+            source,
+        }
+    })?;
+
+    before_final_verification();
+    verify_regular_file_snapshot(file_path, expected)?;
+    tmpfile
+        .persist(file_path)
+        .map_err(|error| RagtagError::FileWrite {
+            path: file_path.to_path_buf(),
+            source: error.error,
+        })?;
+    Ok(())
+}
+
 /// Modifies a tag attribute within the tag text.
 ///
 /// If the attribute exists, replaces its value. If not, inserts it
@@ -407,6 +565,55 @@ mod tests {
         assert!(updated.contains("\"done\""));
         assert!(updated.contains("before"));
         assert!(updated.contains("after"));
+    }
+
+    #[test]
+    fn checked_atomic_write_rejects_same_length_change_before_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("task.md");
+        fs::write(&file, "original").unwrap();
+        let snapshot = read_file_snapshot(&file).unwrap();
+        fs::write(&file, "modified").unwrap();
+
+        let error =
+            write_file_atomically_if_unchanged_with_hook(&file, &snapshot, "replacement", || {})
+                .unwrap_err();
+
+        assert!(matches!(error, RagtagError::SourceConflict(_)));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "modified");
+    }
+
+    #[test]
+    fn checked_atomic_write_rejects_change_immediately_before_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("task.md");
+        fs::write(&file, "original").unwrap();
+        let snapshot = read_file_snapshot(&file).unwrap();
+
+        let error =
+            write_file_atomically_if_unchanged_with_hook(&file, &snapshot, "replacement", || {
+                fs::write(&file, "concurrent").unwrap()
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, RagtagError::SourceConflict(_)));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "concurrent");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_verification_rejects_replaced_source_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("task.md");
+        let replacement = dir.path().join("replacement.md");
+        fs::write(&file, "same bytes").unwrap();
+        let snapshot = read_file_snapshot(&file).unwrap();
+        fs::write(&replacement, "same bytes").unwrap();
+        fs::rename(&replacement, &file).unwrap();
+
+        let error = verify_file_snapshot(&file, &snapshot).unwrap_err();
+        assert!(matches!(error, RagtagError::SourceConflict(_)));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "same bytes");
     }
 
     #[test]

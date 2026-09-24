@@ -124,6 +124,10 @@ pub enum RagtagError {
     #[error("error: cannot edit symlinked file \"{0}\" — resolve the symlink or edit the target file directly")]
     SymlinkEdit(PathBuf),
 
+    /// A file changed after a task was selected for mutation.
+    #[error("error: source conflict for \"{0}\" — the file changed during task mutation; no write was performed")]
+    SourceConflict(PathBuf),
+
     /// An unknown command was provided.
     #[error("error: unknown command \"{0}\"")]
     UnknownCommand(String),

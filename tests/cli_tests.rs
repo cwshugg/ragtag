@@ -1,27 +1,10 @@
 //! CLI integration tests using assert_cmd.
 
-use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 
-fn ragtag() -> Command {
-    Command::cargo_bin("ragtag").unwrap()
-}
-
-fn fixtures_dir() -> String {
-    format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"))
-}
-
-/// Asserts process status, stdout, and stderr are byte-identical.
-fn assert_output_equivalent(actual: &std::process::Output, expected: &std::process::Output) {
-    assert_eq!(
-        actual.status.code(),
-        expected.status.code(),
-        "status differs"
-    );
-    assert_eq!(actual.stdout, expected.stdout, "stdout differs");
-    assert_eq!(actual.stderr, expected.stderr, "stderr differs");
-}
+mod support;
+use support::{assert_output_equivalent, fixtures_dir, ragtag};
 
 // === File Touch ===
 
@@ -1002,6 +985,7 @@ fn test_tasks_create() {
         .success()
         .stdout(predicate::str::contains("@task("))
         .stdout(predicate::str::contains("title=\"Test Task\""))
+        .stdout(predicate::str::contains("type=\"item\""))
         .stdout(predicate::str::contains("worktime_estimate=4"));
 }
 
@@ -3549,7 +3533,8 @@ fn test_query_all_tags() {
         .assert()
         .success()
         // Should contain tags from multiple files/types
-        .stdout(predicate::str::contains("@task"))
+        .stdout(predicate::str::contains("Design API"))
+        .stdout(predicate::str::contains("@task").not())
         .stdout(predicate::str::contains("@note"))
         .stdout(predicate::str::contains("@todo"));
 }
@@ -4555,7 +4540,11 @@ fn test_alias_environment_interpolation_is_deferred_quoted_and_recursive() {
     let notes = tempfile::tempdir().unwrap();
     let spaced = notes.path().join("notes with spaces");
     fs::create_dir(&spaced).unwrap();
-    fs::write(spaced.join("one.md"), "@task(status=active)\n").unwrap();
+    fs::write(
+        spaced.join("one.md"),
+        "@task(title=\"Alias target\", status=active)\n",
+    )
+    .unwrap();
     let (_guard, config) = alias_config(
         r#"
 aliases:

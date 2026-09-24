@@ -46,6 +46,7 @@ cargo build --release
         id="a1b2c3d4e5f67890",
         title="Refactor parser module",
         status="active",
+        type="item",
         worktime_estimate=4,
         worktime_units="hours"
     )
@@ -73,7 +74,7 @@ cargo build --release
 5. **Create a new task:**
 
     ```bash
-    ragtag task create --title "Write docs" --worktime-estimate 2 --worktime-units hours
+    ragtag task create --title "Write docs" --type item --worktime-estimate 2 --worktime-units hours
 
     # Or, enter the fields one-by-one via stdin:
     ragtag task create
@@ -105,9 +106,15 @@ ragtag summary
 ragtag summary --path ./notes
 ```
 
-### `ragtag query <TAG_NAME>`
+### `ragtag query [TAG_NAME]`
 
-Searches for tags matching a name and prints their locations.
+Searches for tags and prints their locations. Omitting `TAG_NAME` queries all
+tag names. Registered extensions format their own results in both scoped and
+unscoped queries, so task results always contain canonical built-in types or
+the verbatim custom type. Generic non-task tags retain source-like output. Query has no `--raw`
+mode; use `ragtag task list --format jsonl` for stable, safely framed
+machine-oriented task records. The legacy `--format raw` key/value output
+remains available for compatibility.
 
 ```bash
 ragtag query todo

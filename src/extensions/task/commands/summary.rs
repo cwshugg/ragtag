@@ -4,24 +4,32 @@
 //! (status, owner, priority) with aligned columns and color-coded
 //! status and priority values.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::super::config::TaskConfig;
 use super::super::models::TaskTag;
 use super::super::output::{colorize_priority, colorize_status};
-use super::collect_tasks;
 use super::list::sort_tasks;
+use super::{select_tasks, task_field_value};
 use crate::cli;
 use crate::config::ColorMode;
 use crate::error::RagtagError;
-use crate::extensions::task::filter::{evaluate_filter, parse_filter_expr, validate_filter_expr};
 use crate::extensions::ExtensionContext;
-use crate::output::format::{colorize_path, strip_dot_slash};
+use crate::output::format::{
+    colorize_path, display_width, pad_right, strip_dot_slash, terminal_safe, truncate,
+};
 use terminal_size::{terminal_size, Width};
 
-/// Column headers for the summary table.
-const HEADERS: &[&str] = &["Path", "Title", "Owner", "Status", "Priority", "Time", "ID"];
+/// Column headers for a summary table containing mixed task types.
+const HEADERS_WITH_TYPE: &[&str] = &[
+    "Path", "Title", "Type", "Owner", "Status", "Priority", "Time", "ID",
+];
+
+/// Column headers for a summary table containing one normalized task type.
+const HEADERS_WITHOUT_TYPE: &[&str] =
+    &["Path", "Title", "Owner", "Status", "Priority", "Time", "ID"];
 
 /// Minimum title width before we stop shrinking.
 const MIN_TITLE_WIDTH: usize = 20;
@@ -48,27 +56,8 @@ pub fn run(
 
     let sort_by = matches.get_one::<String>("sort").cloned();
 
-    let filter_expr_str = matches.get_one::<String>("filter").cloned();
-
-    // Discover and parse tasks
-    let mut tasks = collect_tasks(path, config, ctx)?;
-
-    // Apply filter expression
-    if let Some(ref expr_str) = filter_expr_str {
-        let parsed = parse_filter_expr(expr_str)?;
-        validate_filter_expr(&parsed)?;
-        tasks.retain(|task| evaluate_filter(&parsed, task));
-    }
-
-    // Apply default status exclusion (exclude done/abandoned by default)
-    let show_all = matches.get_flag("all");
-    let filter_mentions_status = filter_expr_str
-        .as_ref()
-        .is_some_and(|e| e.contains("status"));
-    if !show_all && !filter_mentions_status {
-        let excluded = config.get_excluded_keywords();
-        tasks.retain(|t| !excluded.contains(&t.status));
-    }
+    let filter_expr = matches.get_one::<String>("filter").map(String::as_str);
+    let mut tasks = select_tasks(path, filter_expr, matches.get_flag("all"), config, ctx)?;
 
     // Sort within groups (default: priority)
     let effective_sort = sort_by.unwrap_or_else(|| "priority".to_string());
@@ -107,12 +96,12 @@ fn group_tasks<'a>(tasks: &'a [TaskTag], group_by: &str) -> BTreeMap<String, Vec
 /// Extracts the grouping key from a task.
 fn get_group_key(task: &TaskTag, group_by: &str) -> String {
     match group_by {
-        "status" => task.status.clone(),
-        "owner" => task.owner.clone(),
-        "priority" => task
-            .priority
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "(none)".to_string()),
+        "status" | "type" | "owner" => task_field_value(task, group_by)
+            .expect("known grouping field")
+            .into_owned(),
+        "priority" => task_field_value(task, group_by)
+            .filter(|value| !value.is_empty())
+            .map_or_else(|| "(none)".to_string(), Cow::into_owned),
         _ => task.status.clone(),
     }
 }
@@ -128,7 +117,7 @@ fn compute_title_width(non_title_widths: &[usize]) -> usize {
         return FALLBACK_TITLE_WIDTH;
     }
 
-    // Title is at index 1 in HEADERS. Sum widths of all other columns.
+    // Title is at index 1 in both table schemas. Sum widths of all other columns.
     let other_width: usize = non_title_widths.iter().sum::<usize>();
     // Total gaps: (num_columns - 1) * COLUMN_GAP
     let total_gaps = (non_title_widths.len()) * COLUMN_GAP;
@@ -137,20 +126,71 @@ fn compute_title_width(non_title_widths: &[usize]) -> usize {
     available.max(MIN_TITLE_WIDTH)
 }
 
-/// Truncates a string to `max_len` characters, appending "..." if truncated.
-fn truncate_title(title: &str, max_len: usize) -> String {
-    if title.chars().count() <= max_len {
-        title.to_string()
+/// Shared widths and title limit for every table in one summary render.
+struct TableLayout {
+    includes_type: bool,
+    widths: Vec<usize>,
+    max_title_width: usize,
+}
+
+impl TableLayout {
+    /// Returns the shared widths for a group-specific column schema.
+    fn widths_for(&self, include_type: bool) -> Vec<usize> {
+        let mut widths = self.widths.clone();
+        if self.includes_type && !include_type {
+            widths.remove(2);
+        }
+        widths
+    }
+}
+
+/// Computes one layout from every row that will be displayed.
+fn compute_table_layout(
+    tasks: &[&TaskTag],
+    include_type: bool,
+    config: &TaskConfig,
+    color_mode: &ColorMode,
+) -> TableLayout {
+    let headers = if include_type {
+        HEADERS_WITH_TYPE
     } else {
-        let truncated: String = title.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{truncated}...")
+        HEADERS_WITHOUT_TYPE
+    };
+    let title_col = 1;
+    let mut widths: Vec<usize> = headers.iter().map(|header| display_width(header)).collect();
+    let rows = build_rows(tasks, config, color_mode, usize::MAX, include_type);
+
+    for (plain, _) in &rows {
+        for (index, value) in plain.iter().enumerate() {
+            if index != title_col {
+                widths[index] = widths[index].max(display_width(value));
+            }
+        }
+    }
+
+    let non_title_widths: Vec<usize> = widths
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != title_col)
+        .map(|(_, width)| *width)
+        .collect();
+    let max_title_width = compute_title_width(&non_title_widths);
+    widths[title_col] = display_width(headers[title_col]);
+    for (plain, _) in rows {
+        let title = truncate(&plain[title_col], max_title_width);
+        widths[title_col] = widths[title_col].max(display_width(&title));
+    }
+
+    TableLayout {
+        includes_type: include_type,
+        widths,
+        max_title_width,
     }
 }
 
 /// Formats the complete summary table output with group headers.
 ///
-/// Column widths are computed globally across all groups so that every
-/// table has the same alignment.
+/// Each group independently selects its columns from the rows it displays.
 fn format_summary_table(
     groups: &BTreeMap<String, Vec<&TaskTag>>,
     group_by: &str,
@@ -160,9 +200,6 @@ fn format_summary_table(
     if groups.is_empty() {
         return "No tasks found.\n".to_string();
     }
-
-    /// A pair of (plain_text, colored_text) cell values for one row.
-    type RowPair = (Vec<String>, Vec<String>);
 
     // Collect group keys in the appropriate sort order.
     let sorted_keys: Vec<&String> = if group_by == "priority" {
@@ -175,85 +212,94 @@ fn format_summary_table(
     } else {
         groups.keys().collect()
     };
-
-    // First pass: build rows WITHOUT title truncation to measure non-title
-    // column widths. Title column index is 1.
-    let title_col: usize = 1;
-    let mut all_group_rows: Vec<(&String, Vec<RowPair>)> = Vec::new();
-    let mut global_widths: Vec<usize> = HEADERS.iter().map(|h| h.len()).collect();
-
-    for key in &sorted_keys {
-        let tasks = &groups[*key];
-        let rows = build_rows(tasks, config, color_mode, usize::MAX);
-        for (plain, _) in &rows {
-            for (i, val) in plain.iter().enumerate() {
-                if i < global_widths.len()
-                    && i != title_col
-                    && val.chars().count() > global_widths[i]
-                {
-                    global_widths[i] = val.chars().count();
-                }
-            }
-        }
-        all_group_rows.push((key, rows));
-    }
-
-    // Compute the dynamic title width from terminal width minus all other
-    // columns.
-    let non_title_widths: Vec<usize> = global_widths
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != title_col)
-        .map(|(_, w)| *w)
+    let all_tasks: Vec<&TaskTag> = groups
+        .values()
+        .flat_map(|tasks| tasks.iter().copied())
         .collect();
-    let max_title = compute_title_width(&non_title_widths);
-
-    // Second pass: truncate titles and recompute the title column width.
-    global_widths[title_col] = HEADERS[title_col].len();
-    for (_, rows) in &mut all_group_rows {
-        for (plain, colored) in rows.iter_mut() {
-            let truncated = truncate_title(&plain[title_col], max_title);
-            plain[title_col] = truncated.clone();
-            colored[title_col] = truncated;
-            let w = plain[title_col].chars().count();
-            if w > global_widths[title_col] {
-                global_widths[title_col] = w;
-            }
-        }
-    }
+    let include_type = groups.values().any(|tasks| table_has_mixed_types(tasks));
+    let layout = compute_table_layout(&all_tasks, include_type, config, color_mode);
 
     let mut output = String::new();
     let mut first = true;
 
-    for (key, rows) in &all_group_rows {
+    for key in sorted_keys {
         if !first {
             output.push('\n');
         }
         first = false;
 
-        // Group header
-        output.push_str(&format!("{}: {}\n", capitalize(group_by), key));
-
-        // Header row — Path header at natural width, rest fixed-width
-        let header_line = format_row_with_path(HEADERS, &global_widths);
-        output.push_str(&header_line);
-        output.push('\n');
-
-        // Separator
-        let sep: Vec<String> = global_widths.iter().map(|w| "-".repeat(*w)).collect();
-        let sep_strs: Vec<&str> = sep.iter().map(|s| s.as_str()).collect();
-        output.push_str(&format_row_with_path(&sep_strs, &global_widths));
-        output.push('\n');
-
-        // Data rows
-        for (plain_row, color_row) in rows {
-            let line = format_colored_row_with_path(plain_row, color_row, &global_widths);
-            output.push_str(&line);
-            output.push('\n');
-        }
+        output.push_str(&format!(
+            "{}: {}\n",
+            capitalize(group_by),
+            terminal_safe(key)
+        ));
+        output.push_str(&format_task_table_with_layout(
+            &groups[key],
+            config,
+            color_mode,
+            &layout,
+        ));
     }
 
     output
+}
+
+/// Formats one task table, showing type only when its displayed rows are mixed.
+#[cfg(test)]
+fn format_task_table(tasks: &[&TaskTag], config: &TaskConfig, color_mode: &ColorMode) -> String {
+    let include_type = table_has_mixed_types(tasks);
+    let layout = compute_table_layout(tasks, include_type, config, color_mode);
+    format_task_table_with_layout(tasks, config, color_mode, &layout)
+}
+
+/// Formats one task table using widths shared by its complete summary render.
+fn format_task_table_with_layout(
+    tasks: &[&TaskTag],
+    config: &TaskConfig,
+    color_mode: &ColorMode,
+    layout: &TableLayout,
+) -> String {
+    let include_type = table_has_mixed_types(tasks);
+    let headers = if include_type {
+        HEADERS_WITH_TYPE
+    } else {
+        HEADERS_WITHOUT_TYPE
+    };
+    let widths = layout.widths_for(include_type);
+    let rows = build_rows(
+        tasks,
+        config,
+        color_mode,
+        layout.max_title_width,
+        include_type,
+    );
+
+    let mut output = String::new();
+    output.push_str(&format_row_with_path(headers, &widths));
+    output.push('\n');
+
+    let separators: Vec<String> = widths.iter().map(|width| "-".repeat(*width)).collect();
+    let separator_refs: Vec<&str> = separators.iter().map(String::as_str).collect();
+    output.push_str(&format_row_with_path(&separator_refs, &widths));
+    output.push('\n');
+
+    for (plain, colored) in rows {
+        output.push_str(&format_colored_row_with_path(&plain, &colored, &widths));
+        output.push('\n');
+    }
+
+    output
+}
+
+/// Returns whether displayed rows contain different effective type strings.
+fn table_has_mixed_types(tasks: &[&TaskTag]) -> bool {
+    let Some(first) = tasks.first() else {
+        return false;
+    };
+    tasks
+        .iter()
+        .skip(1)
+        .any(|task| task.task_type.as_str() != first.task_type.as_str())
 }
 
 /// Formats the summary output as a multi-line list.
@@ -300,7 +346,11 @@ fn format_summary_list(
         first_group = false;
 
         // Group header
-        output.push_str(&format!("{}: {}\n\n", capitalize(group_by), group_key));
+        output.push_str(&format!(
+            "{}: {}\n\n",
+            capitalize(group_by),
+            terminal_safe(group_key)
+        ));
 
         for (i, task) in tasks.iter().enumerate() {
             if i > 0 {
@@ -319,19 +369,24 @@ fn format_summary_list(
             let id_str = if task.id.is_empty() {
                 "-".to_string()
             } else {
-                task.id.clone()
+                terminal_safe(&task.id).to_string()
             };
 
             output.push_str(&format!("{path}\n"));
-            output.push_str(&format!("{}\n", task.title));
+            output.push_str(&format!("{}\n", terminal_safe(&task.title)));
             if let Some(desc) = &task.description {
                 if !desc.is_empty() {
-                    output.push_str(&format!("{desc}\n"));
+                    output.push_str(&format!("{}\n", terminal_safe(desc)));
                 }
             }
             output.push_str(&format!(
-                "{} [{}] [{}/{}] {}\n",
-                id_str, task.owner, priority, status, time
+                "{} [{}] [{}] [{}/{}] {}\n",
+                id_str,
+                terminal_safe(task.task_type.as_str()),
+                terminal_safe(&task.owner),
+                priority,
+                status,
+                time
             ));
         }
     }
@@ -348,26 +403,32 @@ fn build_rows(
     config: &TaskConfig,
     color_mode: &ColorMode,
     max_title_width: usize,
+    include_type: bool,
 ) -> Vec<(Vec<String>, Vec<String>)> {
     tasks
         .iter()
         .map(|task| {
-            let title = truncate_title(&task.title, max_title_width);
+            let title = truncate(&terminal_safe(&task.title).to_string(), max_title_width);
             let time = format_time(task);
-            let path_plain = strip_dot_slash(&task.location.file_path.display().to_string());
+            let path_plain = terminal_safe(&strip_dot_slash(
+                &task.location.file_path.display().to_string(),
+            ))
+            .to_string();
             let path_colored = colorize_path(&task.location.file_path, color_mode);
 
             let id_str = if task.id.is_empty() {
                 "-".to_string()
             } else {
-                task.id.clone()
+                terminal_safe(&task.id).to_string()
             };
+            let owner = terminal_safe(&task.owner).to_string();
+            let status = terminal_safe(&task.status).to_string();
 
-            let plain = vec![
+            let mut plain = vec![
                 path_plain,
                 title.clone(),
-                task.owner.clone(),
-                task.status.clone(),
+                owner.clone(),
+                status,
                 task.priority
                     .map(|p| p.to_string())
                     .unwrap_or_else(|| "-".to_string()),
@@ -375,10 +436,10 @@ fn build_rows(
                 id_str.clone(),
             ];
 
-            let colored = vec![
+            let mut colored = vec![
                 path_colored,
                 title,
-                task.owner.clone(),
+                owner,
                 colorize_status(&task.status, &config.status_keywords, color_mode),
                 task.priority
                     .map(|p| colorize_priority(p, color_mode))
@@ -386,6 +447,11 @@ fn build_rows(
                 time,
                 id_str,
             ];
+            if include_type {
+                let task_type = terminal_safe(task.task_type.as_str()).to_string();
+                plain.insert(2, task_type.clone());
+                colored.insert(2, task_type);
+            }
 
             (plain, colored)
         })
@@ -405,7 +471,7 @@ fn format_time(task: &TaskTag) -> String {
         .worktime_estimate
         .map(format_float)
         .unwrap_or_else(|| "-".to_string());
-    format!("{spent}/{estimate} {}", task.worktime_units)
+    format!("{spent}/{estimate} {}", terminal_safe(&task.worktime_units))
 }
 
 /// Formats a row with all columns padded to fixed widths.
@@ -413,7 +479,7 @@ fn format_row_with_path(values: &[&str], widths: &[usize]) -> String {
     values
         .iter()
         .zip(widths.iter())
-        .map(|(val, width)| format!("{val:<width$}"))
+        .map(|(value, width)| pad_right(value, *width))
         .collect::<Vec<_>>()
         .join("  ")
 }
@@ -428,7 +494,7 @@ fn format_colored_row_with_path(plain: &[String], colored: &[String], widths: &[
         .zip(colored.iter())
         .zip(widths.iter())
         .map(|((p, c), width)| {
-            let visible_len = p.chars().count();
+            let visible_len = display_width(p);
             if visible_len >= *width {
                 c.clone()
             } else {
@@ -501,6 +567,7 @@ mod tests {
             description: description.map(|s| s.to_string()),
             owner: owner.to_string(),
             status: status.to_string(),
+            task_type: crate::extensions::task::models::TaskType::Item,
             priority,
             worktime_spent,
             worktime_estimate,
@@ -508,7 +575,6 @@ mod tests {
             time_last_updated: None,
             worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
-            raw_span: 0..50,
         }
     }
 
@@ -543,6 +609,11 @@ mod tests {
             ),
             make_task("ddd4", "Task D", "bob", "blocked", None, None, Some(10.0)),
         ]
+    }
+
+    fn display_column(line: &str, value: &str) -> usize {
+        let byte_offset = line.find(value).expect("value should occur in row");
+        display_width(&line[..byte_offset])
     }
 
     #[test]
@@ -645,6 +716,122 @@ mod tests {
     }
 
     #[test]
+    fn task_tables_preserve_type_visibility_ascii_output_and_shared_unicode_layout() {
+        let config = TaskConfig::default();
+        let plain = make_task(
+            "id",
+            "Title",
+            "owner",
+            "active",
+            Some(2),
+            Some(1.0),
+            Some(3.0),
+        );
+        let plain_output = format_task_table(&[&plain], &config, &ColorMode::Never);
+        assert_eq!(
+            plain_output,
+            concat!(
+                "Path     Title  Owner  Status  Priority  Time       ID\n",
+                "-------  -----  -----  ------  --------  ---------  --\n",
+                "test.md  Title  owner  active  2         1/3 hours  id\n",
+            )
+        );
+
+        let mut first = make_task(
+            "标识",
+            "e\u{301} title",
+            "所有者",
+            "active",
+            Some(1),
+            Some(1.0),
+            Some(2.0),
+        );
+        first.location.file_path = PathBuf::from("路径/\u{1b}name.md");
+        first.task_type = crate::extensions::task::models::TaskType::Custom("阶段".to_string());
+        let first_item = make_task(
+            "first-item",
+            "ASCII",
+            "owner",
+            "bad\u{1b}[2J",
+            Some(1),
+            None,
+            None,
+        );
+
+        let mut second = make_task(
+            "emoji-id",
+            "标题",
+            "e\u{301}",
+            "blocked",
+            Some(2),
+            None,
+            None,
+        );
+        second.task_type = crate::extensions::task::models::TaskType::Custom("👩‍💻".to_string());
+        second.worktime_units = "单位".to_string();
+        let second_item = make_task(
+            "second-item",
+            "Plain",
+            "owner",
+            "active",
+            Some(2),
+            None,
+            None,
+        );
+
+        let tasks = vec![first, first_item, second, second_item];
+        let groups = group_tasks(&tasks, "priority");
+        let output = format_summary_table(&groups, "priority", &config, &ColorMode::Never);
+        let table_lines: Vec<&str> = output
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with("Priority:"))
+            .collect();
+        let expected_width = display_width(table_lines[0]);
+        assert!(
+            table_lines
+                .iter()
+                .all(|line| display_width(line) == expected_width),
+            "{output}"
+        );
+
+        let header = table_lines[0];
+        let unicode_row = table_lines
+            .iter()
+            .copied()
+            .find(|line| line.contains("阶段"))
+            .unwrap();
+        let emoji_row = table_lines
+            .iter()
+            .copied()
+            .find(|line| line.contains("👩‍💻"))
+            .unwrap();
+        for (heading, first_value, second_value) in [
+            ("Type", "阶段", "👩‍💻"),
+            ("Owner", "所有者", "e\u{301}"),
+            ("Status", "active", "blocked"),
+        ] {
+            let expected = display_column(header, heading);
+            assert_eq!(
+                display_column(unicode_row, first_value),
+                expected,
+                "{output}"
+            );
+            assert_eq!(
+                display_column(emoji_row, second_value),
+                expected,
+                "{output}"
+            );
+        }
+        assert!(output.contains("\\u{1b}name.md"));
+        assert!(output.contains("bad\\u{1b}[2J"));
+
+        let homogeneous = format_task_table(&[&tasks[1]], &config, &ColorMode::Never);
+        assert!(!homogeneous.lines().next().unwrap().contains("Type"));
+        let mixed = format_task_table(&[&tasks[0], &tasks[1]], &config, &ColorMode::Never);
+        assert!(mixed.lines().next().unwrap().contains("Type"));
+    }
+
+    #[test]
     fn test_format_summary_contains_task_data() {
         let tasks = sample_tasks();
         let groups = group_tasks(&tasks, "status");
@@ -720,6 +907,13 @@ mod tests {
     }
 
     #[test]
+    fn test_get_group_key_type() {
+        let mut task = make_task("a", "active", "alice", "Task", Some(1), None, None);
+        task.task_type = crate::extensions::task::models::TaskType::Project;
+        assert_eq!(get_group_key(&task, "type"), "project");
+    }
+
+    #[test]
     fn test_column_alignment() {
         let tasks = sample_tasks();
         let groups = group_tasks(&tasks, "status");
@@ -769,9 +963,9 @@ mod tests {
         // Each task should show 3 lines: path, title, details
         assert!(output.contains("test.md"));
         assert!(output.contains("Task A"));
-        assert!(output.contains("aaa1 [alice] [1/active] 2/8 hours"));
+        assert!(output.contains("aaa1 [item] [alice] [1/active] 2/8 hours"));
         assert!(output.contains("Task B"));
-        assert!(output.contains("bbb2 [bob] [0/active] -/- hours"));
+        assert!(output.contains("bbb2 [item] [bob] [0/active] -/- hours"));
     }
 
     #[test]
@@ -811,11 +1005,11 @@ mod tests {
         //   "\n"
         //   "test.md\n"
         //   "Task A\n"
-        //   "aaa1 [alice] [1/active] ...\n"
+        //   "aaa1 [item] [alice] [1/active] ...\n"
         //   "\n"          <-- blank line between tasks
         //   "test.md\n"
         //   "Task B\n"
-        //   "bbb2 [bob] [2/active] ...\n"
+        //   "bbb2 [item] [bob] [2/active] ...\n"
         assert!(
             output.contains("hours\n\ntest.md"),
             "should have blank line between tasks, got:\n{output}"
@@ -898,7 +1092,7 @@ mod tests {
         let output = format_summary_list(&groups, "status", &config, &ColorMode::Never);
 
         // Description should appear between title and details line
-        assert!(output.contains("Task A\nThis is the description\naaa1 [alice]"));
+        assert!(output.contains("Task A\nThis is the description\naaa1 [item] [alice]"));
     }
 
     #[test]
@@ -917,7 +1111,7 @@ mod tests {
         let output = format_summary_list(&groups, "status", &config, &ColorMode::Never);
 
         // No description line — title should be immediately followed by details
-        assert!(output.contains("Task A\naaa1 [alice]"));
+        assert!(output.contains("Task A\naaa1 [item] [alice]"));
     }
 
     #[test]
@@ -936,6 +1130,6 @@ mod tests {
         let output = format_summary_list(&groups, "status", &config, &ColorMode::Never);
 
         // Empty description should be skipped — title immediately followed by details
-        assert!(output.contains("Task A\naaa1 [alice]"));
+        assert!(output.contains("Task A\naaa1 [item] [alice]"));
     }
 }

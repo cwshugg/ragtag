@@ -9,10 +9,10 @@ use std::path::Path;
 use chrono::Utc;
 
 use super::super::config::{TaskConfig, ALLOWED_WORKTIME_UNITS};
+use super::super::models::TaskType;
 use super::create::escape_for_tag;
-use super::find_task_by_id;
+use super::{mutate_task, TaskMutation};
 use crate::cli;
-use crate::edit::{edit_task_tag, write_file_atomically};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -67,7 +67,7 @@ fn validate_attr_value(attr: &str, value: &str, config: &TaskConfig) -> Result<(
                 Ok(())
             }
         }
-        "title" | "description" | "owner" | "pid" => Ok(()),
+        "title" | "description" | "owner" | "pid" | "type" => Ok(()),
         "time_created" | "time_last_updated" => Err(ext_err(format!(
             "\"{attr}\" is automatically managed and cannot be set manually"
         ))),
@@ -80,7 +80,7 @@ fn validate_attr_value(attr: &str, value: &str, config: &TaskConfig) -> Result<(
 /// String attributes are wrapped in quotes; numeric attributes are bare.
 fn format_attr_for_update(attr: &str, value: &str) -> String {
     match attr {
-        "title" | "description" | "owner" | "status" | "worktime_units" | "pid"
+        "title" | "description" | "owner" | "status" | "type" | "worktime_units" | "pid"
         | "time_created" | "time_last_updated" => {
             format!("\"{}\"", escape_for_tag(value))
         }
@@ -100,52 +100,36 @@ pub fn run(
     let attr = matches
         .get_one::<String>("attr")
         .expect("required argument");
-    let value = matches
+    let supplied_value = matches
         .get_one::<String>("value")
         .expect("required argument");
+    let normalized_task_type = (attr == "type").then(|| TaskType::from_input(supplied_value));
+    let value = normalized_task_type
+        .as_ref()
+        .map(TaskType::as_str)
+        .unwrap_or(supplied_value)
+        .to_string();
     let no_edit = matches.get_flag("no-edit");
 
     let path_str = cli::resolve_path(matches);
     let path = Path::new(&path_str);
 
-    validate_attr_value(attr, value, config)?;
+    validate_attr_value(attr, &value, config)?;
 
-    let (task, content) = find_task_by_id(id, path, config, ctx)?;
-
-    // Compute the auto-updated timestamp once for this operation.
-    let now_ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let ts_formatted = format!("\"{}\"", escape_for_tag(&now_ts));
-
-    let original_tag = &content[task.raw_span.clone()];
-    let formatted_value = format_attr_for_update(attr, value);
-
-    // Apply both attribute changes in a single format-preserving edit.
-    let modified_tag = edit_task_tag(
-        original_tag,
-        &[
-            (attr, &formatted_value),
-            ("time_last_updated", &ts_formatted),
-        ],
-    )?;
-
-    if no_edit {
-        writeln!(ctx.stdout, "{modified_tag}").map_err(RagtagError::Io)?;
-    } else {
-        // Reconstruct full file content and write atomically.
-        let mut new_content = String::with_capacity(content.len());
-        new_content.push_str(&content[..task.raw_span.start]);
-        new_content.push_str(&modified_tag);
-        new_content.push_str(&content[task.raw_span.end..]);
-        write_file_atomically(&task.location.file_path, &new_content)?;
-        writeln!(
-            ctx.stdout,
-            "Updated {attr} to \"{value}\" for task {}",
-            task.id
-        )
-        .map_err(RagtagError::Io)?;
-    }
-
-    Ok(())
+    let formatted_value = format_attr_for_update(attr, &value);
+    mutate_task(id, path, no_edit, config, ctx, |task| {
+        // Evaluate the command-managed timestamp exactly once per mutation.
+        let now_ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let ts_formatted = format!("\"{}\"", escape_for_tag(&now_ts));
+        Ok(TaskMutation::new(
+            vec![
+                (attr.clone(), formatted_value),
+                ("time_last_updated".to_string(), ts_formatted),
+            ],
+            normalized_task_type.unwrap_or_else(|| task.task_type.clone()),
+            format!("Updated {attr} to \"{value}\" for task {}", task.id),
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -173,6 +157,7 @@ mod tests {
             "description" => task.description = Some(value.to_string()),
             "owner" => task.owner = value.to_string(),
             "status" => task.status = value.to_string(),
+            "type" => task.task_type = TaskType::from_input(value),
             "priority" => task.priority = value.parse::<u32>().ok(),
             "worktime_spent" => task.worktime_spent = value.parse::<f64>().ok(),
             "worktime_estimate" => task.worktime_estimate = value.parse::<f64>().ok(),
@@ -190,6 +175,7 @@ mod tests {
             description: None,
             owner: "me".to_string(),
             status: "new".to_string(),
+            task_type: TaskType::Item,
             priority: None,
             worktime_spent: None,
             worktime_estimate: Some(4.0),
@@ -197,7 +183,6 @@ mod tests {
             time_last_updated: None,
             worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
-            raw_span: 0..50,
         }
     }
 
@@ -276,6 +261,7 @@ mod tests {
         assert!(validate_attr_value("description", "anything", &config).is_ok());
         assert!(validate_attr_value("owner", "anything", &config).is_ok());
         assert!(validate_attr_value("pid", "anything", &config).is_ok());
+        assert!(validate_attr_value("type", "anything", &config).is_ok());
     }
 
     #[test]
@@ -318,9 +304,19 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_attr_type_normalizes_to_canonical_value() {
+        let mut task = make_task();
+        apply_attr_to_task(&mut task, "type", "PROJECT");
+        assert_eq!(task.task_type, TaskType::Project);
+        apply_attr_to_task(&mut task, "type", "unsupported");
+        assert_eq!(task.task_type, TaskType::Custom("unsupported".to_string()));
+    }
+
+    #[test]
     fn test_format_attr_string() {
         assert_eq!(format_attr_for_update("status", "active"), "\"active\"");
         assert_eq!(format_attr_for_update("owner", "alice"), "\"alice\"");
+        assert_eq!(format_attr_for_update("type", "project"), "\"project\"");
     }
 
     #[test]

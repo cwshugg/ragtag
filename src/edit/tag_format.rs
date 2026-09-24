@@ -10,7 +10,7 @@
 //! 3. **Regenerates** the entire tag string, preserving the original
 //!    format.
 //!
-//! The single entry point used by callers is [`edit_task_tag`].
+//! The primary entry point used by callers is [`edit_task_tag`].
 
 use std::ops::Range;
 use std::path::Path;
@@ -204,6 +204,28 @@ pub fn edit_task_tag(
     original_tag_text: &str,
     changes: &[(&str, &str)],
 ) -> Result<String, RagtagError> {
+    edit_task_tag_internal(original_tag_text, changes, None)
+}
+
+/// Replaces every occurrence of one named attribute with one canonical value.
+///
+/// The first occurrence retains its original position and later duplicates are
+/// removed. Other duplicate attribute names preserve the existing editor
+/// behavior.
+pub fn upsert_unique_named_attribute(
+    original_tag_text: &str,
+    name: &str,
+    value: &str,
+) -> Result<String, RagtagError> {
+    edit_task_tag_internal(original_tag_text, &[(name, value)], Some(name))
+}
+
+/// Applies changes with optional deduplication of one named attribute.
+fn edit_task_tag_internal(
+    original_tag_text: &str,
+    changes: &[(&str, &str)],
+    unique_name: Option<&str>,
+) -> Result<String, RagtagError> {
     // A tag without parens — synthesize one. This matches the
     // historical behavior of `modify_tag_attribute`.
     if !original_tag_text.contains('(') {
@@ -245,8 +267,15 @@ pub fn edit_task_tag(
     // each attribute's *raw* value substring from the original text so
     // formatting (quotes, numeric base, trailing zeros) is preserved.
     let mut attributes: Vec<(String, String)> = Vec::with_capacity(tag.attributes.len());
+    let mut found_unique = false;
     for attr in &tag.attributes {
         if let AttributeKind::Named { name, value } = &attr.kind {
+            if unique_name == Some(name.as_str()) {
+                if found_unique {
+                    continue;
+                }
+                found_unique = true;
+            }
             let raw_value = match find_attr_value_span(original_tag_text, name) {
                 Some(span) => original_tag_text[span].to_string(),
                 // Fallback to `Display` if we somehow couldn't locate
@@ -517,5 +546,33 @@ mod tests {
         let tag = "@task(id=`abc`, title=`Fix the bug`)";
         let out = edit_task_tag(tag, &[("id", "\"xyz\"")]).unwrap();
         assert_eq!(out, "@task(id=\"xyz\", title=`Fix the bug`)");
+    }
+
+    #[test]
+    fn test_unique_attribute_replaces_first_and_removes_later_duplicates() {
+        let tag = "@task(id=\"abc\", type=\"\u{1b}[2J\", owner=\"me\", type=\"project\")";
+        let out = upsert_unique_named_attribute(tag, "type", "\"item\"").unwrap();
+        assert_eq!(out, r#"@task(id="abc", type="item", owner="me")"#);
+        assert_eq!(out.matches("type=").count(), 1);
+        assert!(!out.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn test_unique_attribute_preserves_unrelated_duplicate_names() {
+        let tag = r#"@task(id="abc", owner="first", owner="second", type="project")"#;
+        let out = upsert_unique_named_attribute(tag, "type", "\"project\"").unwrap();
+        assert_eq!(out.matches("owner=").count(), 2);
+        assert_eq!(out.matches("type=").count(), 1);
+    }
+
+    #[test]
+    fn test_unique_attribute_preserves_multiline_layout() {
+        let tag =
+            "@task(\n    id=\"abc\",\n    type=\"ITEM\",\n    type=\"project\",\n    status=\"new\"\n)";
+        let out = upsert_unique_named_attribute(tag, "type", "\"item\"").unwrap();
+        assert_eq!(
+            out,
+            "@task(\n    id=\"abc\",\n    type=\"item\",\n    status=\"new\"\n)"
+        );
     }
 }

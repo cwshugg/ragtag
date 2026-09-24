@@ -26,6 +26,7 @@ A fully-specified task with all attributes:
     description="Add support for feature X in the parser",
     owner="alice",
     status="active",
+    type="item",
     priority=1,
     worktime_spent=3.5,
     worktime_estimate=8,
@@ -45,6 +46,7 @@ A fully-specified task with all attributes:
 | `description` | string | No | (none) | Longer description of the task |
 | `owner` | string | No | `"me"` | Person responsible for the task |
 | `status` | string | No | `"new"` | Current status (must be a valid keyword) |
+| `type` | string | No | `"item"` | Built-in `item`/`project`, or any custom non-empty string |
 | `priority` | integer | No | (none) | Priority level; `0` is highest/most urgent; must be a non-negative integer |
 | `worktime_spent` | float | No | (none) | Time already spent on this task |
 | `worktime_estimate` | float | No | (none) | Estimated time to complete |
@@ -145,6 +147,7 @@ Required fields (`title`) cannot be skipped. Optional fields can be left blank t
 | `--description <STR>` | Task description |
 | `--owner <STR>` | Task owner |
 | `--status <STR>` | Initial status |
+| `--type <STR>` | Task type: `item`, `project`, or a custom non-empty string |
 | `--priority <NUM>` | Priority level (`0` = highest) |
 | `--pid <STR>` | Parent task ID |
 | `--format <FORMAT>` | Output format: `multiline` (default) or `oneline` |
@@ -154,6 +157,31 @@ Required fields (`title`) cannot be skipped. Optional fields can be left blank t
 > **Note:** `time_created` and `time_last_updated` are **not** accepted as flags — they are automatically set at creation time to the current UTC time (ISO 8601) and are always included in the emitted `@task(...)` string. They are never user-supplied.
 
 > **Note:** `worktime_spent` defaults to `0` when not provided and is always included in the output. Pass `--worktime-spent <N>` to start a task with non-zero progress.
+
+> **Task type defaults:** `task create` always writes the effective type. Omitting `--type`, passing an empty or whitespace-only value, or reading a task whose `type` is missing or non-string resolves to `item` without an error. Built-in `item` and `project` input is case-insensitive with surrounding whitespace ignored, and output is canonical lowercase. Every other non-empty string is a custom type preserved verbatim, including casing and surrounding whitespace (`ProjectX` is custom). Task types do not impose parent or hierarchy rules.
+
+Every non-tabular task-record display includes the effective type. Compact list
+and query output use `[TYPE]`, detailed output uses `Type: TYPE`, and task-list
+machine output uses the canonical built-in or verbatim custom `type`. Query
+formatting is selected from each result's actual tag type, so both
+`ragtag query task` and an unscoped `ragtag query` use task-aware,
+human-readable formatting for task results. Generic non-task results retain
+their source-like formatting. Query has no `--raw` mode; use
+`ragtag task list --format jsonl` for safely framed, normalized
+machine-oriented task records. Legacy `--format raw` remains compatible.
+
+Mutation commands that print a complete tag with `--no-edit` include exactly
+one canonical `type="..."`. File-writing mutations enforce the same invariant,
+removing duplicate `type` attributes while preserving unrelated attributes.
+Each summary table decides independently whether to show a Type column after
+filtering and grouping: rows with distinct effective type values show it,
+while empty, single-row, and homogeneous tables omit it. All grouped tables
+reuse one width layout computed from the complete displayed result set after
+selection and title truncation, so every common column aligns across groups.
+Groups that include Type reuse the same global Type width. All human table
+columns are measured and padded in terminal display cells; title truncation
+preserves complete Unicode grapheme clusters and includes the ellipsis width
+in its limit.
 
 > **Interactive prompts:** Interactive mode uses a `rustyline`-backed editor (arrow keys, line editing, history). Prompts are colored — field names in gray-blue, hints in dark gray, and validation errors in red. Each prompt shows the default value when one is configured (e.g., `Owner (leave blank to skip; default: me):`) and re-prompts on invalid input. Passing `--title ""` (empty string) also enters interactive mode.
 
@@ -169,10 +197,10 @@ ragtag task list --filter "status!=done" --sort priority
 ragtag task list --sort title --reverse
 ```
 
-**Default output** shows each task on one line with these attributes: `id`, `status`, `title`, `description`.
+**Default output** shows each task on one line with its normalized type:
 
-```
-notes/project.md id="a1b2c3d4e5f67890" status="active" title="Write docs" description="User-facing documentation"
+```text
+notes/project.md: a1b2c3d4e5f67890 [item] [alice] [1/active] Write docs
 ```
 
 **Flags:**
@@ -183,7 +211,30 @@ notes/project.md id="a1b2c3d4e5f67890" status="active" title="Write docs" descri
 | `--filter <EXPR>` | Boolean filter expression. Same syntax as `ragtag query` — see [Filter Expressions](cli-reference.md#filter-expressions) |
 | `--sort <FIELD>` | Sort results by field name (e.g., `priority`, `status`, `title`) |
 | `--reverse` | Reverse sort order |
-| `--all`, `-a` | Show all tasks, including excluded status categories (done, abandoned) |
+| `--all`, `-a` | Show all tasks, including projects and excluded status categories (done, abandoned) |
+| `--format <FORMAT>` | `default`, legacy `raw`, or stable machine-readable `jsonl` |
+
+**JSONL integration contract:** `--format jsonl` emits one JSON object per
+task occurrence and physical output line. JSON escaping preserves
+multiline and control-bearing string values without allowing them to forge
+records. Each object contains the normalized task fields `id`, `pid`, `title`,
+`description`, `owner`, `status`, `type`, `priority`, `worktime_spent`,
+`worktime_estimate`, `time_created`, `time_last_updated`, and
+`worktime_units`. Missing optional values are `null`. A missing, non-string,
+empty, or whitespace-only `type` becomes `item`; `item` and `project` are
+recognized case-insensitively and emitted canonically, while every other
+nonempty string is a custom type preserved verbatim.
+
+Every object also contains a `source` object with the configured `tag_name`,
+`file`, 1-based `line` and `column`, and exact `byte_start`/exclusive
+`byte_end` UTF-8 offsets in the scanned snapshot.
+`column` is a 1-based UTF-8 byte column. Duplicate IDs and titles remain
+separate records. Consumers must validate all required fields and types, then
+verify the exact source span and configured tag name against the unchanged
+snapshot before using a record for mutation. See the
+[CLI reference](cli-reference.md#task-list) for the full example and offset
+semantics. `raw` retains its existing unescaped key/value blocks for
+compatibility and must not be used with untrusted multiline values.
 
 **Filter examples:**
 
@@ -205,6 +256,9 @@ ragtag task list --filter "status=active OR priority=0"
 
 # Parenthesized grouping: active or blocked, AND owned by alice
 ragtag task list --filter "(status=active OR status=blocked) AND owner=alice"
+
+# Projects are hidden by default; an exact type predicate opts into them
+ragtag task list --filter "type=project"
 
 # Whitespace around operators is optional (quote values with spaces)
 ragtag task list --filter "status = active AND owner = 'John Doe'"
@@ -248,11 +302,11 @@ Priority: 0
 
 projects/api/design.md
 Design API endpoints for the new authentication service...
-a1b2c3d4e5f67890 [alice] [0/active] 3.5/8 hours
+a1b2c3d4e5f67890 [item] [alice] [0/active] 3.5/8 hours
 
 projects/parser/main.md
 Write parser for the tag syntax with proper error recovery
-f0e1d2c3b4a59687 [bob] [1/active] -/4 hours
+f0e1d2c3b4a59687 [item] [bob] [1/active] -/4 hours
 ```
 
 Status values are color-coded (green for done, yellow for active, red for blocked, orange for abandoned, gray for inactive). Priority `0` is displayed in red.
@@ -262,11 +316,13 @@ Status values are color-coded (green for done, yellow for active, red for blocke
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--path <PATH>` | `.` | Search path (file or directory) |
-| `--group <FIELD>` | `priority` | Group tasks by field: `status`, `owner`, or `priority` |
+| `--group <FIELD>` | `priority` | Group tasks by field: `status`, `owner`, `priority`, or `type` |
 | `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
 | `--filter <EXPR>` | — | Boolean filter expression. See [Filter Expressions](cli-reference.md#filter-expressions) |
 | `--format <FORMAT>` | `table` | Output format: `table` (aligned columns) or `list` (multi-line per task) |
-| `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
+| `--all`, `-a` | — | Show all tasks, including projects and excluded status categories (done, abandoned) |
+
+By default, `task list` and `task summary` exclude only the built-in `project` type, as well as the configured status categories. Custom types remain visible. A parsed predicate whose field is exactly `type` disables only the project exclusion; for example, `type=project` shows active projects, while `status=done AND type=project` can show done projects. Merely containing the text `type` in another field or value does not change defaults. Existing status-filter behavior remains independent. Filter values follow normal case-sensitive string comparison against canonical lowercase built-ins or verbatim custom values.
 
 ### `task get-attr`
 
@@ -284,7 +340,7 @@ The command prints only the attribute value with no label or formatting, which m
 | Argument | Description |
 | --- | --- |
 | `<ID>` | Task ID or ID prefix |
-| `<ATTR>` | One of `id`, `title`, `description`, `owner`, `status`, `priority`, `worktime_spent`, `worktime_estimate`, `time_created`, `time_last_updated`, `worktime_units`, `pid` |
+| `<ATTR>` | One of `id`, `title`, `description`, `owner`, `status`, `type`, `priority`, `worktime_spent`, `worktime_estimate`, `time_created`, `time_last_updated`, `worktime_units`, `pid` |
 
 **Flags:**
 
@@ -302,6 +358,7 @@ ragtag task set-attr a1b2c3d4e5f67890 worktime_spent 6.5
 ragtag task set-attr a1b2c3d4e5f67890 owner bob
 ragtag task set-attr a1b2c3d4e5f67890 pid f0e1d2c3b4a59687
 ragtag task set-attr a1b2c3d4e5f67890 priority 0
+ragtag task set-attr a1b2c3d4e5f67890 type project
 ```
 
 For relative additions or subtractions to `worktime_spent`, use
@@ -313,6 +370,7 @@ The command validates the new value based on the attribute being changed:
 * `priority` must be a non-negative integer
 * `worktime_spent` and `worktime_estimate` must be numeric and non-negative
 * `worktime_units` must be one of `hours`, `days`, or `weeks`
+* built-in `type` values are normalized case-insensitively to `item` or `project`; empty/whitespace-only values become `item`, and other non-empty values remain verbatim custom types
 * `id` is immutable and cannot be changed
 * `time_created` and `time_last_updated` are **automatically managed** and **cannot** be set via `set-attr` — attempting to do so returns an error
 

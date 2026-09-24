@@ -14,9 +14,8 @@ use chrono::Utc;
 
 use super::super::config::TaskConfig;
 use super::create::escape_for_tag;
-use super::find_task_by_id;
+use super::{mutate_task, TaskMutation};
 use crate::cli;
-use crate::edit::{edit_task_tag, write_file_atomically};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -41,45 +40,19 @@ pub fn run_status_change(
     let path_str = cli::resolve_path(matches);
     let path = Path::new(&path_str);
 
-    let (task, content) = find_task_by_id(id, path, config, ctx)?;
-
-    // Compute the auto-updated timestamp and format attribute values.
-    let now_ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let ts_formatted = format!("\"{}\"", escape_for_tag(&now_ts));
     let status_formatted = format!("\"{}\"", escape_for_tag(target_status));
-
-    let original_tag = &content[task.raw_span.clone()];
-
-    // Apply the status change and the auto-managed timestamp in a
-    // single format-preserving edit. New attributes (e.g. an older
-    // task missing `time_last_updated`) are appended, preserving
-    // backward compatibility.
-    let modified_tag = edit_task_tag(
-        original_tag,
-        &[
-            ("status", &status_formatted),
-            ("time_last_updated", &ts_formatted),
-        ],
-    )?;
-
-    if no_edit {
-        writeln!(ctx.stdout, "{modified_tag}").map_err(RagtagError::Io)?;
-    } else {
-        // Reconstruct full file content and write atomically.
-        let mut new_content = String::with_capacity(content.len());
-        new_content.push_str(&content[..task.raw_span.start]);
-        new_content.push_str(&modified_tag);
-        new_content.push_str(&content[task.raw_span.end..]);
-        write_file_atomically(&task.location.file_path, &new_content)?;
-        writeln!(
-            ctx.stdout,
-            "{verb} task {} (status → \"{}\")",
-            task.id, target_status
-        )
-        .map_err(RagtagError::Io)?;
-    }
-
-    Ok(())
+    mutate_task(id, path, no_edit, config, ctx, |task| {
+        let now_ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let ts_formatted = format!("\"{}\"", escape_for_tag(&now_ts));
+        Ok(TaskMutation::new(
+            vec![
+                ("status".to_string(), status_formatted),
+                ("time_last_updated".to_string(), ts_formatted),
+            ],
+            task.task_type.clone(),
+            format!("{verb} task {} (status → \"{target_status}\")", task.id),
+        ))
+    })
 }
 
 #[cfg(test)]

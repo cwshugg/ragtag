@@ -10,11 +10,18 @@ use crate::cli;
 use crate::config::{ColorMode, Config};
 use crate::discovery;
 use crate::error::RagtagError;
-use crate::extensions::ExtensionRegistry;
+use crate::extensions::task::TASKS_CONFIG_KEY;
+use crate::extensions::{ExtensionRegistry, ValidationLevel};
 use crate::filter::{self, FilterExpr};
 use crate::models::Tag;
 use crate::output::format::colorize_path;
 use crate::parser;
+
+/// A query candidate with the extension category needed for task semantics.
+struct PreparedResult {
+    tag: Tag,
+    is_task: bool,
+}
 
 /// Controls whether and how the final query result list is shuffled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +108,7 @@ fn run_with_seed_source(
         .collect::<Result<_, _>>()?;
 
     let files = discovery::walk_path(path, config)?;
-    let mut matching_tags: Vec<Tag> = Vec::new();
+    let mut matching_results: Vec<PreparedResult> = Vec::new();
 
     for file_path in &files {
         let content = match std::fs::read_to_string(file_path) {
@@ -115,36 +122,54 @@ fn run_with_seed_source(
         for tag in tags {
             let name_matches = tag_name.is_none_or(|name| tag.name == *name);
             if name_matches {
+                let extension = registry.get_by_tag_name(&tag.name);
+                let is_task = extension
+                    .is_some_and(|extension| extension.config_key() == Some(TASKS_CONFIG_KEY));
+                // A syntactically valid tag can still be an invalid task (for
+                // example, missing a title). Exclude it before filtering,
+                // counting, limiting, or formatting so it can never fall back
+                // to generic source-like output. Validation is deliberately
+                // independent of presentation, so count-only queries format
+                // no extension results.
+                if is_task
+                    && extension.is_some_and(|extension| {
+                        extension
+                            .validate_tag(&tag)
+                            .iter()
+                            .any(|message| message.level == ValidationLevel::Error)
+                    })
+                {
+                    continue;
+                }
                 let passes = parsed_filters
                     .iter()
-                    .all(|expr| eval_query_filter(&tag, expr));
+                    .all(|expr| eval_query_filter(&tag, expr, is_task));
                 if passes {
-                    matching_tags.push(tag);
+                    matching_results.push(PreparedResult { tag, is_task });
                 }
             }
         }
     }
 
-    finalize_results(&mut matching_tags, randomization, limit, fresh_seed)?;
+    finalize_results(&mut matching_results, randomization, limit, fresh_seed)?;
 
     if count_only {
-        writeln!(stdout, "{}", matching_tags.len()).map_err(RagtagError::Io)?;
+        writeln!(stdout, "{}", matching_results.len()).map_err(RagtagError::Io)?;
         return Ok(());
     }
 
-    for tag in &matching_tags {
-        // Check if an extension provides custom formatting
-        let formatted = tag_name
-            .and_then(|name| registry.get_by_tag_name(name))
-            .and_then(|ext| ext.format_tag(tag, color_mode));
-
+    for result in &matching_results {
+        let formatted = registry
+            .get_by_tag_name(&result.tag.name)
+            .and_then(|extension| extension.format_tag(&result.tag, color_mode));
         if let Some(line) = formatted {
             writeln!(stdout, "{line}").map_err(RagtagError::Io)?;
-        } else {
+        } else if !result.is_task {
             // Default grep-style output
-            let path_display = colorize_path(&tag.location.file_path, color_mode);
-            let line_num = tag.location.line;
-            writeln!(stdout, "{path_display}:{line_num}: {tag}").map_err(RagtagError::Io)?;
+            let path_display = colorize_path(&result.tag.location.file_path, color_mode);
+            let line_num = result.tag.location.line;
+            writeln!(stdout, "{path_display}:{line_num}: {}", result.tag)
+                .map_err(RagtagError::Io)?;
         }
     }
 
@@ -188,8 +213,10 @@ fn parse_query_filter(filter: &str) -> Result<FilterExpr, RagtagError> {
 ///
 /// Each leaf condition is applied with `apply_query_condition`; the shared
 /// engine combines the results with standard boolean logic.
-fn eval_query_filter(tag: &Tag, expr: &FilterExpr) -> bool {
-    filter::evaluate(expr, &mut |cond| apply_query_condition(tag, cond))
+fn eval_query_filter(tag: &Tag, expr: &FilterExpr, normalize_task_type: bool) -> bool {
+    filter::evaluate(expr, &mut |cond| {
+        apply_query_condition(tag, cond, normalize_task_type)
+    })
 }
 
 /// Validates a single leaf condition for a query filter.
@@ -204,17 +231,30 @@ fn validate_query_condition(cond: &str) -> Result<(), RagtagError> {
 ///
 /// Supports `=`, `!=`, `>`, `<`, `>=`, and `<=`. Numeric values are compared
 /// numerically; non-numeric values fall back to lexicographic comparison.
-fn apply_query_condition(tag: &Tag, cond: &str) -> bool {
+fn apply_query_condition(tag: &Tag, cond: &str, normalize_task_type: bool) -> bool {
     let Some((field, op, value)) = filter::split_condition(cond) else {
         // Unreachable: conditions are validated to contain an operator first.
         return false;
     };
-    let attr = get_tag_attr_str(tag, field);
+    let attr = get_tag_attr_str(tag, field, normalize_task_type);
     filter::apply_operator(op, &attr, value)
 }
 
 /// Gets a tag attribute as a string.
-fn get_tag_attr_str(tag: &Tag, field: &str) -> String {
+fn get_tag_attr_str(tag: &Tag, field: &str, normalize_task_type: bool) -> String {
+    if normalize_task_type && field == "type" {
+        return match tag.get_named_attribute(field) {
+            Some(crate::models::AttributeValue::Str(value)) => {
+                crate::extensions::task::models::TaskType::from_input(value)
+                    .as_str()
+                    .to_string()
+            }
+            _ => crate::extensions::task::models::TaskType::Item
+                .as_str()
+                .to_string(),
+        };
+    }
+
     tag.get_named_attribute(field)
         .map(|v| format!("{v}"))
         .unwrap_or_default()
@@ -223,8 +263,60 @@ fn get_tag_attr_str(tag: &Tag, field: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extensions::{ExtensionContext, TagExtension, ValidationMessage};
     use crate::models::{AttributeValue, NumericBase, TagAttribute, TagLocation};
     use std::path::PathBuf;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct CountingExtension {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl TagExtension for CountingExtension {
+        fn tag_name(&self) -> &str {
+            "counted"
+        }
+
+        fn display_name(&self) -> &str {
+            "Counting"
+        }
+
+        fn description(&self) -> &str {
+            "Counts formatting calls"
+        }
+
+        fn config_key(&self) -> Option<&str> {
+            None
+        }
+
+        fn init(&mut self, _: Option<&serde_yml::Value>) -> Result<(), RagtagError> {
+            Ok(())
+        }
+
+        fn validate_tag(&self, _: &Tag) -> Vec<ValidationMessage> {
+            Vec::new()
+        }
+
+        fn cli_command(&self) -> clap::Command {
+            clap::Command::new("counted")
+        }
+
+        fn execute(
+            &self,
+            _: &clap::ArgMatches,
+            _: &mut ExtensionContext,
+        ) -> Result<(), RagtagError> {
+            Ok(())
+        }
+
+        fn format_tag(&self, tag: &Tag, _: &ColorMode) -> Option<String> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Some(format!("formatted:{}", tag.location.line))
+        }
+    }
 
     fn make_tag(name: &str, attrs: Vec<TagAttribute>) -> Tag {
         Tag {
@@ -239,7 +331,13 @@ mod tests {
     /// command's parse-then-evaluate flow.
     fn apply_filter(tag: &Tag, filter: &str) -> Result<bool, RagtagError> {
         let expr = parse_query_filter(filter)?;
-        Ok(eval_query_filter(tag, &expr))
+        Ok(eval_query_filter(tag, &expr, false))
+    }
+
+    /// Evaluates a filter with task semantic normalization enabled.
+    fn apply_task_filter(tag: &Tag, filter: &str) -> Result<bool, RagtagError> {
+        let expr = parse_query_filter(filter)?;
+        Ok(eval_query_filter(tag, &expr, true))
     }
 
     #[test]
@@ -333,6 +431,41 @@ mod tests {
     }
 
     #[test]
+    fn test_task_type_filter_uses_canonical_semantics() {
+        let project = make_tag(
+            "task",
+            vec![TagAttribute::named(
+                "type",
+                AttributeValue::Str("PROJECT".to_string()),
+            )],
+        );
+        let missing = make_tag("task", vec![]);
+        let numeric = make_tag(
+            "task",
+            vec![TagAttribute::named(
+                "type",
+                AttributeValue::Integer {
+                    value: 1,
+                    base: NumericBase::Decimal,
+                },
+            )],
+        );
+        let custom = make_tag(
+            "task",
+            vec![TagAttribute::named(
+                "type",
+                AttributeValue::Str(" ProjectX ".to_string()),
+            )],
+        );
+
+        assert!(apply_task_filter(&project, "type=project").unwrap());
+        assert!(apply_task_filter(&missing, "type=item").unwrap());
+        assert!(apply_task_filter(&numeric, "type=item").unwrap());
+        assert!(apply_task_filter(&custom, "type=' ProjectX '").unwrap());
+        assert!(!apply_task_filter(&custom, "type=project").unwrap());
+    }
+
+    #[test]
     fn test_finalize_results_limit_preserves_order_and_accepts_zero() {
         let mut limited = vec![1, 2, 3, 4];
         finalize_results(&mut limited, Randomization::Disabled, Some(2), || {
@@ -405,5 +538,81 @@ mod tests {
         assert!(output.contains("@tag(id=3)"));
         assert!(!output.contains("@tag(id=2)"));
         assert!(!output.contains("@tag(id=4)"));
+    }
+
+    /// Runs a query using `CountingExtension` and returns its output and call count.
+    fn run_counting_query(arguments: &[&str], contents: &str) -> (String, usize) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tags.md");
+        std::fs::write(&path, contents).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = ExtensionRegistry::new();
+        registry
+            .register(Box::new(CountingExtension {
+                calls: Arc::clone(&calls),
+            }))
+            .unwrap();
+        let mut argv = vec![
+            "ragtag",
+            "query",
+            "counted",
+            "--path",
+            path.to_str().unwrap(),
+        ];
+        argv.extend_from_slice(arguments);
+        let matches = cli::build_real_cli(&registry)
+            .try_get_matches_from(argv)
+            .unwrap();
+        let mut output = Vec::new();
+
+        run_with_seed_source(
+            matches.subcommand_matches("query").unwrap(),
+            &Config::default(),
+            &registry,
+            &ColorMode::Never,
+            &mut output,
+            || panic!("unrandomized query must not request a seed"),
+        )
+        .unwrap();
+
+        (
+            String::from_utf8(output).unwrap(),
+            calls.load(Ordering::Relaxed),
+        )
+    }
+
+    #[test]
+    fn query_formats_only_final_emitted_results() {
+        let cases = [
+            (
+                Vec::<&str>::new(),
+                "@counted(id=1)\n@counted(id=2)\n",
+                "formatted:1\nformatted:2\n",
+                2,
+            ),
+            (
+                vec!["--count"],
+                "@counted(id=1)\n@counted(id=2)\n",
+                "2\n",
+                0,
+            ),
+            (
+                vec!["--filter", "id=kept"],
+                "@counted(id=rejected)\n",
+                "",
+                0,
+            ),
+            (
+                vec!["--limit", "1"],
+                "@counted(id=1)\n@counted(id=2)\n",
+                "formatted:1\n",
+                1,
+            ),
+        ];
+        for (arguments, contents, expected_output, expected_calls) in cases {
+            let (output, calls) = run_counting_query(&arguments, contents);
+            assert_eq!(output, expected_output, "arguments={arguments:?}");
+            assert_eq!(calls, expected_calls, "arguments={arguments:?}");
+        }
     }
 }

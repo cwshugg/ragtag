@@ -8,11 +8,11 @@ use super::config::TaskConfig;
 use super::models::{categorize_status, StatusCategory, TaskTag};
 use crate::config::ColorMode;
 use crate::models::Tag;
-use crate::output::format::{colorize_path, should_use_color};
+use crate::output::format::{colorize_path, should_use_color, terminal_safe};
 
 /// Formats a task as a single output line.
 ///
-/// Format: `file/path.md: ID [OWNER/PRIORITY/STATUS] TITLE`
+/// Format: `file/path.md: ID [TYPE] [OWNER] [PRIORITY/STATUS] TITLE`
 /// Only file path, priority, and status are colored.
 pub fn format_task_line(task: &TaskTag, color_mode: &ColorMode, config: &TaskConfig) -> String {
     let path = colorize_path(&task.location.file_path, color_mode);
@@ -23,8 +23,11 @@ pub fn format_task_line(task: &TaskTag, color_mode: &ColorMode, config: &TaskCon
         .unwrap_or_else(|| "-".to_string());
 
     format!(
-        "{path}: {} [{}] [{priority}/{status}] {}",
-        task.id, task.owner, task.title
+        "{path}: {} [{}] [{}] [{priority}/{status}] {}",
+        terminal_safe(&task.id),
+        terminal_safe(task.task_type.as_str()),
+        terminal_safe(&task.owner),
+        terminal_safe(&task.title)
     )
 }
 
@@ -34,16 +37,17 @@ pub fn format_task_line(task: &TaskTag, color_mode: &ColorMode, config: &TaskCon
 pub fn format_task_detail(task: &TaskTag, config: &TaskConfig, color_mode: &ColorMode) -> String {
     let mut lines = Vec::new();
 
-    lines.push(format!("Title: {}", task.title));
+    lines.push(format!("Title: {}", terminal_safe(&task.title)));
     if let Some(ref desc) = task.description {
-        lines.push(format!("Description: {desc}"));
+        lines.push(format!("Description: {}", terminal_safe(desc)));
     }
     lines.push(format!(
         "Path: {}",
         crate::output::format::colorize_path(&task.location.file_path, color_mode)
     ));
-    lines.push(format!("ID: {}", task.id));
-    lines.push(format!("Owner: {}", task.owner));
+    lines.push(format!("ID: {}", terminal_safe(&task.id)));
+    lines.push(format!("Type: {}", terminal_safe(task.task_type.as_str())));
+    lines.push(format!("Owner: {}", terminal_safe(&task.owner)));
     lines.push(format!(
         "Status: {}",
         colorize_status(&task.status, &config.status_keywords, color_mode)
@@ -61,14 +65,20 @@ pub fn format_task_detail(task: &TaskTag, config: &TaskConfig, color_mode: &Colo
         lines.push(format!("Worktime Estimate: {worktime_estimate}"));
     }
     if let Some(ref time_created) = task.time_created {
-        lines.push(format!("Time Created: {time_created}"));
+        lines.push(format!("Time Created: {}", terminal_safe(time_created)));
     }
     if let Some(ref time_last_updated) = task.time_last_updated {
-        lines.push(format!("Time Last Updated: {time_last_updated}"));
+        lines.push(format!(
+            "Time Last Updated: {}",
+            terminal_safe(time_last_updated)
+        ));
     }
-    lines.push(format!("Worktime Units: {}", task.worktime_units));
+    lines.push(format!(
+        "Worktime Units: {}",
+        terminal_safe(&task.worktime_units)
+    ));
     if let Some(ref pid) = task.pid {
-        lines.push(format!("Parent ID: {pid}"));
+        lines.push(format!("Parent ID: {}", terminal_safe(pid)));
     }
 
     lines.join("\n")
@@ -155,17 +165,18 @@ pub fn colorize_status(
     color_mode: &ColorMode,
 ) -> String {
     let use_color = should_use_color(color_mode);
+    let safe_status = terminal_safe(status).to_string();
     if !use_color {
-        return status.to_string();
+        return safe_status;
     }
 
     match categorize_status(status, keywords) {
-        StatusCategory::Done => status.bright_green().to_string(),
-        StatusCategory::Active => status.bright_yellow().to_string(),
-        StatusCategory::Blocked => status.bright_red().to_string(),
-        StatusCategory::Abandoned => status.truecolor(255, 165, 0).to_string(),
-        StatusCategory::Inactive => status.bright_black().to_string(),
-        StatusCategory::Unknown => status.to_string(),
+        StatusCategory::Done => safe_status.bright_green().to_string(),
+        StatusCategory::Active => safe_status.bright_yellow().to_string(),
+        StatusCategory::Blocked => safe_status.bright_red().to_string(),
+        StatusCategory::Abandoned => safe_status.truecolor(255, 165, 0).to_string(),
+        StatusCategory::Inactive => safe_status.bright_black().to_string(),
+        StatusCategory::Unknown => safe_status,
     }
 }
 
@@ -207,6 +218,7 @@ mod tests {
             description: Some("A test".to_string()),
             owner: "me".to_string(),
             status: "active".to_string(),
+            task_type: crate::extensions::task::models::TaskType::Item,
             priority: Some(1),
             worktime_spent: Some(2.0),
             worktime_estimate: Some(4.5),
@@ -214,7 +226,6 @@ mod tests {
             time_last_updated: Some("2026-06-12T10:00:00Z".to_string()),
             worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
-            raw_span: 0..50,
         }
     }
 
@@ -223,9 +234,10 @@ mod tests {
         let task = make_task();
         let config = TaskConfig::default();
         let line = format_task_line(&task, &ColorMode::Never, &config);
-        // Format: path: ID [OWNER] [PRIORITY/STATUS] TITLE
+        // Format: path: ID [TYPE] [OWNER] [PRIORITY/STATUS] TITLE
         assert!(line.contains("test.md:"));
         assert!(line.contains("abc123"));
+        assert!(line.contains("[item]"));
         assert!(line.contains("[me]"));
         assert!(line.contains("[1/active]"));
         assert!(line.contains("Test Task"));
@@ -239,6 +251,7 @@ mod tests {
         assert!(detail.contains("Title: Test Task"));
         assert!(detail.contains("ID: abc123"));
         assert!(detail.contains("Owner: me"));
+        assert!(detail.contains("Type: item"));
         assert!(detail.contains("Status: active"));
         assert!(detail.contains("Worktime Spent: 2"));
         assert!(detail.contains("Worktime Estimate: 4.5"));
@@ -254,11 +267,13 @@ mod tests {
         let title_pos = detail.find("Title:").unwrap();
         let path_pos = detail.find("Path:").unwrap();
         let id_pos = detail.find("ID:").unwrap();
+        let type_pos = detail.find("Type:").unwrap();
         let owner_pos = detail.find("Owner:").unwrap();
         let status_pos = detail.find("Status:").unwrap();
         assert!(title_pos < path_pos);
         assert!(path_pos < id_pos);
-        assert!(id_pos < owner_pos);
+        assert!(id_pos < type_pos);
+        assert!(type_pos < owner_pos);
         assert!(owner_pos < status_pos);
     }
 
@@ -348,5 +363,37 @@ mod tests {
         let line = format_task_line(&task, &ColorMode::Never, &config);
         // No ANSI codes when color is never
         assert!(!line.contains("\x1b["));
+    }
+
+    #[test]
+    fn task_human_output_escapes_every_text_field_and_path() {
+        let hostile = "line\ncarriage\rCSI\u{1b}[2J OSC\u{1b}]52;c;x\u{7} bidi\u{202e}";
+        let mut task = make_task();
+        task.id = hostile.to_string();
+        task.pid = Some(hostile.to_string());
+        task.title = hostile.to_string();
+        task.description = Some(hostile.to_string());
+        task.owner = hostile.to_string();
+        task.status = hostile.to_string();
+        task.time_created = Some(hostile.to_string());
+        task.time_last_updated = Some(hostile.to_string());
+        task.worktime_units = hostile.to_string();
+        task.location.file_path = PathBuf::from(hostile);
+
+        for output in [
+            format_task_line(&task, &ColorMode::Never, &TaskConfig::default()),
+            format_task_detail(&task, &TaskConfig::default(), &ColorMode::Never),
+        ] {
+            assert!(!output.contains('\n') || output.starts_with("Title:"));
+            assert!(!output.contains('\r'));
+            assert!(!output.contains('\u{1b}'));
+            assert!(!output.contains('\u{7}'));
+            assert!(!output.contains('\u{202e}'));
+            assert!(output.contains("\\n"));
+            assert!(output.contains("\\r"));
+            assert!(output.contains("\\u{1b}[2J"));
+            assert!(output.contains("\\u{7}"));
+            assert!(output.contains("\\u{202e}"));
+        }
     }
 }
