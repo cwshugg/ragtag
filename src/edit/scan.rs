@@ -9,7 +9,7 @@
 ///
 /// Single source of truth for the accepted delimiter set on the edit
 /// path: any change here applies to every edit-path scan at once.
-pub(crate) const QUOTE_DELIMITERS: [u8; 3] = [b'"', b'\'', b'`'];
+pub(crate) const QUOTE_DELIMITERS: [u8; 3] = *b"\"'`";
 
 /// Returns whether `byte` opens or closes a quoted attribute value.
 pub(crate) fn is_quote_delimiter(byte: u8) -> bool {

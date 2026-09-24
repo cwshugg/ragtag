@@ -1,8 +1,8 @@
 //! Task extension data models.
 //!
-//! Defines `TaskTag`, `TaskTagBuilder`, and `StatusCategory`.
+//! Defines `TaskTag`, `TaskTagBuilder`, `TaskType`, and `StatusCategory`.
 
-use std::ops::Range;
+use std::fmt;
 
 use super::config::{StatusKeywords, TaskConfig, ALLOWED_WORKTIME_UNITS};
 use crate::error::RagtagError;
@@ -17,6 +17,52 @@ pub enum StatusCategory {
     Abandoned,
     Inactive,
     Unknown,
+}
+
+/// The semantic kind of a task.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub enum TaskType {
+    /// A regular actionable task.
+    #[default]
+    Item,
+    /// A task used to organize related work.
+    Project,
+    /// Any non-empty type other than the two built-ins, preserved verbatim.
+    Custom(String),
+}
+
+impl TaskType {
+    /// Normalizes built-ins and preserves every other non-empty value verbatim.
+    pub fn from_input(value: &str) -> Self {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("item") {
+            Self::Item
+        } else if trimmed.eq_ignore_ascii_case("project") {
+            Self::Project
+        } else {
+            Self::Custom(value.to_string())
+        }
+    }
+
+    /// Returns the canonical built-in or verbatim custom serialized value.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Item => "item",
+            Self::Project => "project",
+            Self::Custom(value) => value,
+        }
+    }
+
+    /// Returns whether this is the built-in project type.
+    pub const fn is_project(&self) -> bool {
+        matches!(self, Self::Project)
+    }
+}
+
+impl fmt::Display for TaskType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 /// Determines the status category for a given status keyword.
@@ -49,6 +95,7 @@ pub struct TaskTag {
     pub description: Option<String>,
     pub owner: String,
     pub status: String,
+    pub task_type: TaskType,
     pub priority: Option<u32>,
     pub worktime_spent: Option<f64>,
     pub worktime_estimate: Option<f64>,
@@ -56,7 +103,6 @@ pub struct TaskTag {
     pub time_last_updated: Option<String>,
     pub worktime_units: String,
     pub location: TagLocation,
-    pub raw_span: Range<usize>,
 }
 
 /// Extracts a string value from a named attribute, with optional default.
@@ -66,6 +112,14 @@ fn get_str(tag: &Tag, name: &str) -> Option<String> {
         AttributeValue::Integer { value, .. } => value.to_string(),
         AttributeValue::Float(f) => f.to_string(),
     })
+}
+
+/// Extracts a task type from string input and defaults all other values to `Item`.
+fn get_task_type(tag: &Tag) -> TaskType {
+    match tag.get_named_attribute("type") {
+        Some(AttributeValue::Str(value)) => TaskType::from_input(value),
+        _ => TaskType::Item,
+    }
 }
 
 /// Extracts a float value from a named attribute (accepts Integer or Float).
@@ -139,6 +193,7 @@ impl TaskTag {
             description: get_str(tag, "description"),
             owner: get_str(tag, "owner").unwrap_or_else(|| config.default_owner.clone()),
             status,
+            task_type: get_task_type(tag),
             priority: get_u32(tag, "priority"),
             worktime_spent: get_float(tag, "worktime_spent"),
             worktime_estimate,
@@ -146,7 +201,6 @@ impl TaskTag {
             time_last_updated: get_str(tag, "time_last_updated"),
             worktime_units,
             location: tag.location.clone(),
-            raw_span: tag.raw_span.clone(),
         })
     }
 }
@@ -159,6 +213,7 @@ pub struct TaskTagBuilder {
     pub description: Option<String>,
     pub owner: Option<String>,
     pub status: Option<String>,
+    pub task_type: Option<TaskType>,
     pub priority: Option<u32>,
     pub worktime_spent: Option<f64>,
     pub worktime_estimate: Option<f64>,
@@ -177,6 +232,7 @@ impl TaskTagBuilder {
             description: None,
             owner: None,
             status: None,
+            task_type: None,
             priority: None,
             worktime_spent: None,
             worktime_estimate: None,
@@ -226,6 +282,7 @@ impl TaskTagBuilder {
             description: self.description,
             owner: self.owner.unwrap_or_else(|| config.default_owner.clone()),
             status,
+            task_type: self.task_type.unwrap_or_default(),
             priority: self.priority,
             worktime_spent: self.worktime_spent,
             worktime_estimate,
@@ -233,7 +290,6 @@ impl TaskTagBuilder {
             time_last_updated: self.time_last_updated,
             worktime_units,
             location: TagLocation::new(std::path::PathBuf::new(), 0, 0, 0, 0),
-            raw_span: 0..0,
         })
     }
 }
@@ -271,6 +327,7 @@ mod tests {
             TagAttribute::named("worktime_estimate", AttributeValue::Float(4.5)),
             TagAttribute::named("worktime_units", AttributeValue::Str("hours".to_string())),
             TagAttribute::named("status", AttributeValue::Str("active".to_string())),
+            TagAttribute::named("type", AttributeValue::Str("PROJECT".to_string())),
             TagAttribute::named("owner", AttributeValue::Str("alice".to_string())),
             TagAttribute::named(
                 "time_created",
@@ -292,6 +349,7 @@ mod tests {
         assert_eq!(task.title, "Test Task");
         assert_eq!(task.worktime_estimate, Some(4.5));
         assert_eq!(task.status, "active");
+        assert_eq!(task.task_type, TaskType::Project);
         assert_eq!(task.owner, "alice");
         assert_eq!(task.time_created.as_deref(), Some("2026-06-12T09:00:00Z"));
         assert_eq!(
@@ -315,6 +373,7 @@ mod tests {
         let task = TaskTag::from_tag(&tag, &default_config()).unwrap();
         assert_eq!(task.owner, "me");
         assert_eq!(task.status, "new");
+        assert_eq!(task.task_type, TaskType::Item);
         assert_eq!(task.worktime_units, "hours");
     }
 
@@ -414,6 +473,60 @@ mod tests {
         );
         assert_eq!(categorize_status("new", &kw), StatusCategory::Inactive);
         assert_eq!(categorize_status("xyz", &kw), StatusCategory::Unknown);
+    }
+
+    #[test]
+    fn task_type_parsing_preserves_custom_values_and_defaults_to_item() {
+        let cases = [
+            ("", TaskType::Item, "item"),
+            (" \t ", TaskType::Item, "item"),
+            ("ITEM", TaskType::Item, "item"),
+            (" Project ", TaskType::Project, "project"),
+            (
+                "ProjectX",
+                TaskType::Custom("ProjectX".to_string()),
+                "ProjectX",
+            ),
+            (
+                " Custom/阶段! ",
+                TaskType::Custom(" Custom/阶段! ".to_string()),
+                " Custom/阶段! ",
+            ),
+        ];
+        for (input, expected, rendered) in cases {
+            let parsed = TaskType::from_input(input);
+            assert_eq!(parsed, expected, "input={input:?}");
+            assert_eq!(parsed.as_str(), rendered, "input={input:?}");
+            assert_eq!(parsed.to_string(), rendered, "input={input:?}");
+        }
+
+        let missing = make_tag(vec![TagAttribute::named(
+            "title",
+            AttributeValue::Str("Missing".to_string()),
+        )]);
+        assert_eq!(
+            TaskTag::from_tag(&missing, &default_config())
+                .unwrap()
+                .task_type,
+            TaskType::Item
+        );
+
+        let tag = make_tag(vec![
+            TagAttribute::named("title", AttributeValue::Str("Numeric".to_string())),
+            TagAttribute::named(
+                "type",
+                AttributeValue::Integer {
+                    value: 1,
+                    base: NumericBase::Decimal,
+                },
+            ),
+        ]);
+        assert_eq!(
+            TaskTag::from_tag(&tag, &default_config())
+                .unwrap()
+                .task_type,
+            TaskType::Item
+        );
     }
 
     #[test]

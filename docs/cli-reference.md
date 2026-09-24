@@ -162,14 +162,14 @@ todo   5
 Search for specific tags.
 
 ```
-ragtag query <TAG_NAME> [OPTIONS]
+ragtag query [TAG_NAME] [OPTIONS]
 ```
 
 **Arguments:**
 
 | Argument | Required | Description |
 | --- | --- | --- |
-| `TAG_NAME` | Yes | Tag name to search for (without `@`) |
+| `TAG_NAME` | No | Tag name to search for (without `@`); omit to query every tag |
 
 **Options:**
 
@@ -183,12 +183,20 @@ ragtag query <TAG_NAME> [OPTIONS]
 
 **Output (default):**
 
-Grep-style output with file path, line number, and the full tag:
+Registered extensions format their own results even when `TAG_NAME` is
+omitted. Task results therefore use normalized human-readable task output in
+both scoped and unscoped queries. Tags without an extension retain grep-style
+source formatting:
 
 ```
 notes/ideas.md:15: @todo(priority=1, owner="alice")
 notes/bugs.md:42: @todo(priority=0, owner="bob")
 ```
+
+`query` does not have a `--raw` mode. For safely framed, normalized
+machine-oriented task records, use `ragtag task list --format jsonl`; its
+`type` value is always canonical and its source span identifies the exact
+occurrence. Legacy `--format raw` remains available for compatibility.
 
 **Output with `--count`:**
 
@@ -404,6 +412,7 @@ ragtag task create [OPTIONS]
 | `--description <STR>` | Task description |
 | `--owner <STR>` | Task owner |
 | `--status <STR>` | Task status |
+| `--type <STR>` | Task type (`item`, `project`, or a custom non-empty string) |
 | `--priority <NUM>` | Priority (`0` = highest) |
 | `--worktime-estimate <NUM>` | Time-to-complete estimate |
 | `--worktime-spent <NUM>` | Worktime already spent (default: `0`) |
@@ -421,6 +430,7 @@ Prints an `@task(...)` string to stdout. With `--format multiline` (default):
     title="Write documentation",
     owner="me",
     status="new",
+    type="item",
     worktime_spent=0,
     worktime_estimate=4,
     time_created="2026-06-12T16:00:00Z",
@@ -432,10 +442,12 @@ Prints an `@task(...)` string to stdout. With `--format multiline` (default):
 With `--format oneline`:
 
 ```
-@task(id="a1b2c3d4e5f67890", title="Write documentation", owner="me", status="new", worktime_spent=0, worktime_estimate=4, time_created="2026-06-12T16:00:00Z", time_last_updated="2026-06-12T16:00:00Z", worktime_units="hours")
+@task(id="a1b2c3d4e5f67890", title="Write documentation", owner="me", status="new", type="item", worktime_spent=0, worktime_estimate=4, time_created="2026-06-12T16:00:00Z", time_last_updated="2026-06-12T16:00:00Z", worktime_units="hours")
 ```
 
-The task ID is a randomly-generated 16-character hex string. `worktime_spent` defaults to `0` and is always emitted. The `time_created` and `time_last_updated` fields are auto-populated with the current UTC timestamp (ISO 8601) at creation; they are never user-supplied and cannot be passed as flags.
+The task ID is a randomly-generated 16-character hex string. `type` defaults to `item` and is always emitted. Built-in `item` and `project` input is case-insensitive (with surrounding whitespace ignored) and emits canonical lowercase. Missing, empty, whitespace-only, malformed non-string values resolve silently to `item`. Every other non-empty string is a custom type and is preserved verbatim, including casing and surrounding whitespace; for example, `ProjectX` is custom. `worktime_spent` defaults to `0` and is always emitted. The `time_created` and `time_last_updated` fields are auto-populated with the current UTC timestamp (ISO 8601) at creation; they are never user-supplied and cannot be passed as flags.
+
+Every non-tabular output that renders a complete task includes its effective type. Mutation commands using `--no-edit` also add or normalize the `type` attribute in the printed complete tag. Summary tables include Type only when the displayed rows in that individual table have different effective rendered type strings.
 
 **Interactive mode:**
 
@@ -464,16 +476,42 @@ ragtag task list [OPTIONS]
 | `--filter <EXPR>` | — | Boolean filter expression, e.g. `"status=active AND priority<=2"` (repeatable, AND-combined). See [Filter Expressions](#filter-expressions) |
 | `--sort <FIELD>` | — | Sort by field name |
 | `--reverse` | — | Reverse sort order |
-| `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
+| `--all`, `-a` | — | Show all tasks, including projects and excluded status categories (done, abandoned) |
+| `--format <FORMAT>` | `default` | Output format: `default`, legacy `raw`, or stable machine-readable `jsonl` |
+
+Only the built-in `project` type is excluded by default; custom types, including `ProjectX`, remain visible. An exact parsed `type` field predicate disables that exclusion, while other fields or values that merely contain the text `type` do not. Type values use the normal case-sensitive filter comparison against canonical lowercase built-ins or the verbatim custom value. The existing status-filter override remains independent; `--all` disables both defaults.
 
 **Output:**
 
-One task per line, showing the file path and selected attributes:
+One task per line, including its normalized type:
 
+```text
+notes/project.md: a1b2c3d4e5f67890 [project] [alice] [0/active] Design API
+notes/bugs.md: f0e1d2c3b4a59687 [item] [bob] [1/blocked] Fix parser bug
 ```
-notes/project.md id="a1b2c3d4e5f67890" status="active" title="Design API" description="REST API design"
-notes/bugs.md id="f0e1d2c3b4a59687" status="blocked" title="Fix parser bug"
+
+For integrations, `--format jsonl` emits exactly one JSON object per physical
+output line. Strings use standard JSON escaping, so embedded newlines and
+record-like text cannot create extra records. The record structure is:
+
+```json
+{"id":"a1b2","pid":null,"title":"Design API","description":null,"owner":"alice","status":"active","type":"project","priority":0,"worktime_spent":null,"worktime_estimate":4.0,"time_created":null,"time_last_updated":null,"worktime_units":"hours","source":{"tag_name":"task","file":"notes/project.md","line":3,"column":5,"byte_start":42,"byte_end":180}}
 ```
+
+Each listed task occurrence produces a separate record, even when IDs or
+titles are duplicated. `type` contains the canonical built-in or verbatim custom value.
+Optional scalar fields are JSON `null` when absent. `source.tag_name` is the
+configured task tag name; `line` and `column` are 1-based; `byte_start` is the
+0-based UTF-8 byte offset of `@`, and `byte_end` is the exclusive 0-based byte
+offset immediately after that exact tag occurrence. `column` is a UTF-8 byte
+column, matching the parser's location model. Offsets apply to the contents of
+the scanned file named by `source.file`.
+
+Consumers should validate all required fields and types and bind a record to
+the unchanged scanned snapshot by `source.file`,
+`source.tag_name`, and the exact `[byte_start, byte_end)` span. Unexpected
+fields must be rejected. The legacy `--format raw` key/value blocks are
+unchanged and are not safely framed when values contain newlines.
 
 #### `task get`
 
@@ -522,19 +560,19 @@ ragtag task summary [OPTIONS]
 | Option | Default | Description |
 | --- | --- | --- |
 | `--path <PATH>` | `.` | Search path (file or directory) |
-| `--group <FIELD>` | `priority` | Group tasks by field: `status`, `owner`, or `priority` |
+| `--group <FIELD>` | `priority` | Group tasks by field: `status`, `owner`, `priority`, or `type` |
 | `--sort <FIELD>` | — | Sort tasks within each group by any task field name |
 | `--filter <EXPR>` | — | Boolean filter expression, e.g. `"status=active AND priority<=2"` (repeatable, AND-combined). See [Filter Expressions](#filter-expressions) |
 | `--format <FORMAT>` | `table` | Output format: `table` (aligned columns) or `list` (multi-line per task) |
-| `--all`, `-a` | — | Show all tasks, including excluded status categories (done, abandoned) |
+| `--all`, `-a` | — | Show all tasks, including projects and excluded status categories (done, abandoned) |
 
 **Output:**
 
 Tasks are displayed in aligned tables, grouped by the specified field. Each group has a header (e.g., `Status: active`).
 
-With `--format table` (default), columns are: Path, Title, Owner, Status, Priority, Time, ID.
+With `--format table` (default), columns are Path, Title, Owner, Status, Priority, Time, and ID. A Type column is inserted after Title only when that individual post-filter, post-grouping table contains different effective rendered type strings. Empty, single-row, and homogeneous tables omit it. Grouped tables share one width layout computed from every displayed row after selection, so common columns align across groups; groups that include Type share its global width. Widths, padding, and title truncation use terminal display cells. Truncation preserves complete Unicode grapheme clusters and counts the ellipsis within the configured cell limit.
 
-With `--format list`, each task is shown as three lines: file path, truncated title, and a detail line with ID, owner, priority, status, and time. Tasks are separated by blank lines.
+With `--format list`, each task is shown as three lines: file path, truncated title, and a detail line with ID, type, owner, priority, status, and time. Tasks are separated by blank lines.
 
 Status values are color-coded and priority `0` is shown in red.
 
@@ -551,7 +589,7 @@ ragtag task get-attr <ID> <ATTR> [OPTIONS]
 | Argument | Required | Description |
 | --- | --- | --- |
 | `ID` | Yes | Task ID or ID prefix |
-| `ATTR` | Yes | Attribute name: `title`, `description`, `owner`, `status`, `priority`, `worktime_spent`, `worktime_estimate`, `time_created`, `time_last_updated`, `worktime_units`, `pid`, `id` |
+| `ATTR` | Yes | Attribute name: `title`, `description`, `owner`, `status`, `type`, `priority`, `worktime_spent`, `worktime_estimate`, `time_created`, `time_last_updated`, `worktime_units`, `pid`, `id` |
 
 **Options:**
 
@@ -619,6 +657,9 @@ ragtag task set-attr a1b2c3d4e5f67890 priority 0
 
 # Update owner
 ragtag task set-attr a1b2c3d4e5f67890 owner alice
+
+# Change task type (empty values normalize to item; other values may be custom)
+ragtag task set-attr a1b2c3d4e5f67890 type project
 
 # Update time spent
 ragtag task set-attr a1b2c3d4e5f67890 worktime_spent 6.5

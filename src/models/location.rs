@@ -3,6 +3,7 @@
 //! `TagLocation` records where a tag was found: file path, line number,
 //! column number, and byte offsets. All line/column numbers are 1-based.
 
+use std::ops::Range;
 use std::path::PathBuf;
 
 /// Describes the exact position of a tag within a source file.
@@ -37,6 +38,11 @@ impl TagLocation {
             byte_end,
         }
     }
+
+    /// Returns the authoritative byte range occupied by the tag.
+    pub fn byte_range(&self) -> Range<usize> {
+        self.byte_offset..self.byte_end
+    }
 }
 
 impl std::fmt::Display for TagLocation {
@@ -57,6 +63,7 @@ mod tests {
         assert_eq!(loc.column, 3);
         assert_eq!(loc.byte_offset, 42);
         assert_eq!(loc.byte_end, 60);
+        assert_eq!(loc.byte_range(), 42..60);
     }
 
     #[test]

@@ -5,13 +5,14 @@
 
 use std::path::Path;
 
+use serde::Serialize;
+
 use super::super::config::TaskConfig;
 use super::super::models::TaskTag;
 use super::super::output::format_task_line;
-use super::{collect_tasks, get_task_field_str};
+use super::{select_tasks, task_field_value};
 use crate::cli;
 use crate::error::RagtagError;
-use crate::extensions::task::filter::{evaluate_filter, parse_filter_expr, validate_filter_expr};
 use crate::extensions::ExtensionContext;
 
 /// Runs the list command.
@@ -23,30 +24,15 @@ pub fn run(
     let path_str = cli::resolve_path(matches);
     let path = Path::new(&path_str);
 
+    if matches.get_flag("discover-files-jsonl") {
+        return format_discovered_sources(path, ctx);
+    }
+
     let sort_field = matches.get_one::<String>("sort").cloned();
     let reverse = matches.get_flag("reverse");
 
-    let filter_expr_str = matches.get_one::<String>("filter").cloned();
-
-    // Discover and parse tasks
-    let mut tasks = collect_tasks(path, config, ctx)?;
-
-    // Apply filter expression
-    if let Some(ref expr_str) = filter_expr_str {
-        let parsed = parse_filter_expr(expr_str)?;
-        validate_filter_expr(&parsed)?;
-        tasks.retain(|task| evaluate_filter(&parsed, task));
-    }
-
-    // Apply default status exclusion (exclude done/abandoned by default)
-    let show_all = matches.get_flag("all");
-    let filter_mentions_status = filter_expr_str
-        .as_ref()
-        .is_some_and(|e| e.contains("status"));
-    if !show_all && !filter_mentions_status {
-        let excluded = config.get_excluded_keywords();
-        tasks.retain(|t| !excluded.contains(&t.status));
-    }
+    let filter_expr = matches.get_one::<String>("filter").map(String::as_str);
+    let mut tasks = select_tasks(path, filter_expr, matches.get_flag("all"), config, ctx)?;
 
     // Sort (default: by priority)
     let effective_sort = sort_field.as_deref().unwrap_or("priority");
@@ -68,6 +54,11 @@ pub fn run(
                 format_task_raw(task, ctx)?;
             }
         }
+        "jsonl" => {
+            for task in &tasks {
+                format_task_jsonl(task, &config.tag_name, ctx)?;
+            }
+        }
         _ => {
             for task in &tasks {
                 let line = format_task_line(task, &ctx.color_mode, config);
@@ -77,6 +68,94 @@ pub fn run(
     }
 
     Ok(())
+}
+
+/// One file selected by the configured Ragtag walker.
+#[derive(Serialize)]
+struct TaskSourceDiscovery<'a> {
+    file: &'a Path,
+}
+
+/// Emits the exact bounded source set selected by Ragtag discovery.
+fn format_discovered_sources(path: &Path, ctx: &mut ExtensionContext) -> Result<(), RagtagError> {
+    for file in ctx.walker.walk(path)? {
+        let record = TaskSourceDiscovery { file: &file };
+        let encoded = serde_json::to_vec(&record)
+            .map_err(|error| RagtagError::Io(std::io::Error::other(error)))?;
+        ctx.stdout.write_all(&encoded).map_err(RagtagError::Io)?;
+        writeln!(ctx.stdout).map_err(RagtagError::Io)?;
+    }
+    Ok(())
+}
+
+/// Exact source identity for a task occurrence in the scanned snapshot.
+#[derive(Serialize)]
+struct TaskSource<'a> {
+    tag_name: &'a str,
+    file: &'a Path,
+    line: usize,
+    column: usize,
+    byte_start: usize,
+    byte_end: usize,
+}
+
+/// Stable, normalized machine-readable task-list record.
+#[derive(Serialize)]
+struct TaskJsonlRecord<'a> {
+    id: &'a str,
+    pid: Option<&'a str>,
+    title: &'a str,
+    description: Option<&'a str>,
+    owner: &'a str,
+    status: &'a str,
+    #[serde(rename = "type")]
+    task_type: &'a str,
+    priority: Option<u32>,
+    worktime_spent: Option<f64>,
+    worktime_estimate: Option<f64>,
+    time_created: Option<&'a str>,
+    time_last_updated: Option<&'a str>,
+    worktime_units: &'a str,
+    source: TaskSource<'a>,
+}
+
+/// Outputs one self-contained JSON object followed by one newline.
+fn format_task_jsonl(
+    task: &TaskTag,
+    tag_name: &str,
+    ctx: &mut ExtensionContext,
+) -> Result<(), RagtagError> {
+    let source_range = task.location.byte_range();
+    let record = TaskJsonlRecord {
+        id: &task.id,
+        pid: task.pid.as_deref(),
+        title: &task.title,
+        description: task.description.as_deref(),
+        owner: &task.owner,
+        status: &task.status,
+        task_type: task.task_type.as_str(),
+        priority: task.priority,
+        worktime_spent: task.worktime_spent,
+        worktime_estimate: task.worktime_estimate,
+        time_created: task.time_created.as_deref(),
+        time_last_updated: task.time_last_updated.as_deref(),
+        worktime_units: &task.worktime_units,
+        source: TaskSource {
+            tag_name,
+            file: &task.location.file_path,
+            line: task.location.line,
+            column: task.location.column,
+            byte_start: source_range.start,
+            byte_end: source_range.end,
+        },
+    };
+
+    // Serialize fully before writing so an unsupported value (such as a
+    // non-UTF-8 path) cannot leave a partial JSON record on stdout.
+    let encoded = serde_json::to_vec(&record)
+        .map_err(|error| RagtagError::Io(std::io::Error::other(error)))?;
+    ctx.stdout.write_all(&encoded).map_err(RagtagError::Io)?;
+    writeln!(ctx.stdout).map_err(RagtagError::Io)
 }
 
 /// Outputs a task in raw key=value format for machine consumption.
@@ -90,6 +169,7 @@ fn format_task_raw(task: &TaskTag, ctx: &mut ExtensionContext) -> Result<(), Rag
     writeln!(ctx.stdout, "title={}", task.title).map_err(RagtagError::Io)?;
     writeln!(ctx.stdout, "owner={}", task.owner).map_err(RagtagError::Io)?;
     writeln!(ctx.stdout, "status={}", task.status).map_err(RagtagError::Io)?;
+    writeln!(ctx.stdout, "type={}", task.task_type).map_err(RagtagError::Io)?;
     writeln!(
         ctx.stdout,
         "priority={}",
@@ -147,8 +227,14 @@ pub fn sort_tasks(tasks: &mut [TaskTag], field: &str, reverse: bool) {
                 .cmp(&b.location.file_path)
                 .then_with(|| a.location.line.cmp(&b.location.line))
         } else {
-            let va = get_task_field_str(a, field);
-            let vb = get_task_field_str(b, field);
+            let va = task_field_value(a, field).unwrap_or_else(|| {
+                log::warn!("sort expression references an unknown task field");
+                std::borrow::Cow::Borrowed("")
+            });
+            let vb = task_field_value(b, field).unwrap_or_else(|| {
+                log::warn!("sort expression references an unknown task field");
+                std::borrow::Cow::Borrowed("")
+            });
 
             // Try numeric comparison first
             if let (Ok(na), Ok(nb)) = (va.parse::<f64>(), vb.parse::<f64>()) {
@@ -181,6 +267,7 @@ mod tests {
             description: None,
             owner: "me".to_string(),
             status: status.to_string(),
+            task_type: crate::extensions::task::models::TaskType::Item,
             priority,
             worktime_spent: None,
             worktime_estimate: Some(4.0),
@@ -188,7 +275,6 @@ mod tests {
             time_last_updated: None,
             worktime_units: "hours".to_string(),
             location: TagLocation::new(PathBuf::from("test.md"), 1, 1, 0, 50),
-            raw_span: 0..50,
         }
     }
 
@@ -250,82 +336,6 @@ mod tests {
     }
 
     #[test]
-    fn test_done_tasks_excluded_by_default() {
-        let config = TaskConfig::default();
-        let mut tasks = vec![
-            make_task("a", "active", Some(1), "Active task"),
-            make_task("b", "done", Some(2), "Done task"),
-            make_task("c", "abandoned", Some(3), "Abandoned task"),
-            make_task("d", "blocked", Some(4), "Blocked task"),
-        ];
-
-        // Simulate default exclusion (no --all, no status filter)
-        let excluded = config.get_excluded_keywords();
-        tasks.retain(|t| !excluded.contains(&t.status));
-
-        assert_eq!(tasks.len(), 2);
-        assert_eq!(tasks[0].id, "a");
-        assert_eq!(tasks[1].id, "d");
-    }
-
-    #[test]
-    fn test_all_flag_shows_everything() {
-        let config = TaskConfig::default();
-        let tasks = vec![
-            make_task("a", "active", Some(1), "Active task"),
-            make_task("b", "done", Some(2), "Done task"),
-            make_task("c", "abandoned", Some(3), "Abandoned task"),
-            make_task("d", "blocked", Some(4), "Blocked task"),
-        ];
-
-        // With --all, no exclusion is applied
-        let show_all = true;
-        let filter_mentions_status = false;
-        let mut filtered = tasks.clone();
-        if !show_all && !filter_mentions_status {
-            let excluded = config.get_excluded_keywords();
-            filtered.retain(|t| !excluded.contains(&t.status));
-        }
-
-        assert_eq!(filtered.len(), 4);
-    }
-
-    #[test]
-    fn test_status_filter_overrides_exclusion() {
-        use crate::extensions::task::filter::{evaluate_filter, parse_filter_expr};
-
-        let config = TaskConfig::default();
-        let tasks = vec![
-            make_task("a", "active", Some(1), "Active task"),
-            make_task("b", "done", Some(2), "Done task"),
-            make_task("c", "abandoned", Some(3), "Abandoned task"),
-        ];
-
-        // When filter mentions status, exclusion is disabled
-        let show_all = false;
-        let filter_expr_str = Some("status=done".to_string());
-        let filter_mentions_status = filter_expr_str
-            .as_ref()
-            .is_some_and(|e| e.contains("status"));
-
-        let mut filtered = tasks.clone();
-        if !show_all && !filter_mentions_status {
-            let excluded = config.get_excluded_keywords();
-            filtered.retain(|t| !excluded.contains(&t.status));
-        }
-
-        // Apply the explicit filter expression
-        if let Some(ref expr_str) = filter_expr_str {
-            let parsed = parse_filter_expr(expr_str).unwrap();
-            filtered.retain(|task| evaluate_filter(&parsed, task));
-        }
-
-        // Should show only the "done" task
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].status, "done");
-    }
-
-    #[test]
     fn test_format_task_raw_output() {
         use crate::config::{ColorMode, Config};
         use crate::discovery::FileWalker;
@@ -381,16 +391,17 @@ mod tests {
         assert_eq!(lines[1], "title=Test task");
         assert_eq!(lines[2], "owner=me");
         assert_eq!(lines[3], "status=active");
-        assert_eq!(lines[4], "priority=1");
-        assert_eq!(lines[5], "description=");
-        assert_eq!(lines[6], "file=test.md");
-        assert_eq!(lines[7], "line=1");
-        assert_eq!(lines[8], "worktime_spent=");
-        assert_eq!(lines[9], "worktime_estimate=4");
-        assert_eq!(lines[10], "time_created=");
-        assert_eq!(lines[11], "time_last_updated=");
-        assert_eq!(lines[12], "worktime_units=hours");
-        assert_eq!(lines[13], "pid=");
-        assert_eq!(lines.len(), 14);
+        assert_eq!(lines[4], "type=item");
+        assert_eq!(lines[5], "priority=1");
+        assert_eq!(lines[6], "description=");
+        assert_eq!(lines[7], "file=test.md");
+        assert_eq!(lines[8], "line=1");
+        assert_eq!(lines[9], "worktime_spent=");
+        assert_eq!(lines[10], "worktime_estimate=4");
+        assert_eq!(lines[11], "time_created=");
+        assert_eq!(lines[12], "time_last_updated=");
+        assert_eq!(lines[13], "worktime_units=hours");
+        assert_eq!(lines[14], "pid=");
+        assert_eq!(lines.len(), 15);
     }
 }

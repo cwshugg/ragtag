@@ -240,4 +240,21 @@ mod tests {
             .iter()
             .any(|m| m.message.contains("worktime_units must be a string")));
     }
+
+    #[test]
+    fn test_unsupported_task_types_do_not_emit_validation_messages() {
+        for value in [
+            AttributeValue::Str(String::new()),
+            AttributeValue::Str("unsupported".to_string()),
+            AttributeValue::Integer {
+                value: 1,
+                base: NumericBase::Decimal,
+            },
+            AttributeValue::Float(1.5),
+        ] {
+            let mut tag = make_valid_tag();
+            tag.attributes.push(TagAttribute::named("type", value));
+            assert!(validate_task_tag(&tag, &TaskConfig::default()).is_empty());
+        }
+    }
 }

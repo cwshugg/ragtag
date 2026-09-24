@@ -38,6 +38,12 @@ pub fn build_task_command() -> Command {
                         .value_name("STR"),
                 )
                 .arg(
+                    Arg::new("type")
+                        .long("type")
+                        .help("Task type (item, project, or any custom non-empty string)")
+                        .value_name("STR"),
+                )
+                .arg(
                     Arg::new("priority")
                         .long("priority")
                         .help("Task priority (0 = highest)")
@@ -273,15 +279,24 @@ pub fn build_task_command() -> Command {
                     Arg::new("all")
                         .long("all")
                         .short('a')
-                        .help("Show all tasks, including excluded status categories (done, abandoned)")
+                        .help("Show all tasks, including projects and excluded status categories")
                         .action(clap::ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("format")
                         .long("format")
-                        .help("Output format (default or raw)")
-                        .value_parser(["default", "raw"])
+                        .help(
+                            "Output format: default, raw (legacy key=value), or jsonl (stable machine records)",
+                        )
+                        .value_parser(["default", "raw", "jsonl"])
                         .default_value("default"),
+                )
+                .arg(
+                    Arg::new("discover-files-jsonl")
+                        .long("discover-files-jsonl")
+                        .help("Emit the exact discovered source-file set as JSONL")
+                        .hide(true)
+                        .action(clap::ArgAction::SetTrue),
                 ),
         )
         .subcommand(
@@ -319,7 +334,7 @@ pub fn build_task_command() -> Command {
                 .arg(
                     Arg::new("group")
                         .long("group")
-                        .help("Group tasks by field (status, owner, priority)")
+                        .help("Group tasks by field (status, owner, priority, type)")
                         .value_name("FIELD")
                         .default_value("priority"),
                 )
@@ -339,7 +354,7 @@ pub fn build_task_command() -> Command {
                     Arg::new("all")
                         .long("all")
                         .short('a')
-                        .help("Show all tasks, including excluded status categories (done, abandoned)")
+                        .help("Show all tasks, including projects and excluded status categories")
                         .action(clap::ArgAction::SetTrue),
                 )
                 .arg(

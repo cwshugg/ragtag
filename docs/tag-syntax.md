@@ -233,6 +233,7 @@ If multiple named attributes share the same key, **the first one wins** when acc
     description="Add support for feature X",
     owner="alice",
     status="active",
+    type="item",
     priority=1,
     worktime_estimate=8,
     time_created="2026-06-12T09:00:00Z",

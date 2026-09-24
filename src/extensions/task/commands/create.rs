@@ -10,7 +10,7 @@ use owo_colors::OwoColorize;
 use rustyline::error::ReadlineError;
 
 use super::super::config::{TaskConfig, ALLOWED_WORKTIME_UNITS};
-use super::super::models::{TaskTag, TaskTagBuilder};
+use super::super::models::{TaskTag, TaskTagBuilder, TaskType};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
@@ -63,6 +63,10 @@ pub fn format_task_string(task: &TaskTag, config: &TaskConfig, fmt: TagFormat) -
 
     attrs.push(format!("owner=\"{}\"", escape_for_tag(&task.owner)));
     attrs.push(format!("status=\"{}\"", escape_for_tag(&task.status)));
+    attrs.push(format!(
+        "type=\"{}\"",
+        escape_for_tag(task.task_type.as_str())
+    ));
 
     if let Some(priority) = task.priority {
         attrs.push(format!("priority={priority}"));
@@ -130,6 +134,9 @@ pub fn run(
     builder.description = matches.get_one::<String>("description").cloned();
     builder.owner = matches.get_one::<String>("owner").cloned();
     builder.status = matches.get_one::<String>("status").cloned();
+    builder.task_type = matches
+        .get_one::<String>("type")
+        .map(|value| TaskType::from_input(value));
     builder.priority = matches
         .get_one::<String>("priority")
         .and_then(|s| s.parse().ok());
@@ -630,7 +637,21 @@ mod tests {
         assert!(output.contains("title=\"Test Task\""));
         assert!(output.contains("worktime_estimate=4.5"));
         assert!(output.contains("worktime_units=\"hours\""));
+        assert!(output.contains("type=\"item\""));
         assert!(output.ends_with(")\n") || output.ends_with(')'));
+    }
+
+    #[test]
+    fn test_format_task_string_uses_canonical_project_type() {
+        let config = TaskConfig::default();
+        let mut builder = TaskTagBuilder::new();
+        builder.id = Some("abc123def456789a".to_string());
+        builder.title = Some("Project".to_string());
+        builder.task_type = Some(TaskType::Project);
+        let task = builder.build(&config).unwrap();
+
+        let output = format_task_string(&task, &config, TagFormat::Oneline);
+        assert!(output.contains("type=\"project\""));
     }
 
     #[test]
