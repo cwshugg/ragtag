@@ -1,6 +1,6 @@
 [package]
 name = "ragtag"
-version = "1.0.6"
+version = "1.0.7"
 edition = "2021"
 description = "A note organization tool that parses and manages '@tag(attr=value)' from plain text files"
 license = "MIT"
