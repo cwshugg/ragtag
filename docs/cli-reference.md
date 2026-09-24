@@ -131,6 +131,29 @@ See [Configuration Reference → Aliases](configuration.md#aliases) for full det
 
 ## Commands
 
+### `diagram`
+
+Generate deterministic D2 source from configured tasks.
+
+```text
+ragtag diagram task-tree [OPTIONS]
+ragtag diagram task-buckets [OPTIONS]
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--path <PATH>` | `RAGTAG_PATH` or `.` | Complete source corpus |
+| `--direction <down\|right\|up\|left>` | `down` | D2 layout direction |
+| `--filter <EXPR>` | — | Strict task filter |
+| `--all` | — | Include configured excluded status categories |
+| `-o, --output <FILE>` | `-` | Atomic Linux file output; `-` is stdout |
+
+Subcommand inference is disabled beneath `diagram`; spell `task-tree` or
+`task-buckets` in full. Diagram filters reject unknown fields and only an exact
+`status` field disables default status exclusions. Filtering retains selected
+tasks' ancestors as context. See [Source-Only D2 Diagrams](diagrams.md) for
+validation, output commit semantics, platform support, and resource limits.
+
 ### `summary`
 
 Show a summary of all tags found.

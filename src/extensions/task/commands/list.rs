@@ -5,19 +5,18 @@
 
 use std::path::Path;
 
-use super::super::config::TaskConfig;
 use super::super::models::TaskTag;
 use super::super::output::format_task_line;
+use super::super::semantics::{TaskFilterMode, TaskSemantics};
 use super::{collect_tasks, get_task_field_str};
 use crate::cli;
 use crate::error::RagtagError;
-use crate::extensions::task::filter::{evaluate_filter, parse_filter_expr, validate_filter_expr};
 use crate::extensions::ExtensionContext;
 
 /// Runs the list command.
-pub fn run(
+pub(crate) fn run(
     matches: &clap::ArgMatches,
-    config: &TaskConfig,
+    semantics: &TaskSemantics,
     ctx: &mut ExtensionContext,
 ) -> Result<(), RagtagError> {
     let path_str = cli::resolve_path(matches);
@@ -29,24 +28,28 @@ pub fn run(
     let filter_expr_str = matches.get_one::<String>("filter").cloned();
 
     // Discover and parse tasks
-    let mut tasks = collect_tasks(path, config, ctx)?;
+    let mut tasks = collect_tasks(path, semantics.config(), ctx)?;
 
     // Apply filter expression
-    if let Some(ref expr_str) = filter_expr_str {
-        let parsed = parse_filter_expr(expr_str)?;
-        validate_filter_expr(&parsed)?;
-        tasks.retain(|task| evaluate_filter(&parsed, task));
+    let compiled = filter_expr_str
+        .as_deref()
+        .map(|expression| {
+            semantics.compile_filter(expression, TaskFilterMode::CommandCompatibility)
+        })
+        .transpose()?;
+    if let Some(filter) = &compiled {
+        tasks.retain(|task| filter.matches(task));
     }
 
     // Apply default status exclusion (exclude done/abandoned by default)
     let show_all = matches.get_flag("all");
-    let filter_mentions_status = filter_expr_str
-        .as_ref()
-        .is_some_and(|e| e.contains("status"));
-    if !show_all && !filter_mentions_status {
-        let excluded = config.get_excluded_keywords();
-        tasks.retain(|t| !excluded.contains(&t.status));
-    }
+    let visibility = semantics.visibility(
+        show_all,
+        compiled
+            .as_ref()
+            .is_some_and(|filter| filter.mentions_status()),
+    );
+    tasks.retain(|task| visibility.includes(task));
 
     // Sort (default: by priority)
     let effective_sort = sort_field.as_deref().unwrap_or("priority");
@@ -70,7 +73,7 @@ pub fn run(
         }
         _ => {
             for task in &tasks {
-                let line = format_task_line(task, &ctx.color_mode, config);
+                let line = format_task_line(task, &ctx.color_mode, semantics.config());
                 writeln!(ctx.stdout, "{line}").map_err(RagtagError::Io)?;
             }
         }
@@ -170,6 +173,7 @@ pub fn sort_tasks(tasks: &mut [TaskTag], field: &str, reverse: bool) {
 mod tests {
     use super::*;
     use crate::extensions::task::commands::{apply_task_filter, validate_task_filter};
+    use crate::extensions::task::config::TaskConfig;
     use crate::models::TagLocation;
     use std::path::PathBuf;
 

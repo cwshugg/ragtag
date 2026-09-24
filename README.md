@@ -94,6 +94,16 @@ cargo build --release
     `2026-08-21_12-33-52.md` under the configured file directory. On success,
     it prints the new file's full absolute path.
 
+7. **Generate D2 source from tasks:**
+
+    ```bash
+    ragtag diagram task-tree --path ./notes
+    ragtag diagram task-buckets --path ./notes --all --output tasks.d2
+    ```
+
+    See the [diagram guide](docs/diagrams.md) for strict filtering, output
+    safety, and resource limits.
+
 ## Commands
 
 ### `ragtag summary`
@@ -205,6 +215,14 @@ The numeric magnitude must be finite and non-negative. A missing current
 `worktime_spent` starts at `0`. `--path <PATH>` selects the search location;
 `--no-edit` prints the updated `@task(...)` without writing its file. Every
 successful operation updates `time_last_updated`.
+
+### `ragtag diagram <task-tree|task-buckets>`
+
+Generates deterministic D2 v0.9.0-compatible source from the configured task
+tag. `task-tree` uses parent-child edges; `task-buckets` uses recursive
+containment. Output defaults to stdout, while `--output FILE` performs an
+atomic reviewed file replacement on Linux. See the
+[source-only diagram guide](docs/diagrams.md).
 
 > **Subcommand prefix matching:** ragtag accepts unambiguous prefixes. For example, `ragtag su` resolves to `ragtag summary`, and `ragtag task li` resolves to `ragtag task list`. An exact configured alias takes precedence over top-level real-command prefix inference. See the [CLI Reference](docs/cli-reference.md#subcommand-prefix-matching) for details.
 

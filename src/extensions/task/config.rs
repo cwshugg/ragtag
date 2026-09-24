@@ -10,6 +10,15 @@ use crate::error::RagtagError;
 /// Allowed worktime unit values (fixed set, not user-configurable).
 pub const ALLOWED_WORKTIME_UNITS: &[&str] = &["hours", "days", "weeks"];
 
+/// A non-fatal task configuration finding returned to the startup layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskConfigWarning {
+    /// Stable warning code.
+    pub code: &'static str,
+    /// Trusted warning message.
+    pub message: String,
+}
+
 /// Configuration for the task extension.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -58,7 +67,7 @@ impl Default for TaskConfig {
 
 impl TaskConfig {
     /// Validates the configuration.
-    pub fn validate(&self) -> Result<(), RagtagError> {
+    pub fn validate(&self) -> Result<Vec<TaskConfigWarning>, RagtagError> {
         if !ALLOWED_WORKTIME_UNITS.contains(&self.default_worktime_units.as_str()) {
             return Err(RagtagError::ExtensionError {
                 extension_name: "Task Manager".to_string(),
@@ -84,16 +93,20 @@ impl TaskConfig {
         // `exclude_status_categories`.  `get_excluded_keywords()` stays silent
         // so the message is never repeated on every list/summary invocation.
         const VALID_CATEGORIES: &[&str] = &["done", "active", "blocked", "abandoned", "inactive"];
+        let mut warnings = Vec::new();
         for (index, cat) in self.exclude_status_categories.iter().enumerate() {
             if !VALID_CATEGORIES.contains(&cat.as_str()) {
-                eprintln!(
-                    "ragtag warning: tasks.exclude_status_categories[{index}] is unknown \
-                     (valid values: done, active, blocked, abandoned, inactive) — entry will be ignored"
-                );
+                warnings.push(TaskConfigWarning {
+                    code: "CFG-TASK-001",
+                    message: format!(
+                        "tasks.exclude_status_categories[{index}] is unknown \
+                         (valid values: done, active, blocked, abandoned, inactive) — entry will be ignored"
+                    ),
+                });
             }
         }
 
-        Ok(())
+        Ok(warnings)
     }
 
     /// Returns a flattened list of all valid status keywords.
@@ -212,7 +225,7 @@ mod tests {
     #[test]
     fn test_validate_ok() {
         let config = TaskConfig::default();
-        assert!(config.validate().is_ok());
+        assert!(config.validate().unwrap().is_empty());
     }
 
     #[test]

@@ -1,5 +1,11 @@
 # Task Management Guide
 
+Task diagrams use the same configured task tag and defaults described here.
+See [Source-Only D2 Diagrams](diagrams.md). Diagram filters deliberately reject
+unknown task fields and use an exact parsed `status` field to override default
+exclusions; `task list` and `task summary` retain their historical
+unknown-field and raw-substring compatibility behavior. Guide
+
 ragtag includes a built-in task management system powered by `@task` tags. Tasks are embedded directly in your plain text note files and managed through the `ragtag task` subcommand.
 
 ## How It Works

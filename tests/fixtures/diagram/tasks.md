@@ -1,0 +1,5 @@
+@task(id=root, title="Root", status=done, owner=lead, priority=0)
+@task(id=active, pid=root, title="Active", status=active, owner=dev, priority=1)
+@task(id=blocked, pid=root, title="Blocked", status=blocked, owner=ops, priority=2)
+@task(id=abandoned, title="Abandoned", status=abandoned, priority=3)
+@task(id=inactive, title="Inactive", status=inactive)

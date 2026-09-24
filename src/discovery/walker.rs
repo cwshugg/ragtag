@@ -14,6 +14,33 @@ pub trait FileWalker {
     fn walk(&self, path: &Path) -> Result<Vec<PathBuf>, RagtagError>;
 }
 
+/// The bounded discovery result used by complete-corpus consumers.
+pub(crate) enum BoundedWalk {
+    /// Every candidate fit within both limits.
+    Complete(Vec<PathBuf>),
+    /// Discovery stopped before retaining an out-of-budget candidate.
+    LimitExceeded { kind: DiscoveryLimitKind },
+}
+
+/// Identifies the first complete-discovery budget that was exceeded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiscoveryLimitKind {
+    FileCount,
+    PathBytes,
+    PathLength,
+}
+
+/// Complete discovery that fails instead of returning a partial corpus.
+pub(crate) trait BoundedFileWalker {
+    fn walk_bounded_complete(
+        &self,
+        path: &Path,
+        maximum_files: usize,
+        maximum_path_bytes: usize,
+        maximum_path_length: usize,
+    ) -> Result<BoundedWalk, RagtagError>;
+}
+
 /// File walker implementation using the `ignore` crate.
 pub struct IgnoreWalker {
     /// Compiled regex set for ignore patterns.
@@ -32,18 +59,25 @@ impl IgnoreWalker {
         let ignore_set = if config.ignore_patterns.is_empty() {
             None
         } else {
+            for (index, pattern) in config.ignore_patterns.iter().enumerate() {
+                regex::RegexBuilder::new(pattern)
+                    .size_limit(10 * 1024 * 1024)
+                    .dfa_size_limit(10 * 1024 * 1024)
+                    .build()
+                    .map_err(|_| {
+                        RagtagError::InvalidConfig(format!(
+                            "invalid ignore pattern at configured index {index}"
+                        ))
+                    })?;
+            }
             let set = regex::RegexSetBuilder::new(&config.ignore_patterns)
                 .size_limit(10 * 1024 * 1024)
                 .dfa_size_limit(10 * 1024 * 1024)
                 .build()
-                .map_err(|e| {
-                    let msg = e.to_string();
-                    let truncated = if msg.len() > 200 {
-                        format!("{}... (truncated)", &msg[..200])
-                    } else {
-                        msg
-                    };
-                    RagtagError::InvalidConfig(format!("invalid ignore pattern: {truncated}"))
+                .map_err(|_| {
+                    RagtagError::InvalidConfig(
+                        "combined ignore patterns exceed configured regex limits".to_string(),
+                    )
                 })?;
             Some(set)
         };
@@ -75,7 +109,6 @@ impl FileWalker for IgnoreWalker {
             return Ok(vec![path.to_path_buf()]);
         }
 
-        // Directory walk
         let mut builder = ignore::WalkBuilder::new(path);
         builder
             .git_ignore(self.respect_gitignore)
@@ -93,14 +126,12 @@ impl FileWalker for IgnoreWalker {
         for entry in builder.build() {
             let entry = entry.map_err(|e| RagtagError::Io(std::io::Error::other(e.to_string())))?;
 
-            // Skip directories
             if entry.file_type().is_none_or(|ft| !ft.is_file()) {
                 continue;
             }
 
             let file_path = entry.path().to_path_buf();
 
-            // Apply regex ignore patterns
             if let Some(ref set) = self.ignore_set {
                 if set.is_match(&file_path.to_string_lossy()) {
                     continue;
@@ -110,10 +141,85 @@ impl FileWalker for IgnoreWalker {
             files.push(file_path);
         }
 
-        // Sort for deterministic output
         files.sort();
 
         Ok(files)
+    }
+}
+
+impl BoundedFileWalker for IgnoreWalker {
+    fn walk_bounded_complete(
+        &self,
+        path: &Path,
+        maximum_files: usize,
+        maximum_path_bytes: usize,
+        maximum_path_length: usize,
+    ) -> Result<BoundedWalk, RagtagError> {
+        if !path.exists() {
+            return Err(RagtagError::FileRead {
+                path: path.to_path_buf(),
+                source: std::io::Error::new(std::io::ErrorKind::NotFound, "path not found"),
+            });
+        }
+
+        let mut files = Vec::new();
+        let mut path_bytes = 0usize;
+        let mut consider = |candidate: &Path| -> Option<DiscoveryLimitKind> {
+            let length = candidate.as_os_str().len();
+            if length > maximum_path_length {
+                return Some(DiscoveryLimitKind::PathLength);
+            }
+            if files.len() == maximum_files {
+                return Some(DiscoveryLimitKind::FileCount);
+            }
+            let Some(next_bytes) = path_bytes.checked_add(length) else {
+                return Some(DiscoveryLimitKind::PathBytes);
+            };
+            if next_bytes > maximum_path_bytes {
+                return Some(DiscoveryLimitKind::PathBytes);
+            }
+            path_bytes = next_bytes;
+            files.push(candidate.to_path_buf());
+            None
+        };
+        if path.is_file() {
+            return Ok(match consider(path) {
+                Some(kind) => BoundedWalk::LimitExceeded { kind },
+                None => BoundedWalk::Complete(files),
+            });
+        }
+
+        let mut builder = ignore::WalkBuilder::new(path);
+        builder
+            .git_ignore(self.respect_gitignore)
+            .hidden(self.skip_hidden)
+            .follow_links(false);
+        if let Some(depth) = self.max_depth {
+            builder.max_depth(Some(depth));
+        }
+        for entry in builder.build() {
+            let entry =
+                entry.map_err(|error| RagtagError::Io(std::io::Error::other(error.to_string())))?;
+            if entry
+                .file_type()
+                .is_none_or(|file_type| !file_type.is_file())
+            {
+                continue;
+            }
+            let candidate = entry.path();
+            if self
+                .ignore_set
+                .as_ref()
+                .is_some_and(|set| set.is_match(&candidate.to_string_lossy()))
+            {
+                continue;
+            }
+            if let Some(kind) = consider(candidate) {
+                return Ok(BoundedWalk::LimitExceeded { kind });
+            }
+        }
+        files.sort();
+        Ok(BoundedWalk::Complete(files))
     }
 }
 
@@ -176,6 +282,65 @@ mod tests {
         };
         let files = walk_path(dir.path(), &config).unwrap();
         assert!(files.iter().all(|f| !f.to_string_lossy().ends_with(".pdf")));
+    }
+
+    #[test]
+    fn invalid_ignore_pattern_error_omits_untrusted_pattern_text() {
+        let sentinel = "IGNORE_SECRET";
+        let config = Config {
+            ignore_patterns: vec![format!(
+                "(?P<\n\u{1b}]8;;https://evil\u{7}\u{202e}{sentinel}{}",
+                "é".repeat(200)
+            )],
+            ..Default::default()
+        };
+
+        let error = match IgnoreWalker::new(&config) {
+            Ok(_) => panic!("hostile ignore pattern unexpectedly compiled"),
+            Err(error) => error,
+        };
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+        for rendered in [&display, &debug] {
+            assert!(rendered.contains("configured index 0"));
+            assert!(!rendered.contains(sentinel));
+            assert!(!rendered.contains('\n'));
+            assert!(!rendered.contains('\u{1b}'));
+            assert!(!rendered.contains('\u{7}'));
+            assert!(!rendered.contains('\u{202e}'));
+        }
+    }
+
+    #[test]
+    fn bounded_walk_fails_before_retaining_candidate_past_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), "").unwrap();
+        fs::write(dir.path().join("b.txt"), "").unwrap();
+        let walker = IgnoreWalker::new(&Config::default()).unwrap();
+        let result = walker
+            .walk_bounded_complete(dir.path(), 1, usize::MAX, usize::MAX)
+            .unwrap();
+        assert!(matches!(
+            result,
+            BoundedWalk::LimitExceeded {
+                kind: DiscoveryLimitKind::FileCount
+            }
+        ));
+    }
+
+    #[test]
+    fn bounded_walk_sorts_complete_results() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("z.txt"), "").unwrap();
+        fs::write(dir.path().join("a.txt"), "").unwrap();
+        let walker = IgnoreWalker::new(&Config::default()).unwrap();
+        let BoundedWalk::Complete(paths) = walker
+            .walk_bounded_complete(dir.path(), 10, usize::MAX, usize::MAX)
+            .unwrap()
+        else {
+            panic!("expected a complete walk");
+        };
+        assert!(paths.windows(2).all(|pair| pair[0] <= pair[1]));
     }
 
     #[test]

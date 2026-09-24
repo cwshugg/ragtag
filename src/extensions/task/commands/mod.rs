@@ -23,29 +23,30 @@ use std::path::Path;
 
 use super::config::TaskConfig;
 use super::models::TaskTag;
+use super::semantics::TaskSemantics;
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
 
 /// Dispatches to the appropriate task subcommand.
-pub fn dispatch(
+pub(crate) fn dispatch(
     matches: &clap::ArgMatches,
-    config: &TaskConfig,
+    semantics: &TaskSemantics,
     ctx: &mut ExtensionContext,
 ) -> Result<(), RagtagError> {
     match matches.subcommand() {
-        Some(("abandon", sub_m)) => abandon::run(sub_m, config, ctx),
-        Some(("activate", sub_m)) => activate::run(sub_m, config, ctx),
-        Some(("block", sub_m)) => block::run(sub_m, config, ctx),
-        Some(("complete", sub_m)) => complete::run(sub_m, config, ctx),
-        Some(("create", sub_m)) => create::run(sub_m, config, ctx),
-        Some(("deactivate", sub_m)) => deactivate::run(sub_m, config, ctx),
-        Some(("get", sub_m)) => get::run(sub_m, config, ctx),
-        Some(("list", sub_m)) => list::run(sub_m, config, ctx),
-        Some(("prioritize", sub_m)) => prioritize::run(sub_m, config, ctx),
-        Some(("summary", sub_m)) => summary::run(sub_m, config, ctx),
-        Some(("get-attr", sub_m)) => get_attr::run(sub_m, config, ctx),
-        Some(("set-attr", sub_m)) => set_attr::run(sub_m, config, ctx),
-        Some(("time", sub_m)) => time::run(sub_m, config, ctx),
+        Some(("abandon", sub_m)) => abandon::run(sub_m, semantics.config(), ctx),
+        Some(("activate", sub_m)) => activate::run(sub_m, semantics.config(), ctx),
+        Some(("block", sub_m)) => block::run(sub_m, semantics.config(), ctx),
+        Some(("complete", sub_m)) => complete::run(sub_m, semantics.config(), ctx),
+        Some(("create", sub_m)) => create::run(sub_m, semantics.config(), ctx),
+        Some(("deactivate", sub_m)) => deactivate::run(sub_m, semantics.config(), ctx),
+        Some(("get", sub_m)) => get::run(sub_m, semantics.config(), ctx),
+        Some(("list", sub_m)) => list::run(sub_m, semantics, ctx),
+        Some(("prioritize", sub_m)) => prioritize::run(sub_m, semantics.config(), ctx),
+        Some(("summary", sub_m)) => summary::run(sub_m, semantics, ctx),
+        Some(("get-attr", sub_m)) => get_attr::run(sub_m, semantics.config(), ctx),
+        Some(("set-attr", sub_m)) => set_attr::run(sub_m, semantics.config(), ctx),
+        Some(("time", sub_m)) => time::run(sub_m, semantics.config(), ctx),
         _ => Err(RagtagError::UnknownCommand(
             "unknown task subcommand".to_string(),
         )),

@@ -82,16 +82,12 @@ pub trait TagExtension {
     /// Brief description for help text.
     fn description(&self) -> &str;
 
-    /// YAML config section key (e.g., "tasks"). `None` if no config needed.
-    fn config_key(&self) -> Option<&str>;
-    /// Initialize with config data.
-    fn init(&mut self, config_value: Option<&serde_yml::Value>) -> Result<(), RagtagError>;
+    /// Stable top-level command name for dispatch.
+    fn command_name(&self) -> &str;
 
     /// Validate a tag of this extension's type.
     fn validate_tag(&self, tag: &Tag) -> Vec<ValidationMessage>;
 
-    /// Build the clap `Command` for this extension's CLI subcommand.
-    fn cli_command(&self) -> clap::Command;
     /// Execute the extension's command.
     fn execute(
         &self,
@@ -150,8 +146,7 @@ impl ExtensionRegistry {
     /// Convention: the command name is the config key or tag name + "s".
     pub fn get_by_command_name(&self, name: &str) -> Option<&dyn TagExtension> {
         self.extensions.iter().find_map(|e| {
-            let cmd = e.cli_command();
-            if cmd.get_name() == name {
+            if e.command_name() == name {
                 Some(e.as_ref())
             } else {
                 None
@@ -162,16 +157,6 @@ impl ExtensionRegistry {
     /// Returns all registered extensions.
     pub fn all(&self) -> &[Box<dyn TagExtension>] {
         &self.extensions
-    }
-
-    /// Returns mutable references to all registered extensions for initialization.
-    pub fn all_mut(&mut self) -> &mut [Box<dyn TagExtension>] {
-        &mut self.extensions
-    }
-
-    /// Collects CLI commands from all registered extensions.
-    pub fn cli_commands(&self) -> Vec<clap::Command> {
-        self.extensions.iter().map(|e| e.cli_command()).collect()
     }
 }
 
@@ -207,17 +192,11 @@ mod tests {
         fn description(&self) -> &str {
             "A mock extension"
         }
-        fn config_key(&self) -> Option<&str> {
-            None
-        }
-        fn init(&mut self, _: Option<&serde_yml::Value>) -> Result<(), RagtagError> {
-            Ok(())
+        fn command_name(&self) -> &str {
+            self.cmd_name
         }
         fn validate_tag(&self, _: &Tag) -> Vec<ValidationMessage> {
             vec![]
-        }
-        fn cli_command(&self) -> clap::Command {
-            clap::Command::new(self.cmd_name)
         }
         fn execute(
             &self,
@@ -246,17 +225,6 @@ mod tests {
             .unwrap();
         let result = registry.register(Box::new(MockExtension::with_names("mock", "mocks")));
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cli_commands() {
-        let mut registry = ExtensionRegistry::new();
-        registry
-            .register(Box::new(MockExtension::with_names("mock", "mocks")))
-            .unwrap();
-        let cmds = registry.cli_commands();
-        assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0].get_name(), "mocks");
     }
 
     #[test]

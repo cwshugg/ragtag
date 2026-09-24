@@ -374,7 +374,7 @@ mod tests {
         let path = dir.path().join("tags.md");
         std::fs::write(&path, "@tag(id=1)\n@tag(id=2)\n@tag(id=3)\n@tag(id=4)\n").unwrap();
         let registry = ExtensionRegistry::new();
-        let matches = cli::build_real_cli(&registry)
+        let matches = cli::build_real_cli(&crate::application::StaticCatalog)
             .try_get_matches_from([
                 "ragtag",
                 "query",

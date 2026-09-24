@@ -21,6 +21,7 @@ use crate::extensions::task::{config::TaskConfig, TASKS_CONFIG_KEY};
 pub fn run_get<F>(
     key: &str,
     config: &Config,
+    task_config: &TaskConfig,
     mut is_environment_derived: F,
 ) -> Result<String, RagtagError>
 where
@@ -40,13 +41,7 @@ where
     // extensions and merge their resolved configs here.
 
     // Merge resolved task extension config (with defaults applied).
-    let task_config = config
-        .extension_configs
-        .get(TASKS_CONFIG_KEY)
-        .map(|raw| TaskConfig::from_config_value(raw).unwrap_or_default())
-        .unwrap_or_default();
-
-    let resolved_tasks = serde_yml::to_value(&task_config)
+    let resolved_tasks = serde_yml::to_value(task_config)
         .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize task config: {e}")))?;
 
     if let serde_yml::Value::Mapping(ref mut map) = root {
@@ -154,7 +149,13 @@ mod tests {
 
     /// Reads config without environment-derived values.
     fn get(key: &str, config: &Config) -> Result<String, RagtagError> {
-        run_get(key, config, |_| false)
+        let task_config = config
+            .extension_configs
+            .get(TASKS_CONFIG_KEY)
+            .map(TaskConfig::from_config_value)
+            .transpose()?
+            .unwrap_or_default();
+        run_get(key, config, &task_config, |_| false)
     }
 
     #[test]
@@ -322,13 +323,16 @@ tasks:
     fn test_get_applies_value_provenance() {
         let config: Config =
             serde_yml::from_str("tasks:\n  default_owner: environment-secret\n").unwrap();
+        let task_config =
+            TaskConfig::from_config_value(config.extension_configs.get(TASKS_CONFIG_KEY).unwrap())
+                .unwrap();
 
         assert_eq!(
-            run_get("tasks.default_owner", &config, |_| false).unwrap(),
+            run_get("tasks.default_owner", &config, &task_config, |_| false,).unwrap(),
             "environment-secret"
         );
         assert_eq!(
-            run_get("tasks.default_owner", &config, |value| {
+            run_get("tasks.default_owner", &config, &task_config, |value| {
                 value == "environment-secret"
             })
             .unwrap(),

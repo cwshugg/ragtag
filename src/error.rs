@@ -201,6 +201,31 @@ pub enum RagtagError {
         message: String,
     },
 
+    /// Diagram generation failed after structured validation.
+    #[error("error: diagram generation failed: {0}")]
+    Diagram(String),
+
+    /// A streaming stdout write failed and may have emitted a prefix.
+    #[error("error: failed to write diagram to stdout; output may be partial: {0}")]
+    StdoutWrite(std::io::Error),
+
+    /// A streaming stdout flush failed after bytes may have been emitted.
+    #[error("error: failed to flush diagram stdout; output may be partial: {0}")]
+    StdoutFlush(std::io::Error),
+
+    /// Secure file output is not available on this operating system.
+    #[error("error: secure diagram file output is supported only on Linux; use --output -")]
+    SecureFileOutputUnsupported,
+
+    /// A file replacement committed but directory durability is uncertain.
+    #[error(
+        "error: replacement committed for \"{path}\", but directory durability could not be confirmed: {source}"
+    )]
+    FileCommittedDurabilityUncertain {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
     /// A catch-all I/O error.
     #[error("error: {0}")]
     Io(#[from] std::io::Error),

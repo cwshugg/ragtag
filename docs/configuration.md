@@ -2,6 +2,11 @@
 
 ragtag is configured via a YAML file. All settings have sensible defaults, so a config file is entirely optional.
 
+Only the canonical `tasks` extension key is accepted. Singular `task`, a
+`diagrams` section, and other unknown top-level extension sections are errors.
+Diagram commands consume the same resolved `tasks` configuration as task
+commands and `config get`; diagrams have no independent configuration.
+
 ## Config File Discovery
 
 ragtag searches for a config file by walking up the directory tree from the current working directory. At each level it checks the following names in order, using the first that exists:

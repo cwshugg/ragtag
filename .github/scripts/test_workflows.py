@@ -3,7 +3,6 @@
 import unittest
 from pathlib import Path
 
-
 WORKFLOWS = Path(__file__).parents[1] / "workflows"
 CI_WORKFLOW = WORKFLOWS / "ci.yml"
 RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
@@ -15,6 +14,8 @@ ACTIONLINT_ARCHIVE_SHA256 = (
 ACTIONLINT_MATCHER_SHA256 = (
     "5ec0c56e3947f155d8a9df6361653d97be7969d0bcb10f8c95f6be99b4888f0d"
 )
+D2_ARCHIVE_SHA256 = "5669ddc46b99e942cc96078f4a4e36d5e62103348f4c05179ede27802fdd87a9"
+SETUP_GO_SHA = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
 
 
 class CiWorkflowTests(unittest.TestCase):
@@ -37,7 +38,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn(ACTIONLINT_ARCHIVE_SHA256, workflow)
         self.assertIn(ACTIONLINT_MATCHER_SHA256, workflow)
         self.assertIn("--proto '=https' --tlsv1.2 --retry 3", workflow)
-        self.assertEqual(workflow.count("sha256sum --check --strict -"), 2)
+        self.assertEqual(workflow.count("sha256sum --check --strict -"), 3)
         self.assertIn("--no-same-owner actionlint", workflow)
 
     def test_actionlint_path_and_matcher_precede_lint(self) -> None:
@@ -50,6 +51,34 @@ class CiWorkflowTests(unittest.TestCase):
 
         self.assertLess(path_update, lint)
         self.assertLess(matcher_update, lint)
+
+    def test_d2_conformance_is_fully_pinned(self) -> None:
+        """D2, Go, helper inputs, and semantic tests are immutable."""
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        helper_module = (
+            Path(__file__).parents[2] / "tests" / "tools" / "d2inspect" / "go.mod"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(f"actions/setup-go@{SETUP_GO_SHA}", workflow)
+        self.assertIn("go-version: 1.27.0", workflow)
+        self.assertIn(D2_ARCHIVE_SHA256, workflow)
+        self.assertIn("d2-v${D2_VERSION}-linux-amd64.tar.gz", workflow)
+        self.assertIn("sha256sum --check --strict SHA256SUMS", workflow)
+        self.assertIn("go mod verify", workflow)
+        self.assertIn("go test -mod=readonly ./...", workflow)
+        self.assertIn("go build -mod=readonly -trimpath", workflow)
+        self.assertIn(
+            "cargo test --locked --test d2_conformance -- --ignored", workflow
+        )
+        self.assertIn("github.com/d2lang/d2 v0.9.0", helper_module)
+        self.assertIn("go 1.27.0", helper_module)
+
+    def test_cross_platform_checks_are_compile_only(self) -> None:
+        """Windows/macOS cfg coverage remains separate from release assets."""
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("targets: x86_64-pc-windows-msvc, x86_64-apple-darwin", workflow)
+        self.assertIn("cargo check --locked --target x86_64-pc-windows-msvc", workflow)
+        self.assertIn("cargo check --locked --target x86_64-apple-darwin", workflow)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):

@@ -4,7 +4,7 @@
 //! dynamically including extension subcommands. Also provides helper
 //! functions for resolving CLI arguments with environment variable fallbacks.
 
-use crate::extensions::ExtensionRegistry;
+use crate::application::StaticCatalog;
 use clap::{Arg, ArgMatches, Command};
 use std::ffi::{OsStr, OsString};
 
@@ -193,8 +193,8 @@ where
 /// automatically covers built-ins and extension commands and cannot drift from
 /// the actual command tree. Used to detect alias-name collisions at
 /// config-validation time.
-pub fn real_command_names(registry: &ExtensionRegistry) -> Vec<String> {
-    let mut command = build_real_cli(registry);
+pub(crate) fn real_command_names(catalog: &StaticCatalog) -> Vec<String> {
+    let mut command = build_real_cli(catalog);
     command.build();
     command
         .get_subcommands()
@@ -207,7 +207,7 @@ pub fn real_command_names(registry: &ExtensionRegistry) -> Vec<String> {
 /// Core commands (summary, query) are defined statically.
 /// Extension commands are added dynamically from the registry.
 /// Aliases remain outside clap and are expanded before the single parse.
-pub fn build_real_cli(registry: &ExtensionRegistry) -> Command {
+pub(crate) fn build_real_cli(catalog: &StaticCatalog) -> Command {
     let mut cmd = Command::new("ragtag")
         .version(env!("CARGO_PKG_VERSION"))
         .about("A CLI tool for parsing @tag(attr=value) from plain text files")
@@ -338,10 +338,11 @@ pub fn build_real_cli(registry: &ExtensionRegistry) -> Command {
                         .value_parser(parse_randomize_seed)
                         .action(clap::ArgAction::Set),
                 ),
-        );
+        )
+        .subcommand(catalog.diagram_command());
 
     // Add extension commands
-    for ext_cmd in registry.cli_commands() {
+    for ext_cmd in catalog.extension_commands() {
         cmd = cmd.subcommand(ext_cmd);
     }
 
@@ -490,15 +491,18 @@ mod tests {
 
     #[test]
     fn test_real_command_names_matches_built_tree_including_help() {
-        let registry = ExtensionRegistry::new();
-        let names = real_command_names(&registry);
-        assert_eq!(names, ["config", "file", "summary", "query", "help"]);
+        let catalog = StaticCatalog;
+        let names = real_command_names(&catalog);
+        assert_eq!(
+            names,
+            ["config", "file", "summary", "query", "diagram", "task", "help"]
+        );
     }
 
     #[test]
     fn test_outer_scanner_global_set_matches_real_tree() {
-        let registry = ExtensionRegistry::new();
-        let command = build_real_cli(&registry);
+        let catalog = StaticCatalog;
+        let command = build_real_cli(&catalog);
         let globals = command
             .get_arguments()
             .filter(|argument| argument.is_global_set())
@@ -509,8 +513,8 @@ mod tests {
 
     #[test]
     fn test_file_command_contains_only_touch_and_accepts_repeated_tags() {
-        let registry = ExtensionRegistry::new();
-        let command = build_real_cli(&registry);
+        let catalog = StaticCatalog;
+        let command = build_real_cli(&catalog);
         let file = command
             .get_subcommands()
             .find(|subcommand| subcommand.get_name() == "file")
@@ -522,7 +526,7 @@ mod tests {
             vec!["touch"]
         );
 
-        let matches = build_real_cli(&registry)
+        let matches = build_real_cli(&catalog)
             .try_get_matches_from([
                 "ragtag", "file", "touch", "--tag", "-one", "--tag", "@-two", "--edit",
             ])
@@ -538,7 +542,7 @@ mod tests {
             ["-one", "@-two"]
         );
         assert!(touch_matches.get_flag("edit"));
-        assert!(build_real_cli(&registry)
+        assert!(build_real_cli(&catalog)
             .try_get_matches_from(["ragtag", "file", "unknown"])
             .is_err());
     }

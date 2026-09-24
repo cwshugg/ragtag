@@ -10,12 +10,12 @@ use std::path::Path;
 use super::super::config::TaskConfig;
 use super::super::models::TaskTag;
 use super::super::output::{colorize_priority, colorize_status};
+use super::super::semantics::{TaskFilterMode, TaskSemantics};
 use super::collect_tasks;
 use super::list::sort_tasks;
 use crate::cli;
 use crate::config::ColorMode;
 use crate::error::RagtagError;
-use crate::extensions::task::filter::{evaluate_filter, parse_filter_expr, validate_filter_expr};
 use crate::extensions::ExtensionContext;
 use crate::output::format::{colorize_path, strip_dot_slash};
 use terminal_size::{terminal_size, Width};
@@ -33,9 +33,9 @@ const FALLBACK_TITLE_WIDTH: usize = 60;
 const COLUMN_GAP: usize = 2;
 
 /// Runs the summary command.
-pub fn run(
+pub(crate) fn run(
     matches: &clap::ArgMatches,
-    config: &TaskConfig,
+    semantics: &TaskSemantics,
     ctx: &mut ExtensionContext,
 ) -> Result<(), RagtagError> {
     let path_str = cli::resolve_path(matches);
@@ -51,24 +51,28 @@ pub fn run(
     let filter_expr_str = matches.get_one::<String>("filter").cloned();
 
     // Discover and parse tasks
-    let mut tasks = collect_tasks(path, config, ctx)?;
+    let mut tasks = collect_tasks(path, semantics.config(), ctx)?;
 
     // Apply filter expression
-    if let Some(ref expr_str) = filter_expr_str {
-        let parsed = parse_filter_expr(expr_str)?;
-        validate_filter_expr(&parsed)?;
-        tasks.retain(|task| evaluate_filter(&parsed, task));
+    let compiled = filter_expr_str
+        .as_deref()
+        .map(|expression| {
+            semantics.compile_filter(expression, TaskFilterMode::CommandCompatibility)
+        })
+        .transpose()?;
+    if let Some(filter) = &compiled {
+        tasks.retain(|task| filter.matches(task));
     }
 
     // Apply default status exclusion (exclude done/abandoned by default)
     let show_all = matches.get_flag("all");
-    let filter_mentions_status = filter_expr_str
-        .as_ref()
-        .is_some_and(|e| e.contains("status"));
-    if !show_all && !filter_mentions_status {
-        let excluded = config.get_excluded_keywords();
-        tasks.retain(|t| !excluded.contains(&t.status));
-    }
+    let visibility = semantics.visibility(
+        show_all,
+        compiled
+            .as_ref()
+            .is_some_and(|filter| filter.mentions_status()),
+    );
+    tasks.retain(|task| visibility.includes(task));
 
     // Sort within groups (default: priority)
     let effective_sort = sort_by.unwrap_or_else(|| "priority".to_string());
@@ -84,8 +88,8 @@ pub fn run(
         .unwrap_or("table");
 
     let output = match format {
-        "list" => format_summary_list(&groups, group_by, config, &ctx.color_mode),
-        _ => format_summary_table(&groups, group_by, config, &ctx.color_mode),
+        "list" => format_summary_list(&groups, group_by, semantics.config(), &ctx.color_mode),
+        _ => format_summary_table(&groups, group_by, semantics.config(), &ctx.color_mode),
     };
     write!(ctx.stdout, "{output}").map_err(RagtagError::Io)?;
 

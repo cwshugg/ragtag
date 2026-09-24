@@ -6,3 +6,4 @@
 pub mod walker;
 
 pub use walker::{walk_path, FileWalker, IgnoreWalker};
+pub(crate) use walker::{BoundedFileWalker, BoundedWalk, DiscoveryLimitKind};

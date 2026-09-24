@@ -15,3 +15,8 @@ pub mod filter;
 pub mod models;
 pub mod output;
 pub mod parser;
+
+mod application;
+mod diagram;
+
+pub use application::run_process;
