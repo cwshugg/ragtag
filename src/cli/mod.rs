@@ -286,6 +286,7 @@ pub fn build_real_cli(registry: &ExtensionRegistry) -> Command {
                 )
                 .arg(
                     Arg::new("interactive")
+                        .short('i')
                         .long("interactive")
                         .action(clap::ArgAction::SetTrue),
                 )

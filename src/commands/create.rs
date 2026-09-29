@@ -6,13 +6,16 @@ use std::path::Path;
 use crate::config::{Config, TagPreset};
 use crate::error::RagtagError;
 use crate::input::prompt::{make_prompt, PromptSession};
-use crate::models::{AttributeKind, TagAttribute};
+use crate::models::{AttributeKind, AttributeValue, TagAttribute};
 use crate::output::tag::{format_value, layout_tag, TagFormat};
 use crate::parser::{
     parse_complete_attribute_value_with_lexeme, parse_complete_named_attribute_with_value_lexeme,
     parse_complete_tag, parse_complete_tag_with_value_lexemes, validate_complete_tag_name,
     validate_creatable_tag, validate_creatable_value, MAX_ATTRIBUTES_PER_TAG,
 };
+
+/// Canonical delimiter for interactive edits of delimiter-less values.
+const DEFAULT_INTERACTIVE_DELIMITER: char = '"';
 
 /// One semantic attribute paired with its validated source value expression.
 #[derive(Debug, Clone)]
@@ -207,6 +210,37 @@ fn upsert_attribute(tag: &mut CreateTag, replacement: StyledAttribute) -> Result
     Ok(())
 }
 
+/// Encodes one interactive response with numeric-literal passthrough.
+///
+/// Complete, safely representable numeric values retain their unquoted parser
+/// lexeme. Other text uses the current quote delimiter, or double quotes when
+/// the current value is delimiter-less. `None` denotes an unsafe numeric value.
+fn encode_interactive_value(input: &str, current_raw_value: &str) -> Option<String> {
+    if let Ok((value, raw_value)) = parse_complete_attribute_value_with_lexeme(input) {
+        if matches!(
+            value,
+            AttributeValue::Integer { .. } | AttributeValue::Float(_)
+        ) {
+            validate_creatable_value(&value).ok()?;
+            return Some(raw_value);
+        }
+    }
+    let delimiter = match current_raw_value.chars().next() {
+        Some(delimiter @ ('"' | '\'' | '`')) => delimiter,
+        _ => DEFAULT_INTERACTIVE_DELIMITER,
+    };
+    let mut encoded = String::with_capacity(input.len() + 2);
+    encoded.push(delimiter);
+    for character in input.chars() {
+        if character == '\\' || character == delimiter {
+            encoded.push('\\');
+        }
+        encoded.push(character);
+    }
+    encoded.push(delimiter);
+    Some(encoded)
+}
+
 /// Prompts once for every resulting attribute; blank input preserves the value.
 fn prompt_attributes(tag: &mut CreateTag, stderr: &mut dyn Write) -> Result<bool, RagtagError> {
     let mut session = PromptSession::new()?;
@@ -225,21 +259,35 @@ fn prompt_attributes(tag: &mut CreateTag, stderr: &mut dyn Write) -> Result<bool
         };
         let hint = format!("(current: {current}; Enter to keep)");
         let prompt = make_prompt(&label, Some(&hint), session.is_tty);
+        let mut response_rejected = false;
         loop {
             let Some(input) = session.read_line(&prompt, stderr)? else {
                 if session.cancelled {
                     writeln!(stderr, "Cancelled.").map_err(RagtagError::Io)?;
                     return Ok(false);
                 }
+                if response_rejected {
+                    return Err(RagtagError::Io(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "unexpected end of input while waiting for a valid interactive attribute value",
+                    )));
+                }
                 return Ok(true);
             };
-            if input.trim().is_empty() {
+            let input = input.strip_suffix('\n').unwrap_or(&input);
+            let input = input.strip_suffix('\r').unwrap_or(input);
+            if input.is_empty() {
                 break;
             }
-            match parse_complete_attribute_value_with_lexeme(&input).and_then(
-                |(value, raw_value)| validate_creatable_value(&value).map(|()| (value, raw_value)),
-            ) {
-                Ok((value, raw_value)) => {
+            let parsed = encode_interactive_value(input, &current).and_then(|encoded| {
+                parse_complete_attribute_value_with_lexeme(&encoded)
+                    .and_then(|(value, raw_value)| {
+                        validate_creatable_value(&value).map(|()| (value, raw_value))
+                    })
+                    .ok()
+            });
+            match parsed {
+                Some((value, raw_value)) => {
                     match &mut attribute.semantic.kind {
                         AttributeKind::Named {
                             value: destination, ..
@@ -251,10 +299,10 @@ fn prompt_attributes(tag: &mut CreateTag, stderr: &mut dyn Write) -> Result<bool
                     attribute.raw_value = Some(raw_value);
                     break;
                 }
-                Err(_) => session.write_error(
-                    stderr,
-                    "Expected one complete, safely representable attribute value.",
-                )?,
+                None => {
+                    session.write_error(stderr, "Expected safely representable attribute text.")?;
+                    response_rejected = true;
+                }
             }
         }
     }
@@ -403,6 +451,31 @@ mod tests {
             render_tag(&tag, TagFormat::Oneline).unwrap(),
             r#"@tag(value="fallback")"#
         );
+    }
+
+    #[test]
+    fn interactive_text_encoding_preserves_or_defaults_delimiters() {
+        assert_eq!(
+            encode_interactive_value(r#"a"b\c`d"#, r#""current""#),
+            Some(r#""a\"b\\c`d""#.to_string())
+        );
+        assert_eq!(
+            encode_interactive_value("a`b\\c\"d", "`current`"),
+            Some("`a\\`b\\\\c\"d`".to_string())
+        );
+        assert_eq!(
+            encode_interactive_value(" 42 ", "0X2A"),
+            Some("42".to_string())
+        );
+        assert_eq!(
+            encode_interactive_value("1.0e3", "`current`"),
+            Some("1.0e3".to_string())
+        );
+        assert_eq!(
+            encode_interactive_value("1e3", "`current`"),
+            Some("`1e3`".to_string())
+        );
+        assert_eq!(encode_interactive_value("1.0e999", "\"current\""), None);
     }
 
     #[test]

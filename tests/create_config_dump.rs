@@ -7,7 +7,7 @@ use predicates::prelude::*;
 use ragtag::models::TagAttribute;
 
 mod support;
-use support::ragtag;
+use support::{assert_output_equivalent, ragtag};
 
 /// Returns only the flat-dump records that describe tag presets.
 fn preset_dump_lines(stdout: &[u8]) -> Vec<&str> {
@@ -50,6 +50,41 @@ fn create_requires_exactly_one_source() {
         .assert()
         .code(2)
         .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn create_interactive_short_alias_matches_long_flag_without_conflicts() {
+    ragtag()
+        .args(["create", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-i, --interactive"));
+
+    let arguments = [
+        "create",
+        "--name",
+        "note",
+        "--attribute",
+        "value=\"old\"",
+        "--format",
+        "oneline",
+    ];
+    let short = ragtag()
+        .args(arguments)
+        .arg("-i")
+        .write_stdin("new\\value\n")
+        .output()
+        .unwrap();
+    let long = ragtag()
+        .args(arguments)
+        .arg("--interactive")
+        .write_stdin("new\\value\n")
+        .output()
+        .unwrap();
+
+    assert_output_equivalent(&short, &long);
+    assert!(short.status.success());
+    assert_eq!(short.stdout, b"@note(value=\"new\\\\value\")\n");
 }
 
 #[test]
@@ -258,14 +293,174 @@ tags:
             "--format",
             "oneline",
         ])
-        .write_stdin("\n'three'\n")
+        .write_stdin("\nthree\n")
         .assert()
         .success()
-        .stdout("@issue('positional', priority='three')\n")
+        .stdout("@issue('positional', priority=`three`)\n")
         .stderr(
             predicate::str::contains("Positional 1 (current: 'positional'; Enter to keep): ").and(
                 predicate::str::contains("priority (current: `2`; Enter to keep): "),
             ),
+        );
+}
+
+#[test]
+fn interactive_text_uses_configured_delimiters_and_escaping_in_both_layouts() {
+    let (_directory, config) = config_file(
+        r#"
+tags:
+  presets:
+    - nickname: styled
+      value: '@styled(double="old", tick=`old`, bare=old, number=42)'
+"#,
+    );
+    for (format, expected) in [
+        (
+            "multiline",
+            "@styled(\n    double=\"a\\\"b\\\\c`d\",\n    tick=`a\\`b\\\\c\"d`,\n    bare=\"  spaced  \",\n    number=007\n)\n",
+        ),
+        (
+            "oneline",
+            "@styled(double=\"a\\\"b\\\\c`d\", tick=`a\\`b\\\\c\"d`, bare=\"  spaced  \", number=007)\n",
+        ),
+    ] {
+        let output = ragtag()
+            .args([
+                "--config",
+                config.to_str().unwrap(),
+                "create",
+                "--preset",
+                "styled",
+                "--interactive",
+                "--format",
+                format,
+            ])
+            .write_stdin("a\"b\\c`d\na`b\\c\"d\n  spaced  \n007\n")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let actual = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(actual, expected);
+        assert_tag_semantics(
+            &actual,
+            r#"@styled(double='a"b\\c`d', tick='a`b\\c"d', bare="  spaced  ", number=7)"#,
+        );
+    }
+}
+
+#[test]
+fn interactive_numeric_literals_are_the_only_unquoted_replacements() {
+    let (_directory, config) = config_file(
+        r#"
+tags:
+  presets:
+    - nickname: numbers
+      value: '@numbers(integer="old", negative=`old`, decimal="old", exponent=`old`, exponent_like="old", overflow=`old`)'
+"#,
+    );
+    for (format, expected) in [
+        (
+            "multiline",
+            "@numbers(\n    integer=42,\n    negative=-7,\n    decimal=4.5,\n    exponent=1.0e3,\n    exponent_like=\"1e3\",\n    overflow=`9223372036854775808`\n)\n",
+        ),
+        (
+            "oneline",
+            "@numbers(integer=42, negative=-7, decimal=4.5, exponent=1.0e3, exponent_like=\"1e3\", overflow=`9223372036854775808`)\n",
+        ),
+    ] {
+        let output = ragtag()
+            .args([
+                "--config",
+                config.to_str().unwrap(),
+                "create",
+                "--preset",
+                "numbers",
+                "--interactive",
+                "--format",
+                format,
+            ])
+            .write_stdin("42\n-7\n4.5\n1.0e3\n1e3\n9223372036854775808\n")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(output.stderr.starts_with(b"integer (current: \"old\""));
+        let actual = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(actual, expected);
+        assert_tag_semantics(
+            &actual,
+            r#"@numbers(integer=42, negative=-7, decimal=4.5, exponent=1000.0, exponent_like=`1e3`, overflow="9223372036854775808")"#,
+        );
+    }
+}
+
+#[test]
+fn interactive_empty_input_preserves_complete_lexemes_in_both_layouts() {
+    let (_directory, config) = config_file(
+        r#"
+tags:
+  presets:
+    - nickname: exact
+      value: '@exact(double="a\"b", tick=`a\`b`, path=`c\\d`, number=0X2A)'
+"#,
+    );
+    for (format, expected) in [
+        (
+            "multiline",
+            "@exact(\n    double=\"a\\\"b\",\n    tick=`a\\`b`,\n    path=`c\\\\d`,\n    number=0X2A\n)\n",
+        ),
+        (
+            "oneline",
+            "@exact(double=\"a\\\"b\", tick=`a\\`b`, path=`c\\\\d`, number=0X2A)\n",
+        ),
+    ] {
+        ragtag()
+            .args([
+                "--config",
+                config.to_str().unwrap(),
+                "create",
+                "--preset",
+                "exact",
+                "--interactive",
+                "--format",
+                format,
+            ])
+            .write_stdin("\n\n\n\n")
+            .assert()
+            .success()
+            .stdout(expected);
+    }
+}
+
+#[test]
+fn interactive_override_and_new_attribute_styles_are_retained() {
+    let (_directory, config) = config_file(
+        r#"
+tags:
+  presets:
+    - nickname: edit
+      value: '@edit(value="preset", duplicate="first", duplicate=`second`)'
+"#,
+    );
+    ragtag()
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "create",
+            "--preset",
+            "edit",
+            "--attribute",
+            "value=`override`",
+            "--attribute",
+            "added=\"new\"",
+            "--interactive",
+            "--format",
+            "oneline",
+        ])
+        .write_stdin("\"quoted\"\nkept\nother\nadded\\path\n")
+        .assert()
+        .success()
+        .stdout(
+            "@edit(value=`\"quoted\"`, duplicate=\"kept\", duplicate=`other`, added=\"added\\\\path\")\n",
         );
 }
 
@@ -317,8 +512,58 @@ fn interactive_invalid_value_reprompts_without_partial_stdout() {
         .write_stdin("1.0e999\nnew\n")
         .assert()
         .success()
-        .stdout("@note(value=new)\n")
-        .stderr(predicate::str::contains("Error: Expected one complete"));
+        .stdout("@note(value=\"new\")\n")
+        .stderr(predicate::str::contains(
+            "Error: Expected safely representable attribute text.",
+        ));
+}
+
+#[test]
+fn interactive_rejected_value_then_eof_fails_without_stdout() {
+    ragtag()
+        .args([
+            "create",
+            "--name",
+            "note",
+            "--attribute",
+            "value=old",
+            "--interactive",
+            "--format",
+            "oneline",
+        ])
+        .write_stdin("1.0e999\n")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::is_empty())
+        .stderr(
+            predicate::str::contains("Error: Expected safely representable attribute text.").and(
+                predicate::str::contains(
+                    "unexpected end of input while waiting for a valid interactive attribute value",
+                ),
+            ),
+        );
+}
+
+#[test]
+fn interactive_initial_eof_preserves_the_existing_tag() {
+    ragtag()
+        .args([
+            "create",
+            "--name",
+            "note",
+            "--attribute",
+            "value=old",
+            "--interactive",
+            "--format",
+            "oneline",
+        ])
+        .write_stdin("")
+        .assert()
+        .success()
+        .stdout("@note(value=old)\n")
+        .stderr(predicate::str::contains(
+            "value (current: old; Enter to keep): ",
+        ));
 }
 
 #[test]

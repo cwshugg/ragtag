@@ -130,10 +130,13 @@ as `priority=-1` or `title="Release notes"`, using the grammar in this
 document.
 It does not split the argument at `=` or define a separate CLI value syntax.
 
-During `ragtag create --interactive`, each nonblank replacement is exactly one
-complete value expression, such as `active`, `4.5`, or `"Release notes"`;
-do not enter `name=value`.
-An empty line retains the current value.
+During `ragtag create --interactive`, each nonempty replacement is raw string
+text, not a value expression; do not enter quotes or `name=value`.
+ragtag escapes the text and wraps it in the current value's quote delimiter.
+Bare and numeric current values use double quotes for replacements.
+A complete numeric literal is the sole exception: it is emitted unquoted after
+the existing numeric grammar and creation-safety checks accept it.
+An empty line retains the complete current value expression unchanged.
 Explicit `--attribute` values are applied before prompting, so interactive
 replacements have final precedence.
 
@@ -156,8 +159,9 @@ Values enclosed in double (`"`), single (`'`), or backtick (`` ` ``) quotes are 
 
 All three delimiters are semantically equivalent.
 Canonical formatters use double quotes, while generic `ragtag create`
-preserves a validated preset, CLI, or interactive value expression when one
-exists.
+preserves validated preset and CLI value expressions. Interactive replacement
+text retains the current expression's delimiter, defaulting to double quotes
+for delimiter-less values.
 See the [create command contract](cli-reference.md#create) for precedence.
 
 **Escaping:** Use a backslash (`\`) before any character to include it literally. There are no special escape sequences — `\n` inserts a literal `n`, not a newline. Only `\\` and an escaped copy of the surrounding delimiter (`\"`, `\'`, or `` \` ``) are meaningful; a quote character that is not the surrounding delimiter is a literal character (e.g. a backtick inside a `"..."` string is a literal backtick).

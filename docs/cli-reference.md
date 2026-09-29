@@ -351,7 +351,7 @@ Create one generic tag without modifying a file.
 ```text
 ragtag create (--name <NAME_OF_NEW_TAG> | --preset <NICKNAME_OR_TAG_NAME>)
               [--attribute <ATTR_NAME=ATTR_VALUE>]...
-              [--interactive]
+              [-i|--interactive]
               [--format <multiline|oneline>]
 ```
 
@@ -360,7 +360,7 @@ ragtag create (--name <NAME_OF_NEW_TAG> | --preset <NICKNAME_OR_TAG_NAME>)
 | `--name <NAME>` | — | Create this tag name; omit the leading `@` |
 | `--preset <SELECTOR>` | — | Select a configured preset by nickname or contained tag name |
 | `--attribute <NAME=VALUE>` | — | Apply one named attribute override; repeatable |
-| `--interactive` | disabled | Prompt to retain or replace every resulting attribute |
+| `-i`, `--interactive` | disabled | Prompt to retain or replace every resulting attribute |
 | `--format <multiline|oneline>` | `multiline` | Select output layout |
 
 Exactly one of `--name` and `--preset` is required.
@@ -383,9 +383,12 @@ target attribute.
 Interactive mode visits every resulting attribute in order, including
 positional attributes.
 The prompt displays the current raw expression.
-Enter preserves it; nonblank input is one complete value expression using the
-existing [value grammar](tag-syntax.md#value-types), and that expression
-becomes the emitted spelling.
+Enter preserves that complete expression unchanged.
+Nonempty input is raw string text, not a ready-made value expression: ragtag
+escapes it and wraps it with the current expression's quote delimiter.
+Delimiter-less bare and numeric values use double quotes when replaced.
+The sole exception is a complete, valid numeric literal, which remains
+unquoted and follows the existing numeric-value validation rules.
 Interactive replacements therefore take precedence over explicit overrides,
 which take precedence over preset values.
 Preserved expressions are not escaped again.
