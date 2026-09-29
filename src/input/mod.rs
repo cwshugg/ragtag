@@ -1,3 +1,3 @@
 //! Shared command input facilities.
 
-pub mod prompt;
+pub(crate) mod prompt;

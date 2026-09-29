@@ -18,7 +18,7 @@ pub enum DumpFormat {
 }
 
 /// Builds the complete recognized effective configuration tree.
-pub fn build_effective_config_value<F>(
+fn build_effective_config_value<F>(
     config: &Config,
     mut is_environment_derived: F,
 ) -> Result<serde_yml::Value, RagtagError>
@@ -32,7 +32,8 @@ where
     let task_config = config
         .extension_configs
         .get(TASKS_CONFIG_KEY)
-        .map(|raw| TaskConfig::from_config_value(raw).unwrap_or_default())
+        .map(TaskConfig::from_config_value)
+        .transpose()?
         .unwrap_or_default();
     let resolved_tasks = serde_yml::to_value(&task_config)
         .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize task config: {e}")))?;
@@ -129,8 +130,7 @@ where
         }
     }
 
-    let mut never_redact: fn(&str) -> bool = |_| false;
-    Ok(format_value(current, &mut never_redact))
+    Ok(format_value(current))
 }
 
 /// Renders the complete effective configuration.
@@ -145,7 +145,7 @@ where
     let root = build_effective_config_value(config, is_environment_derived)?;
     match format {
         DumpFormat::Flat => render_flat(&root),
-        DumpFormat::Yaml => render_yaml(&root),
+        DumpFormat::Yaml => render_yaml(root),
     }
 }
 
@@ -237,8 +237,8 @@ fn sort_mappings(value: serde_yml::Value) -> Result<serde_yml::Value, RagtagErro
 }
 
 /// Renders one sorted YAML document with exactly one trailing newline.
-fn render_yaml(root: &serde_yml::Value) -> Result<String, RagtagError> {
-    let sorted = sort_mappings(root.clone())?;
+fn render_yaml(root: serde_yml::Value) -> Result<String, RagtagError> {
+    let sorted = sort_mappings(root)?;
     let rendered = serde_yml::to_string(&sorted)
         .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize config: {e}")))?;
     Ok(format!("{}\n", rendered.trim_end_matches('\n')))
@@ -248,27 +248,18 @@ fn render_yaml(root: &serde_yml::Value) -> Result<String, RagtagError> {
 ///
 /// Strings are printed without quotes, numbers and booleans as-is,
 /// sequences in JSON-like bracket notation, and mappings in braces.
-fn format_value<F>(val: &serde_yml::Value, is_environment_derived: &mut F) -> String
-where
-    F: FnMut(&str) -> bool,
-{
+fn format_value(val: &serde_yml::Value) -> String {
     match val {
         serde_yml::Value::Null => "null".to_string(),
         serde_yml::Value::Bool(b) => b.to_string(),
         serde_yml::Value::Number(n) => n.to_string(),
-        serde_yml::Value::String(s) if is_environment_derived(s) => {
-            "<environment-derived>".to_string()
-        }
         serde_yml::Value::String(s) => s.clone(),
         serde_yml::Value::Sequence(seq) => {
             let items: Vec<String> = seq
                 .iter()
                 .map(|v| match v {
-                    serde_yml::Value::String(s) if is_environment_derived(s) => {
-                        "\"<environment-derived>\"".to_string()
-                    }
                     serde_yml::Value::String(s) => format!("\"{s}\""),
-                    other => format_value(other, is_environment_derived),
+                    other => format_value(other),
                 })
                 .collect();
             format!("[{}]", items.join(", "))
@@ -279,22 +270,16 @@ where
                 .map(|(k, v)| {
                     let key_str = match k {
                         serde_yml::Value::String(key) => key.clone(),
-                        other => format_plain_value(other),
+                        other => format_value(other),
                     };
-                    let val_str = format_value(v, is_environment_derived);
+                    let val_str = format_value(v);
                     format!("{key_str}: {val_str}")
                 })
                 .collect();
             format!("{{{}}}", items.join(", "))
         }
-        serde_yml::Value::Tagged(tagged) => format_value(&tagged.value, is_environment_derived),
+        serde_yml::Value::Tagged(tagged) => format_value(&tagged.value),
     }
-}
-
-/// Formats a mapping key without applying value provenance.
-fn format_plain_value(value: &serde_yml::Value) -> String {
-    let mut never_redact: fn(&str) -> bool = |_| false;
-    format_value(value, &mut never_redact)
 }
 
 #[cfg(test)]
@@ -548,5 +533,15 @@ tasks:
         assert_eq!(value["tasks"]["default_owner"].as_str(), Some("me"));
         assert!(yaml.ends_with('\n'));
         assert!(!yaml.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn dump_propagates_invalid_task_configuration() {
+        let mut config = default_config();
+        config.extension_configs.insert(
+            TASKS_CONFIG_KEY.to_string(),
+            serde_yml::Value::String("invalid".to_string()),
+        );
+        assert!(run_dump(&config, DumpFormat::Flat, |_| false).is_err());
     }
 }

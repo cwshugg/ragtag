@@ -154,7 +154,11 @@ Values enclosed in double (`"`), single (`'`), or backtick (`` ` ``) quotes are 
 @tag(name="hello world", alt='single quoted', other=`backtick quoted`)
 ```
 
-All three delimiters are equivalent for input. On output, string values that need quoting are normalized to double quotes.
+All three delimiters are semantically equivalent.
+Canonical formatters use double quotes, while generic `ragtag create`
+preserves a validated preset, CLI, or interactive value expression when one
+exists.
+See the [create command contract](cli-reference.md#create) for precedence.
 
 **Escaping:** Use a backslash (`\`) before any character to include it literally. There are no special escape sequences — `\n` inserts a literal `n`, not a newline. Only `\\` and an escaped copy of the surrounding delimiter (`\"`, `\'`, or `` \` ``) are meaningful; a quote character that is not the surrounding delimiter is a literal character (e.g. a backtick inside a `"..."` string is a literal backtick).
 

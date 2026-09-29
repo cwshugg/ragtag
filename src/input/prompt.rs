@@ -13,7 +13,7 @@ const FIELD_COLOR: (u8, u8, u8) = (140, 170, 210);
 const HINT_COLOR: (u8, u8, u8) = (128, 128, 128);
 
 /// Produces visible, terminal-safe text before any styling is applied.
-pub fn escape_prompt_text(value: &str) -> String {
+pub(crate) fn escape_prompt_text(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
         match character {
@@ -62,7 +62,7 @@ fn wrap_ansi_for_rustyline(value: &str) -> String {
 }
 
 /// Builds a safe prompt, adding color only for a terminal session.
-pub fn make_prompt(field: &str, hint: Option<&str>, is_tty: bool) -> String {
+pub(crate) fn make_prompt(field: &str, hint: Option<&str>, is_tty: bool) -> String {
     let field = escape_prompt_text(field);
     let hint = hint.map(escape_prompt_text);
     if !is_tty {
@@ -88,17 +88,17 @@ pub fn make_prompt(field: &str, hint: Option<&str>, is_tty: bool) -> String {
 }
 
 /// A stdin/stderr prompting session with TTY cancellation semantics.
-pub struct PromptSession {
+pub(crate) struct PromptSession {
     tty: Option<rustyline::DefaultEditor>,
     /// Whether the session uses a terminal line editor.
-    pub is_tty: bool,
+    pub(crate) is_tty: bool,
     /// Whether Ctrl+C or Ctrl+D cancelled a terminal session.
-    pub cancelled: bool,
+    pub(crate) cancelled: bool,
 }
 
 impl PromptSession {
     /// Creates a session using the process stdin.
-    pub fn new() -> Result<Self, RagtagError> {
+    pub(crate) fn new() -> Result<Self, RagtagError> {
         let tty = if std::io::stdin().is_terminal() {
             Some(rustyline::DefaultEditor::new().map_err(|error| {
                 RagtagError::Io(std::io::Error::other(format!(
@@ -116,7 +116,11 @@ impl PromptSession {
     }
 
     /// Writes one escaped validation error.
-    pub fn write_error(&self, stderr: &mut dyn Write, message: &str) -> Result<(), RagtagError> {
+    pub(crate) fn write_error(
+        &self,
+        stderr: &mut dyn Write,
+        message: &str,
+    ) -> Result<(), RagtagError> {
         let message = escape_prompt_text(message);
         if self.is_tty {
             writeln!(stderr, "  {}", format!("Error: {message}").red())
@@ -127,7 +131,7 @@ impl PromptSession {
     }
 
     /// Reads one line, returning `None` for cancellation or piped EOF.
-    pub fn read_line(
+    pub(crate) fn read_line(
         &mut self,
         prompt: &str,
         stderr: &mut dyn Write,
@@ -160,7 +164,7 @@ impl PromptSession {
     }
 
     /// Prompts until a required nonblank value is supplied.
-    pub fn prompt_required(
+    pub(crate) fn prompt_required(
         &mut self,
         prompt: &str,
         empty_error: &str,
@@ -182,7 +186,7 @@ impl PromptSession {
     }
 
     /// Prompts for an optional validated value.
-    pub fn prompt_optional(
+    pub(crate) fn prompt_optional(
         &mut self,
         prompt: &str,
         stderr: &mut dyn Write,

@@ -155,39 +155,19 @@ ragtag config get tasks.status_keywords.done
 
 ### `ragtag config dump [--format flat|yaml]`
 
-Prints the complete effective configuration for scripts and editor integrations.
-The default `flat` format is a deterministic, lexically sorted list of paths with JSON scalar values; `--format yaml` prints the same recursively key-sorted value tree as YAML.
-Both formats include built-in and task-extension defaults plus configured overrides.
-Environment-derived strings are replaced with `<environment-derived>`, while deferred alias argument templates remain unexpanded.
+Prints the complete effective configuration for scripts and editor integrations; see the [CLI reference](docs/cli-reference.md#config-dump) for formats, ordering, and redaction.
 
 ```bash
-ragtag config dump
 ragtag config dump --format yaml
 ```
 
 ### `ragtag create (--name <NAME> | --preset <SELECTOR>)`
 
-Creates one generic tag and writes it to stdout without modifying files.
-Choose exactly one source, repeat `--attribute name=value` for ordered overrides, add `--interactive` to edit every resulting value, and select `--format multiline|oneline` (default: `multiline`).
-Attributes and interactive replacements use the normal [tag value grammar](docs/tag-syntax.md#value-types).
-Explicit attributes are applied left to right before prompting; replacing a named attribute keeps its position, removes later duplicates of that name, and the last explicit value wins.
+Creates one generic tag from a name or configured preset without modifying files; see the [CLI](docs/cli-reference.md#create) and [configuration](docs/configuration.md#tag-presets) references.
 
 ```bash
-ragtag create --name note --attribute 'title="Release notes"'
-ragtag create --preset bug --attribute priority=0 --interactive --format oneline
+ragtag create --preset review --attribute 'url=``' --format oneline
 ```
-
-Configure presets under top-level `tags.presets`:
-
-```yaml
-tags:
-  presets:
-    - nickname: bug
-      value: '@issue(priority=1, status="new")'
-```
-
-Preset nickname and contained tag-name lookup uses best-effort lowercase comparison, suitable for ordinary English nicknames; a leading `@` on the selector is optional.
-If multiple presets match through either field, creation fails with the matching `tags.presets[N]` indices.
 
 ### `ragtag file touch [--path <FILE>] [--tag <TAG>]... [--edit]`
 

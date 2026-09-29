@@ -299,24 +299,11 @@ There are no built-in presets.
 ```yaml
 tags:
   presets:
-    - nickname: bug
-      value: '@issue(priority=1, status="new")'
+    - nickname: review
+      value: '@code-review(description="", url=``)'
     - nickname: meeting
       value: '@note(kind="meeting")'
 ```
-
-A selector may match either `nickname` or the tag name contained in `value`.
-Lookup trims surrounding whitespace, accepts one optional leading ASCII `@`,
-and uses Rust's best-effort lowercase conversion. This is case-insensitive for
-ordinary English nicknames, but does not guarantee full Unicode caseless or
-normalization equivalence.
-For example, `ragtag create --preset BUG`, `--preset issue`, and
-`--preset @issue` select the first entry above.
-
-Duplicate nicknames and tag names are allowed in configuration.
-If a selector matches more than one preset through either field, creation
-fails with an ambiguity error listing all matching `tags.presets[N]` indices
-in config order.
 
 Each nickname must be nonblank and terminal-safe.
 Each value must be exactly one complete tag accepted by the normal parser.
@@ -324,31 +311,17 @@ Preset values may contain positional and named attributes, up to the normal
 256-attribute limit.
 Creatable values must also be safely representable: floats must be finite, and
 strings cannot contain control characters or Unicode line separators.
-
-Repeated `--attribute name=value` options override the selected preset from
-left to right before `--interactive` prompts run.
-The last explicit value for a name wins, while an interactive replacement has
-final precedence.
-See the [`create` CLI contract](cli-reference.md#create) and
-[tag value grammar](tag-syntax.md#value-types).
+`ragtag create` preserves each configured value expression, including the
+delimiter and escapes.
+See the [`create` CLI contract](cli-reference.md#create) for selection,
+precedence, formats, and ambiguity, and the [tag value
+grammar](tag-syntax.md#value-types) for accepted expressions.
 
 ## Effective Configuration Output
 
-`ragtag config dump` is the supported discovery interface for scripts and
-editor integrations.
-It serializes all recognized core fields and resolved task-extension fields,
-including defaults not written in the source YAML.
-Configured values replace defaults, unknown extension sections are omitted,
-and alias argument templates remain unexpanded.
-
-The default `flat` format uses sorted dot/bracket paths and JSON scalar values.
-Because sorting is lexical, consumers must parse indices numerically when
-reconstructing sequences with ten or more entries.
-`--format yaml` emits the same effective value tree with recursively sorted
-mapping keys.
-Both formats preserve sequence order, include empty collections, redact every
-environment-derived string as `<environment-derived>`, and end with exactly
-one newline.
+Use [`ragtag config dump`](cli-reference.md#config-dump) as the supported
+effective-configuration discovery interface for scripts and editor
+integrations.
 
 ## Ignore Patterns
 

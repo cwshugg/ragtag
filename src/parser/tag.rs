@@ -3,6 +3,7 @@
 //! Contains the core parsing functions for tags: `parse_tag`, `parse_tag_name`,
 //! `parse_attr_list`, `parse_attribute`, and `parse_attr_name`.
 
+use std::ops::Range;
 use std::path::Path;
 
 use super::cursor::{skip_whitespace, Cursor};
@@ -20,6 +21,14 @@ pub const MAX_ATTRIBUTES_PER_TAG: usize = 256;
 /// Expects the cursor to be positioned at `@`. Returns `None` if parsing
 /// fails (invalid tag name, unmatched parenthesis, etc.).
 pub fn parse_tag(cursor: &mut Cursor, file_path: &Path) -> Option<Tag> {
+    parse_tag_with_value_spans(cursor, file_path).map(|(tag, _)| tag)
+}
+
+/// Parses a tag while retaining each attribute value's source byte range.
+pub(crate) fn parse_tag_with_value_spans(
+    cursor: &mut Cursor,
+    file_path: &Path,
+) -> Option<(Tag, Vec<Range<usize>>)> {
     let start_pos = cursor.pos;
     let start_line = cursor.line;
     let start_col = cursor.col;
@@ -31,9 +40,9 @@ pub fn parse_tag(cursor: &mut Cursor, file_path: &Path) -> Option<Tag> {
     let name = parse_tag_name(cursor)?;
 
     // Check for attribute list
-    let attributes = if cursor.peek() == Some('(') {
+    let parsed_attributes = if cursor.peek() == Some('(') {
         cursor.advance(); // consume '('
-        let attrs = parse_attr_list(cursor);
+        let attrs = parse_attr_list_with_value_spans(cursor);
         // Expect closing ')'
         if cursor.peek() == Some(')') {
             cursor.advance();
@@ -56,12 +65,16 @@ pub fn parse_tag(cursor: &mut Cursor, file_path: &Path) -> Option<Tag> {
         end_pos,
     );
 
-    Some(Tag {
-        name,
-        attributes,
-        location,
-        raw_span: start_pos..end_pos,
-    })
+    let (attributes, value_spans) = parsed_attributes.into_iter().unzip();
+    Some((
+        Tag {
+            name,
+            attributes,
+            location,
+            raw_span: start_pos..end_pos,
+        },
+        value_spans,
+    ))
 }
 
 /// Parses a tag name.
@@ -102,6 +115,14 @@ pub fn parse_tag_name(cursor: &mut Cursor) -> Option<String> {
 /// Handles comma-separated attributes with optional trailing comma.
 /// Whitespace (including newlines) is freely allowed between attributes.
 pub fn parse_attr_list(cursor: &mut Cursor) -> Vec<TagAttribute> {
+    parse_attr_list_with_value_spans(cursor)
+        .into_iter()
+        .map(|(attribute, _)| attribute)
+        .collect()
+}
+
+/// Parses an attribute list together with its value byte ranges.
+fn parse_attr_list_with_value_spans(cursor: &mut Cursor) -> Vec<(TagAttribute, Range<usize>)> {
     let mut attributes = Vec::new();
 
     skip_whitespace(cursor);
@@ -112,7 +133,7 @@ pub fn parse_attr_list(cursor: &mut Cursor) -> Vec<TagAttribute> {
     }
 
     // Parse first attribute
-    if let Some(attr) = parse_attribute(cursor) {
+    if let Some(attr) = parse_attribute_with_value_span(cursor) {
         attributes.push(attr);
     } else {
         return attributes;
@@ -136,7 +157,7 @@ pub fn parse_attr_list(cursor: &mut Cursor) -> Vec<TagAttribute> {
                     break;
                 }
                 // Parse next attribute
-                if let Some(attr) = parse_attribute(cursor) {
+                if let Some(attr) = parse_attribute_with_value_span(cursor) {
                     attributes.push(attr);
                 } else {
                     break;
@@ -154,6 +175,13 @@ pub fn parse_attr_list(cursor: &mut Cursor) -> Vec<TagAttribute> {
 ///
 /// Tries named first (with backtracking on failure), falls back to positional.
 pub fn parse_attribute(cursor: &mut Cursor) -> Option<TagAttribute> {
+    parse_attribute_with_value_span(cursor).map(|(attribute, _)| attribute)
+}
+
+/// Parses one attribute while retaining its value byte range.
+pub(crate) fn parse_attribute_with_value_span(
+    cursor: &mut Cursor,
+) -> Option<(TagAttribute, Range<usize>)> {
     let state = cursor.save();
 
     // Try named attribute: name '=' value
@@ -162,10 +190,14 @@ pub fn parse_attribute(cursor: &mut Cursor) -> Option<TagAttribute> {
         if cursor.peek() == Some('=') {
             cursor.advance(); // consume '='
             skip_whitespace(cursor);
+            let value_start = cursor.pos;
             if let Some(value) = parse_attr_value(cursor) {
-                return Some(TagAttribute {
-                    kind: AttributeKind::Named { name, value },
-                });
+                return Some((
+                    TagAttribute {
+                        kind: AttributeKind::Named { name, value },
+                    },
+                    value_start..cursor.pos,
+                ));
             }
             // Value parse failed — restore and try as positional
         }
@@ -175,10 +207,14 @@ pub fn parse_attribute(cursor: &mut Cursor) -> Option<TagAttribute> {
     cursor.restore(state);
 
     // Parse as positional attribute
+    let value_start = cursor.pos;
     let value = parse_attr_value(cursor)?;
-    Some(TagAttribute {
-        kind: AttributeKind::Positional { value },
-    })
+    Some((
+        TagAttribute {
+            kind: AttributeKind::Positional { value },
+        },
+        value_start..cursor.pos,
+    ))
 }
 
 /// Parses an attribute name.

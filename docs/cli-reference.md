@@ -341,10 +341,7 @@ nickname and value; the resolved secret is never printed.
 **Examples:**
 
 ```bash
-ragtag config dump
-ragtag config dump --format flat
 ragtag config dump --format yaml
-ragtag --config ./project.ragtag.yaml config dump
 ```
 
 ### `create`
@@ -377,13 +374,24 @@ An existing named attribute is replaced in its first position and later
 duplicates of that name are removed; a missing name is appended.
 Consequently, the last explicit override for a name wins without moving it.
 Positional and unrelated attributes retain their order.
+Unchanged preset values retain their exact validated value expression,
+including bare spelling, numeric prefix or case, delimiter choice, and
+backslash escapes.
+An explicit override retains its own value expression and changes only the
+target attribute.
 
 Interactive mode visits every resulting attribute in order, including
 positional attributes.
-Enter preserves the displayed value; nonblank input is one complete value
-expression using the existing [value grammar](tag-syntax.md#value-types).
+The prompt displays the current raw expression.
+Enter preserves it; nonblank input is one complete value expression using the
+existing [value grammar](tag-syntax.md#value-types), and that expression
+becomes the emitted spelling.
 Interactive replacements therefore take precedence over explicit overrides,
 which take precedence over preset values.
+Preserved expressions are not escaped again.
+Empty strings require a complete quoted expression (`""`, `''`, or two
+backticks); `name=` is invalid.
+`multiline` and `oneline` change only layout, never value spelling.
 
 Preset selection ignores surrounding whitespace and accepts one optional
 leading ASCII `@`.
@@ -402,12 +410,9 @@ $ ragtag create --name note --attribute 'title="Release notes"' --format oneline
 @note(title="Release notes")
 ```
 
-```text
-$ ragtag create --name note --attribute 'title="Release notes"'
-@note(
-    title="Release notes"
-)
-```
+Invalid names, incomplete attributes or values, unsafe strings, non-finite
+numbers, parser limits, and ambiguous or missing presets fail before any tag
+is written.
 
 See [Configuration Reference → Tag Presets](configuration.md#tag-presets).
 

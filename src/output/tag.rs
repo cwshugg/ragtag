@@ -16,12 +16,12 @@ pub enum TagFormat {
 }
 
 /// Escapes a string body for a double-quoted parser value.
-pub fn escape_tag_string_body(value: &str) -> String {
+pub(crate) fn escape_tag_string_body(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Lays out already-rendered attribute tokens without changing their bytes.
-pub fn layout_tag(name: &str, attributes: &[String], format: TagFormat) -> String {
+pub(crate) fn layout_tag(name: &str, attributes: &[String], format: TagFormat) -> String {
     if attributes.is_empty() {
         return format!("@{name}");
     }
@@ -39,7 +39,7 @@ pub fn layout_tag(name: &str, attributes: &[String], format: TagFormat) -> Strin
 }
 
 /// Formats one generic value with a reversible parser spelling.
-pub fn format_value(value: &AttributeValue) -> Result<String, RagtagError> {
+pub(crate) fn format_value(value: &AttributeValue) -> Result<String, RagtagError> {
     crate::parser::validate_creatable_value(value).map_err(|_| {
         RagtagError::InvalidInput("attribute value cannot be represented safely".to_string())
     })?;
@@ -64,7 +64,8 @@ pub fn format_value(value: &AttributeValue) -> Result<String, RagtagError> {
 }
 
 /// Formats a generic tag and proves that the result reparses identically.
-pub fn format_tag(tag: &Tag, format: TagFormat) -> Result<String, RagtagError> {
+#[allow(dead_code)]
+pub(crate) fn format_tag(tag: &Tag, format: TagFormat) -> Result<String, RagtagError> {
     validate_creatable_tag(tag).map_err(|_| {
         RagtagError::InvalidInput("tag contains a value that cannot be represented safely".into())
     })?;

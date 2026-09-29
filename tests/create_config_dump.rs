@@ -1,8 +1,10 @@
 //! End-to-end contracts for generic create and effective config dumping.
 
 use std::fs;
+use std::path::Path;
 
 use predicates::prelude::*;
+use ragtag::models::TagAttribute;
 
 mod support;
 use support::ragtag;
@@ -22,6 +24,18 @@ fn config_file(yaml: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let path = directory.path().join("config.yaml");
     fs::write(&path, yaml).unwrap();
     (directory, path)
+}
+
+/// Parses exact command output and compares its ordered tag semantics.
+fn assert_tag_semantics(actual: &str, expected: &str) {
+    fn parse(input: &str) -> (String, Vec<TagAttribute>) {
+        let tags = ragtag::parser::scan_file(input, Path::new("<create-test>"));
+        assert_eq!(tags.len(), 1, "expected exactly one tag in {input:?}");
+        let tag = tags.into_iter().next().unwrap();
+        (tag.name, tag.attributes)
+    }
+
+    assert_eq!(parse(actual), parse(expected));
 }
 
 #[test]
@@ -63,7 +77,82 @@ fn create_name_repeated_attributes_and_formats_are_exact() {
         .args(["create", "--name", "note", "--attribute", "title=Final"])
         .assert()
         .success()
-        .stdout("@note(\n    title=\"Final\"\n)\n");
+        .stdout("@note(\n    title=Final\n)\n");
+}
+
+#[test]
+fn preset_empty_delimiters_are_exact_in_both_layouts() {
+    let (_directory, config) = config_file(
+        r#"
+tags:
+  presets:
+    - nickname: review
+      value: '@code-review(description="", url=``)'
+"#,
+    );
+    for (format, expected) in [
+        (
+            "multiline",
+            "@code-review(\n    description=\"\",\n    url=``\n)\n",
+        ),
+        ("oneline", "@code-review(description=\"\", url=``)\n"),
+    ] {
+        let output = ragtag()
+            .args([
+                "--config",
+                config.to_str().unwrap(),
+                "create",
+                "--preset",
+                "review",
+                "--format",
+                format,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let actual = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(actual, expected);
+        assert_tag_semantics(&actual, "@code-review(description='', url=\"\")");
+    }
+}
+
+#[test]
+fn preset_and_override_lexemes_are_preserved_without_double_escaping() {
+    let (_directory, config) = config_file(
+        r#"
+tags:
+  presets:
+    - nickname: styled
+      value: |-
+        @styled('positional', double="a\"b", tick=`a\`b`, path='c\\d', hex=0XFF, empty=``)
+"#,
+    );
+    let output = ragtag()
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "create",
+            "--preset",
+            "styled",
+            "--attribute",
+            "double='changed'",
+            "--format",
+            "oneline",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let actual = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        actual,
+        "@styled('positional', double='changed', tick=`a\\`b`, path='c\\\\d', hex=0XFF, empty=``)\n"
+    );
+    assert_tag_semantics(
+        &actual,
+        r#"@styled("positional", double="changed", tick="a`b", path="c\\d", hex=0xff, empty="")"#,
+    );
 }
 
 #[test]
@@ -153,7 +242,7 @@ fn explicit_values_precede_interactive_edits_and_blank_preserves() {
 tags:
   presets:
     - nickname: bug
-      value: '@issue(positional, priority=1)'
+      value: "@issue('positional', priority=1)"
 "#,
     );
     ragtag()
@@ -164,21 +253,52 @@ tags:
             "--preset",
             "bug",
             "--attribute",
-            "priority=2",
+            "priority=`2`",
             "--interactive",
             "--format",
             "oneline",
         ])
-        .write_stdin("\n3\n")
+        .write_stdin("\n'three'\n")
         .assert()
         .success()
-        .stdout("@issue(\"positional\", priority=3)\n")
+        .stdout("@issue('positional', priority='three')\n")
         .stderr(
-            predicate::str::contains("Positional 1 (current: \"positional\"; Enter to keep): ")
-                .and(predicate::str::contains(
-                    "priority (current: 2; Enter to keep): ",
-                )),
+            predicate::str::contains("Positional 1 (current: 'positional'; Enter to keep): ").and(
+                predicate::str::contains("priority (current: `2`; Enter to keep): "),
+            ),
         );
+}
+
+#[test]
+fn every_quoted_empty_cli_value_is_preserved_and_bare_empty_is_rejected() {
+    let output = ragtag()
+        .args([
+            "create",
+            "--name",
+            "empty",
+            "--attribute",
+            "double=\"\"",
+            "--attribute",
+            "single=''",
+            "--attribute",
+            "backtick=``",
+            "--format",
+            "oneline",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let actual = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(actual, "@empty(double=\"\", single='', backtick=``)\n");
+    assert_tag_semantics(&actual, "@empty(double='', single=`` , backtick=\"\")");
+
+    ragtag()
+        .args(["create", "--name", "empty", "--attribute", "value="])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("invalid --attribute #1"));
 }
 
 #[test]
@@ -197,7 +317,7 @@ fn interactive_invalid_value_reprompts_without_partial_stdout() {
         .write_stdin("1.0e999\nnew\n")
         .assert()
         .success()
-        .stdout("@note(value=\"new\")\n")
+        .stdout("@note(value=new)\n")
         .stderr(predicate::str::contains("Error: Expected one complete"));
 }
 
@@ -255,7 +375,7 @@ fn aggregate_attribute_limit_allows_replacement_and_rejects_append_before_prompt
         .assert()
         .success()
         .stdout(
-            predicate::str::starts_with("@full(a0=\"last\", a1=1")
+            predicate::str::starts_with("@full(a0=last, a1=1")
                 .and(predicate::str::ends_with("a255=255)\n")),
         );
 
@@ -482,32 +602,15 @@ fn flat_dump_presets_preserve_lexical_lines_and_numeric_index_order() {
     assert!(output.stderr.is_empty());
 
     let lines = preset_dump_lines(&output.stdout);
-    let expected_lexical = [
-        "tags.presets[0].nickname = \"preset-0\"",
-        "tags.presets[0].value = \"@tag-0\"",
-        "tags.presets[10].nickname = \"preset-10\"",
-        "tags.presets[10].value = \"@tag-10\"",
-        "tags.presets[11].nickname = \"preset-11\"",
-        "tags.presets[11].value = \"@tag-11\"",
-        "tags.presets[1].nickname = \"preset-1\"",
-        "tags.presets[1].value = \"@tag-1\"",
-        "tags.presets[2].nickname = \"preset-2\"",
-        "tags.presets[2].value = \"@tag-2\"",
-        "tags.presets[3].nickname = \"preset-3\"",
-        "tags.presets[3].value = \"@tag-3\"",
-        "tags.presets[4].nickname = \"preset-4\"",
-        "tags.presets[4].value = \"@tag-4\"",
-        "tags.presets[5].nickname = \"preset-5\"",
-        "tags.presets[5].value = \"@tag-5\"",
-        "tags.presets[6].nickname = \"preset-6\"",
-        "tags.presets[6].value = \"@tag-6\"",
-        "tags.presets[7].nickname = \"preset-7\"",
-        "tags.presets[7].value = \"@tag-7\"",
-        "tags.presets[8].nickname = \"preset-8\"",
-        "tags.presets[8].value = \"@tag-8\"",
-        "tags.presets[9].nickname = \"preset-9\"",
-        "tags.presets[9].value = \"@tag-9\"",
-    ];
+    let mut expected_lexical = (0..12)
+        .flat_map(|index| {
+            [
+                format!("tags.presets[{index}].nickname = \"preset-{index}\""),
+                format!("tags.presets[{index}].value = \"@tag-{index}\""),
+            ]
+        })
+        .collect::<Vec<_>>();
+    expected_lexical.sort();
     assert_eq!(lines, expected_lexical);
 
     let mut reconstructed = lines

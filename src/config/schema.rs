@@ -220,11 +220,6 @@ pub struct TagPreset {
     pub value: String,
 }
 
-/// Builds the best-effort lowercase key used for preset lookup.
-pub(crate) fn lowercase_tag_lookup_key(value: &str) -> String {
-    value.to_lowercase()
-}
-
 impl FileConfig {
     /// Validates static file-creation configuration.
     pub fn validate(&self) -> Result<(), crate::error::RagtagError> {
@@ -354,7 +349,6 @@ impl Config {
             let nickname = preset.nickname.trim();
             let selector = nickname.strip_prefix('@').unwrap_or(nickname);
             if selector.is_empty()
-                || lowercase_tag_lookup_key(selector).is_empty()
                 || crate::parser::contains_forbidden_created_text(&preset.nickname)
             {
                 return Err(crate::error::RagtagError::InvalidConfig(format!(
