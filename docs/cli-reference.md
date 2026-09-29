@@ -293,6 +293,124 @@ with `name`, while a definition with multiple peer names is printed with
 ordered `names`. Each `arguments` value remains one shell-quoted string; it is
 never emitted as a token array.
 
+#### `config dump`
+
+Print the complete recognized effective configuration.
+
+```text
+ragtag config dump [--format <flat|yaml>]
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--format <flat|yaml>` | `flat` | Select deterministic flat assignments or YAML |
+
+The effective tree contains every core field, including `tags.presets`, plus
+the resolved `tasks` extension with defaults applied.
+Configured values override defaults.
+Unknown flattened extension sections are omitted because they have no
+registered runtime consumer.
+Alias arguments remain canonical deferred templates rather than resolved
+environment values.
+
+The default flat format emits one assignment per leaf.
+Mapping paths use dots, sequence entries use zero-based bracket indices,
+and empty lists or mappings emit `[]` or `{}`.
+Right-hand scalar values use compact JSON spelling, including quoted and
+escaped strings.
+Complete paths are sorted lexically, so consumers must parse numeric indices
+rather than assuming `[10]` follows `[9]`.
+Output has exactly one trailing newline.
+
+```text
+aliases = []
+tags.presets[0].nickname = "bug"
+tags.presets[0].value = "@issue(priority=1)"
+tasks.default_owner = "me"
+```
+
+`--format yaml` emits the same tree as one block-style YAML document.
+Mapping keys are recursively sorted, sequence order is retained, empty
+collections remain visible, and the document has exactly one trailing newline.
+
+In either format, every string derived from config environment interpolation
+is replaced by the exact sentinel `<environment-derived>`.
+Redaction applies independently to nested fields, including each preset
+nickname and value; the resolved secret is never printed.
+
+**Examples:**
+
+```bash
+ragtag config dump
+ragtag config dump --format flat
+ragtag config dump --format yaml
+ragtag --config ./project.ragtag.yaml config dump
+```
+
+### `create`
+
+Create one generic tag without modifying a file.
+
+```text
+ragtag create (--name <NAME_OF_NEW_TAG> | --preset <NICKNAME_OR_TAG_NAME>)
+              [--attribute <ATTR_NAME=ATTR_VALUE>]...
+              [--interactive]
+              [--format <multiline|oneline>]
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--name <NAME>` | — | Create this tag name; omit the leading `@` |
+| `--preset <SELECTOR>` | — | Select a configured preset by nickname or contained tag name |
+| `--attribute <NAME=VALUE>` | — | Apply one named attribute override; repeatable |
+| `--interactive` | disabled | Prompt to retain or replace every resulting attribute |
+| `--format <multiline|oneline>` | `multiline` | Select output layout |
+
+Exactly one of `--name` and `--preset` is required.
+Successful output is one complete tag followed by one newline on stdout;
+prompts and validation diagnostics use stderr.
+
+Each `--attribute` is parsed as one complete named attribute with the existing
+[tag grammar](tag-syntax.md#attributes), not by splitting on `=`.
+Occurrences are applied from left to right before interactive editing.
+An existing named attribute is replaced in its first position and later
+duplicates of that name are removed; a missing name is appended.
+Consequently, the last explicit override for a name wins without moving it.
+Positional and unrelated attributes retain their order.
+
+Interactive mode visits every resulting attribute in order, including
+positional attributes.
+Enter preserves the displayed value; nonblank input is one complete value
+expression using the existing [value grammar](tag-syntax.md#value-types).
+Interactive replacements therefore take precedence over explicit overrides,
+which take precedence over preset values.
+
+Preset selection ignores surrounding whitespace and accepts one optional
+leading ASCII `@`.
+Nickname and contained tag-name comparisons use Rust's best-effort lowercase
+conversion. This provides case-insensitive matching for ordinary English
+nicknames, but does not promise full Unicode caseless or normalization
+equivalence.
+If multiple presets match through nicknames, tag names, or both categories,
+creation fails and lists every matching `tags.presets[N]` index in config
+order.
+
+**Output:**
+
+```text
+$ ragtag create --name note --attribute 'title="Release notes"' --format oneline
+@note(title="Release notes")
+```
+
+```text
+$ ragtag create --name note --attribute 'title="Release notes"'
+@note(
+    title="Release notes"
+)
+```
+
+See [Configuration Reference → Tag Presets](configuration.md#tag-presets).
+
 ### `file touch`
 
 Create exactly one new plain text file.

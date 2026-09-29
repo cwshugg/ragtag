@@ -3,25 +3,16 @@
 //! Generates a new `@task(...)` string and prints it to stdout
 //! for the user to copy into their files.
 
-use std::io::{BufRead, IsTerminal, Write};
-
 use chrono::Utc;
-use owo_colors::OwoColorize;
-use rustyline::error::ReadlineError;
 
 use super::super::config::{TaskConfig, ALLOWED_WORKTIME_UNITS};
 use super::super::models::{TaskTag, TaskTagBuilder, TaskType};
 use crate::error::RagtagError;
 use crate::extensions::ExtensionContext;
+use crate::input::prompt::{make_prompt, PromptSession};
+use crate::output::tag::{escape_tag_string_body, layout_tag};
 
-/// Controls whether `format_task_string` produces multi-line or single-line output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TagFormat {
-    /// Indented multi-line format (default).
-    Multiline,
-    /// Everything on a single line.
-    Oneline,
-}
+pub use crate::output::tag::TagFormat;
 
 /// Returns the current UTC time formatted as ISO 8601 (e.g. `2026-06-12T13:29:44Z`).
 pub fn now_utc() -> String {
@@ -43,7 +34,7 @@ pub fn generate_task_id() -> Result<String, RagtagError> {
 ///
 /// Backslashes are escaped first (to avoid double-escaping), then double quotes.
 pub fn escape_for_tag(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    escape_tag_string_body(s)
 }
 
 /// Formats a `TaskTag` as an `@task(...)` string.
@@ -96,15 +87,7 @@ pub fn format_task_string(task: &TaskTag, config: &TaskConfig, fmt: TagFormat) -
         escape_for_tag(&task.worktime_units)
     ));
 
-    match fmt {
-        TagFormat::Multiline => {
-            let indented: Vec<String> = attrs.iter().map(|a| format!("    {a}")).collect();
-            format!("@{}(\n{}\n)", config.tag_name, indented.join(",\n"))
-        }
-        TagFormat::Oneline => {
-            format!("@{}({})", config.tag_name, attrs.join(", "))
-        }
-    }
+    layout_tag(&config.tag_name, &attrs, fmt)
 }
 
 /// Runs the create command.
@@ -226,245 +209,6 @@ pub(crate) fn validate_worktime_units(v: &str) -> Result<(), String> {
             "Invalid worktime units \u{2014} allowed values: {}",
             ALLOWED_WORKTIME_UNITS.join(", ")
         ))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Color helpers
-// ---------------------------------------------------------------------------
-
-/// Gray-blue RGB used for prompt field names  (R=140, G=170, B=210).
-const FIELD_R: u8 = 140;
-const FIELD_G: u8 = 170;
-const FIELD_B: u8 = 210;
-
-/// Dark gray RGB used for prompt hint text (R=128, G=128, B=128).
-const HINT_R: u8 = 128;
-const HINT_G: u8 = 128;
-const HINT_B: u8 = 128;
-
-/// Wraps each ANSI CSI escape sequence in rustyline-compatible `\x01`/`\x02` markers.
-///
-/// Without these markers, rustyline miscalculates the visible prompt width, causing
-/// cursor positioning errors when the user uses arrow keys or line-editing shortcuts.
-fn wrap_ansi_for_rustyline(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 32);
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        // CSI begins with ESC (0x1b) followed by '['.
-        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
-            result.push('\x01'); // begin non-printing section
-            result.push('\x1b');
-            result.push('[');
-            i += 2;
-            // Consume parameter bytes and the final alphabetic terminator byte.
-            while i < bytes.len() {
-                let b = bytes[i];
-                result.push(b as char);
-                i += 1;
-                if b.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-            result.push('\x02'); // end non-printing section
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-    result
-}
-
-/// Builds a prompt string for interactive input.
-///
-/// * `field`  — the field name (e.g. `"Title"`).
-/// * `hint`   — optional hint text shown after the field name in parentheses
-///   (e.g. `"(leave blank to skip)"`).
-/// * `is_tty` — when `true`, emits ANSI colour codes and rustyline-safe wrappers;
-///   when `false`, produces a plain-text prompt suitable for piped input.
-fn make_prompt(field: &str, hint: Option<&str>, is_tty: bool) -> String {
-    if !is_tty {
-        return match hint {
-            Some(h) => format!("{field} {h}: "),
-            None => format!("{field}: "),
-        };
-    }
-
-    let colored_field = field.truecolor(FIELD_R, FIELD_G, FIELD_B).to_string();
-    let colored_colon = ": ".truecolor(FIELD_R, FIELD_G, FIELD_B).to_string();
-
-    let plain = match hint {
-        Some(h) => {
-            let colored_hint = h.truecolor(HINT_R, HINT_G, HINT_B).to_string();
-            format!("{colored_field} {colored_hint}{colored_colon}")
-        }
-        None => format!("{colored_field}{colored_colon}"),
-    };
-
-    wrap_ansi_for_rustyline(&plain)
-}
-
-// ---------------------------------------------------------------------------
-// Interactive prompting
-// ---------------------------------------------------------------------------
-
-/// A prompting session for interactive task creation.
-///
-/// In TTY mode, uses [`rustyline`] for full line-editing support (arrow keys,
-/// Ctrl+A/E, history, etc.).  In piped / non-TTY mode, falls back to plain
-/// stdin reads with prompts written to stderr.
-struct PromptSession {
-    /// Present only when stdin is a terminal.
-    tty: Option<rustyline::DefaultEditor>,
-    /// Whether stdin is a TTY (mirrors `tty.is_some()`).
-    pub is_tty: bool,
-    /// Set to `true` when the user cancels via Ctrl+C or Ctrl+D in TTY mode.
-    pub cancelled: bool,
-}
-
-impl PromptSession {
-    /// Creates a new session, auto-detecting whether stdin is a TTY.
-    fn new() -> Result<Self, RagtagError> {
-        let tty = if std::io::stdin().is_terminal() {
-            Some(rustyline::DefaultEditor::new().map_err(|e| {
-                RagtagError::Io(std::io::Error::other(format!(
-                    "failed to initialise line editor: {e}"
-                )))
-            })?)
-        } else {
-            None
-        };
-        let is_tty = tty.is_some();
-        Ok(Self {
-            tty,
-            is_tty,
-            cancelled: false,
-        })
-    }
-
-    /// Writes a coloured error line to `stderr`.
-    ///
-    /// On a TTY the `"Error: …"` prefix is rendered in red; on piped input it
-    /// is written as plain text so tests and scripts see predictable output.
-    fn write_error(&self, stderr: &mut dyn Write, msg: &str) -> Result<(), RagtagError> {
-        if self.is_tty {
-            writeln!(stderr, "  {}", format!("Error: {msg}").red())
-        } else {
-            writeln!(stderr, "  Error: {msg}")
-        }
-        .map_err(RagtagError::Io)
-    }
-
-    /// Reads one raw line from the user.
-    ///
-    /// Returns `Ok(Some(line))` for normal input, or `Ok(None)` when:
-    /// - TTY mode: the user pressed Ctrl+C / Ctrl+D → also sets `self.cancelled`.
-    /// - Piped mode: stdin reached EOF (remaining fields will be skipped).
-    ///
-    /// If `self.cancelled` is already `true`, returns `Ok(None)` immediately
-    /// so callers can short-circuit without touching the terminal.
-    fn read_line(
-        &mut self,
-        prompt: &str,
-        stderr: &mut dyn Write,
-    ) -> Result<Option<String>, RagtagError> {
-        if self.cancelled {
-            return Ok(None);
-        }
-
-        if let Some(ref mut rl) = self.tty {
-            match rl.readline(prompt) {
-                Ok(line) => Ok(Some(line)),
-                Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => {
-                    // Ensure the next output starts on a fresh line.
-                    writeln!(stderr).map_err(RagtagError::Io)?;
-                    self.cancelled = true;
-                    Ok(None)
-                }
-                Err(e) => Err(RagtagError::Io(std::io::Error::other(format!(
-                    "readline error: {e}"
-                )))),
-            }
-        } else {
-            // Piped mode: write the prompt ourselves and read from stdin.
-            write!(stderr, "{prompt}").map_err(RagtagError::Io)?;
-            stderr.flush().map_err(RagtagError::Io)?;
-            let stdin = std::io::stdin();
-            let mut line = String::new();
-            match stdin.lock().read_line(&mut line) {
-                Ok(0) => Ok(None), // EOF — don't set cancelled; just skip remaining fields
-                Ok(_) => Ok(Some(line)),
-                Err(e) => Err(RagtagError::Io(e)),
-            }
-        }
-    }
-
-    /// Prompts for a required field (e.g. title).
-    ///
-    /// Re-prompts with `empty_error` whenever the user submits a blank line.
-    /// Returns `Ok(Some(value))` once a non-empty string is received.
-    /// Returns `Ok(None)` only if the user cancels in TTY mode.
-    /// Returns `Err` on unexpected EOF in piped mode or on I/O failure.
-    fn prompt_required(
-        &mut self,
-        prompt: &str,
-        empty_error: &str,
-        stderr: &mut dyn Write,
-    ) -> Result<Option<String>, RagtagError> {
-        loop {
-            match self.read_line(prompt, stderr)? {
-                None => {
-                    if self.cancelled {
-                        return Ok(None); // TTY cancellation — caller handles graceful exit
-                    }
-                    // Piped mode EOF on a required field — propagate as an error
-                    return Err(RagtagError::Io(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        "unexpected end of input while reading required field",
-                    )));
-                }
-                Some(line) => {
-                    let trimmed = line.trim().to_string();
-                    if trimmed.is_empty() {
-                        self.write_error(stderr, empty_error)?;
-                    } else {
-                        return Ok(Some(trimmed));
-                    }
-                }
-            }
-        }
-    }
-
-    /// Prompts for an optional field with a validation callback.
-    ///
-    /// - Blank input → returns `Ok(None)` (skip / use default).
-    /// - Invalid non-blank input → prints the validator's error message and re-prompts.
-    /// - Valid input → returns `Ok(Some(value))`.
-    /// - EOF (piped) or cancellation (TTY Ctrl+C/D) → returns `Ok(None)`.
-    fn prompt_optional(
-        &mut self,
-        prompt: &str,
-        stderr: &mut dyn Write,
-        validate: impl Fn(&str) -> Result<(), String>,
-    ) -> Result<Option<String>, RagtagError> {
-        loop {
-            match self.read_line(prompt, stderr)? {
-                None => return Ok(None),
-                Some(line) => {
-                    let trimmed = line.trim().to_string();
-                    if trimmed.is_empty() {
-                        return Ok(None);
-                    }
-                    match validate(&trimmed) {
-                        Ok(()) => return Ok(Some(trimmed)),
-                        Err(msg) => {
-                            self.write_error(stderr, &msg)?;
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -732,6 +476,27 @@ mod tests {
         assert!(output.contains("worktime_units=\"hours\""));
         // No indentation
         assert!(!output.contains("    "));
+    }
+
+    #[test]
+    fn test_task_format_exact_compatibility_fixtures() {
+        let config = TaskConfig::default();
+        let mut builder = TaskTagBuilder::new();
+        builder.id = Some("0123456789abcdef".to_string());
+        builder.title = Some("Exact \"task\"".to_string());
+        builder.worktime_estimate = Some(2.0);
+        builder.time_created = Some("2026-09-29T12:00:00Z".to_string());
+        builder.time_last_updated = Some("2026-09-29T12:00:00Z".to_string());
+        let task = builder.build(&config).unwrap();
+
+        assert_eq!(
+            format_task_string(&task, &config, TagFormat::Oneline),
+            "@task(id=\"0123456789abcdef\", title=\"Exact \\\"task\\\"\", owner=\"me\", status=\"new\", type=\"item\", worktime_spent=0, worktime_estimate=2, time_created=\"2026-09-29T12:00:00Z\", time_last_updated=\"2026-09-29T12:00:00Z\", worktime_units=\"hours\")"
+        );
+        assert_eq!(
+            format_task_string(&task, &config, TagFormat::Multiline),
+            "@task(\n    id=\"0123456789abcdef\",\n    title=\"Exact \\\"task\\\"\",\n    owner=\"me\",\n    status=\"new\",\n    type=\"item\",\n    worktime_spent=0,\n    worktime_estimate=2,\n    time_created=\"2026-09-29T12:00:00Z\",\n    time_last_updated=\"2026-09-29T12:00:00Z\",\n    worktime_units=\"hours\"\n)"
+        );
     }
 
     #[test]

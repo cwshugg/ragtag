@@ -13,7 +13,7 @@ use crate::models::{AttributeKind, Tag, TagAttribute, TagLocation};
 const MAX_TAG_NAME_LENGTH: usize = 256;
 
 /// Maximum number of attributes allowed per tag.
-const MAX_ATTRIBUTES_PER_TAG: usize = 256;
+pub const MAX_ATTRIBUTES_PER_TAG: usize = 256;
 
 /// Parses a complete tag starting at the `@` character.
 ///

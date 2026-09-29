@@ -123,6 +123,25 @@ A trailing comma after the last attribute is allowed and ignored:
 
 A single tag may have at most **256 attributes**. Tags exceeding this limit are not parsed.
 
+### Values Supplied by `ragtag create`
+
+`ragtag create --attribute` accepts exactly one complete named attribute, such
+as `priority=-1` or `title="Release notes"`, using the grammar in this
+document.
+It does not split the argument at `=` or define a separate CLI value syntax.
+
+During `ragtag create --interactive`, each nonblank replacement is exactly one
+complete value expression, such as `active`, `4.5`, or `"Release notes"`;
+do not enter `name=value`.
+An empty line retains the current value.
+Explicit `--attribute` values are applied before prompting, so interactive
+replacements have final precedence.
+
+Creation additionally rejects non-finite floating-point values and strings
+containing control characters or Unicode line/paragraph separators because
+those values cannot be emitted safely and reversibly.
+These creation restrictions do not change how existing files are parsed.
+
 ## Value Types
 
 Attribute values are parsed in the following order of precedence:

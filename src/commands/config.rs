@@ -8,6 +8,73 @@ use crate::config::Config;
 use crate::error::RagtagError;
 use crate::extensions::task::{config::TaskConfig, TASKS_CONFIG_KEY};
 
+/// Machine-readable effective configuration output format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DumpFormat {
+    /// Sorted path assignments with JSON scalar values.
+    Flat,
+    /// A recursively key-sorted YAML document.
+    Yaml,
+}
+
+/// Builds the complete recognized effective configuration tree.
+pub fn build_effective_config_value<F>(
+    config: &Config,
+    mut is_environment_derived: F,
+) -> Result<serde_yml::Value, RagtagError>
+where
+    F: FnMut(&str) -> bool,
+{
+    let mut root = serde_yml::to_value(config)
+        .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize config: {e}")))?;
+
+    // Resolve extension defaults and discard unregistered flattened sections.
+    let task_config = config
+        .extension_configs
+        .get(TASKS_CONFIG_KEY)
+        .map(|raw| TaskConfig::from_config_value(raw).unwrap_or_default())
+        .unwrap_or_default();
+    let resolved_tasks = serde_yml::to_value(&task_config)
+        .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize task config: {e}")))?;
+    if let serde_yml::Value::Mapping(ref mut map) = root {
+        for extension_key in config.extension_configs.keys() {
+            map.remove(serde_yml::Value::String(extension_key.clone()));
+        }
+        map.insert(
+            serde_yml::Value::String(TASKS_CONFIG_KEY.to_string()),
+            resolved_tasks,
+        );
+    }
+    redact_value(&mut root, &mut is_environment_derived);
+    Ok(root)
+}
+
+/// Replaces every environment-derived string in an effective value tree.
+fn redact_value<F>(value: &mut serde_yml::Value, is_environment_derived: &mut F)
+where
+    F: FnMut(&str) -> bool,
+{
+    match value {
+        serde_yml::Value::String(text) if is_environment_derived(text) => {
+            *text = "<environment-derived>".to_string();
+        }
+        serde_yml::Value::Sequence(sequence) => {
+            for child in sequence {
+                redact_value(child, is_environment_derived);
+            }
+        }
+        serde_yml::Value::Mapping(mapping) => {
+            for child in mapping.values_mut() {
+                redact_value(child, is_environment_derived);
+            }
+        }
+        serde_yml::Value::Tagged(tagged) => {
+            redact_value(&mut tagged.value, is_environment_derived);
+        }
+        _ => {}
+    }
+}
+
 /// Runs the `config get` command.
 ///
 /// Serializes the resolved config to a `serde_yml::Value` tree,
@@ -33,31 +100,7 @@ where
         ));
     }
 
-    let mut root = serde_yml::to_value(config)
-        .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize config: {e}")))?;
-
-    // TODO: When additional extensions are added, iterate over all registered
-    // extensions and merge their resolved configs here.
-
-    // Merge resolved task extension config (with defaults applied).
-    let task_config = config
-        .extension_configs
-        .get(TASKS_CONFIG_KEY)
-        .map(|raw| TaskConfig::from_config_value(raw).unwrap_or_default())
-        .unwrap_or_default();
-
-    let resolved_tasks = serde_yml::to_value(&task_config)
-        .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize task config: {e}")))?;
-
-    if let serde_yml::Value::Mapping(ref mut map) = root {
-        for extension_key in config.extension_configs.keys() {
-            map.remove(serde_yml::Value::String(extension_key.clone()));
-        }
-        map.insert(
-            serde_yml::Value::String(TASKS_CONFIG_KEY.to_string()),
-            resolved_tasks,
-        );
-    }
+    let root = build_effective_config_value(config, &mut is_environment_derived)?;
 
     // Traverse the value tree using dot-notation segments.
     let segments: Vec<&str> = key.split('.').collect();
@@ -86,7 +129,119 @@ where
         }
     }
 
-    Ok(format_value(current, &mut is_environment_derived))
+    let mut never_redact: fn(&str) -> bool = |_| false;
+    Ok(format_value(current, &mut never_redact))
+}
+
+/// Renders the complete effective configuration.
+pub fn run_dump<F>(
+    config: &Config,
+    format: DumpFormat,
+    is_environment_derived: F,
+) -> Result<String, RagtagError>
+where
+    F: FnMut(&str) -> bool,
+{
+    let root = build_effective_config_value(config, is_environment_derived)?;
+    match format {
+        DumpFormat::Flat => render_flat(&root),
+        DumpFormat::Yaml => render_yaml(&root),
+    }
+}
+
+/// Renders deterministic path assignments with JSON-compatible right sides.
+fn render_flat(root: &serde_yml::Value) -> Result<String, RagtagError> {
+    fn visit(
+        value: &serde_yml::Value,
+        path: &str,
+        lines: &mut Vec<String>,
+    ) -> Result<(), RagtagError> {
+        match value {
+            serde_yml::Value::Mapping(mapping) if mapping.is_empty() => {
+                lines.push(format!("{path} = {{}}"));
+            }
+            serde_yml::Value::Mapping(mapping) => {
+                for (key, child) in mapping {
+                    let serde_yml::Value::String(key) = key else {
+                        return Err(RagtagError::InvalidConfig(
+                            "effective configuration contains a non-string key".to_string(),
+                        ));
+                    };
+                    let child_path = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    visit(child, &child_path, lines)?;
+                }
+            }
+            serde_yml::Value::Sequence(sequence) if sequence.is_empty() => {
+                lines.push(format!("{path} = []"));
+            }
+            serde_yml::Value::Sequence(sequence) => {
+                for (index, child) in sequence.iter().enumerate() {
+                    visit(child, &format!("{path}[{index}]"), lines)?;
+                }
+            }
+            serde_yml::Value::Tagged(tagged) => visit(&tagged.value, path, lines)?,
+            scalar => {
+                let json = serde_json::to_string(scalar).map_err(|error| {
+                    RagtagError::InvalidConfig(format!(
+                        "failed to serialize effective config scalar: {error}"
+                    ))
+                })?;
+                lines.push(format!("{path} = {json}"));
+            }
+        }
+        Ok(())
+    }
+
+    let mut lines = Vec::new();
+    visit(root, "", &mut lines)?;
+    lines.sort();
+    Ok(format!("{}\n", lines.join("\n")))
+}
+
+/// Recursively sorts mappings before deterministic YAML serialization.
+fn sort_mappings(value: serde_yml::Value) -> Result<serde_yml::Value, RagtagError> {
+    Ok(match value {
+        serde_yml::Value::Mapping(mapping) => {
+            let mut entries = mapping
+                .into_iter()
+                .map(|(key, value)| match key {
+                    serde_yml::Value::String(key) => Ok((key, sort_mappings(value)?)),
+                    _ => Err(RagtagError::InvalidConfig(
+                        "effective configuration contains a non-string key".to_string(),
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            let mut sorted = serde_yml::Mapping::new();
+            for (key, value) in entries {
+                sorted.insert(serde_yml::Value::String(key), value);
+            }
+            serde_yml::Value::Mapping(sorted)
+        }
+        serde_yml::Value::Sequence(sequence) => serde_yml::Value::Sequence(
+            sequence
+                .into_iter()
+                .map(sort_mappings)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        serde_yml::Value::Tagged(mut tagged) => {
+            tagged.value = sort_mappings(tagged.value)?;
+            serde_yml::Value::Tagged(tagged)
+        }
+        scalar => scalar,
+    })
+}
+
+/// Renders one sorted YAML document with exactly one trailing newline.
+fn render_yaml(root: &serde_yml::Value) -> Result<String, RagtagError> {
+    let sorted = sort_mappings(root.clone())?;
+    let rendered = serde_yml::to_string(&sorted)
+        .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize config: {e}")))?;
+    Ok(format!("{}\n", rendered.trim_end_matches('\n')))
 }
 
 /// Formats a `serde_yml::Value` for human-readable output.
@@ -354,5 +509,44 @@ tasks:
         assert!(value.contains(r#"names: ["active", "a"]"#));
         assert!(value.contains("arguments: summary"));
         assert!(value.contains("arguments: query 'two words'"));
+    }
+
+    #[test]
+    fn dump_flat_has_sorted_paths_json_scalars_and_explicit_empty_collections() {
+        let mut config = default_config();
+        config.ignore_patterns = vec!["a\nb".to_string()];
+        let output = run_dump(&config, DumpFormat::Flat, |_| false).unwrap();
+        let lines = output.lines().collect::<Vec<_>>();
+        let mut sorted = lines.clone();
+        sorted.sort();
+        assert_eq!(lines, sorted);
+        assert!(output.contains("aliases = []\n"));
+        assert!(output.contains("ignore_patterns[0] = \"a\\nb\"\n"));
+        assert!(output.contains("tags.presets = []\n"));
+        assert!(output.contains("tasks.default_owner = \"me\"\n"));
+        assert!(output.ends_with('\n'));
+        assert!(!output.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn dump_redacts_nested_core_preset_and_task_strings() {
+        let config: Config = serde_yml::from_str(
+            "ignore_patterns: [secret]\ntags:\n  presets:\n    - nickname: secret\n      value: '@safe'\ntasks:\n  default_owner: secret\n",
+        )
+        .unwrap();
+        let output = run_dump(&config, DumpFormat::Flat, |value| value == "secret").unwrap();
+        assert_eq!(output.matches("\"<environment-derived>\"").count(), 3);
+        assert!(!output.contains("\"secret\""));
+    }
+
+    #[test]
+    fn dump_yaml_and_flat_represent_the_same_effective_tree() {
+        let config = default_config();
+        let yaml = run_dump(&config, DumpFormat::Yaml, |_| false).unwrap();
+        let value: serde_yml::Value = serde_yml::from_str(&yaml).unwrap();
+        assert_eq!(value["tags"]["presets"], serde_yml::Value::Sequence(vec![]));
+        assert_eq!(value["tasks"]["default_owner"].as_str(), Some("me"));
+        assert!(yaml.ends_with('\n'));
+        assert!(!yaml.ends_with("\n\n"));
     }
 }

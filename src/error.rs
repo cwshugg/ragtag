@@ -69,6 +69,10 @@ pub enum RagtagError {
     #[error("error: invalid input: {0}")]
     InvalidInput(String),
 
+    /// A generic tag could not be created from the supplied inputs.
+    #[error("error: {0}")]
+    Create(String),
+
     /// A supplied tag is not exactly one valid parser tag.
     #[error("error: invalid tag {input:?}: {reason}")]
     InvalidTag { input: String, reason: String },

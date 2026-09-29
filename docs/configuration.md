@@ -131,6 +131,10 @@ runtime errors do not echo resolved content. `ragtag config get` prints
 `<environment-derived>` for any string field produced by interpolation,
 including undefined or defined-empty references. Alias inspection prints the
 canonical unexpanded argument template.
+`ragtag config dump` applies the same redaction recursively to its complete
+effective tree, including each `tags.presets` nickname and value.
+Each environment-derived field is replaced independently, so a partially
+redacted preset can contain one sentinel and one literal field.
 
 Ragtag does not interpolate command-line arguments. The invoking shell is
 responsible for expansion there. `RAGTAG_CONFIG` and `RAGTAG_PATH` retain their
@@ -180,6 +184,10 @@ files:
 
   # UTC chrono strftime pattern used for the generated filename.
   filename_format: "%Y-%m-%d_%H-%M-%S.md"
+
+# Generic tag presets used by `ragtag create --preset`.
+tags:
+  presets: []
 
 # Task extension configuration.
 tasks:
@@ -255,6 +263,14 @@ tasks:
 | --- | --- | --- | --- |
 | `output.color` | string | `"auto"` | Color mode: `"auto"`, `"always"`, or `"never"` |
 
+### Tag Preset Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `tags.presets` | list of objects | `[]` | Ordered generic tag templates |
+| `tags.presets[].nickname` | string | (required) | Nonblank human-facing preset selector |
+| `tags.presets[].value` | string | (required) | Exactly one complete parser-valid tag |
+
 ### Aliases
 
 | Option | Type | Default | Description |
@@ -274,6 +290,65 @@ tasks:
 | `tasks.default_status` | string | `"new"` | Default status for new tasks |
 | `tasks.exclude_status_categories` | list of strings | `["done", "abandoned"]` | Status categories to exclude from `task list` and `task summary` output by default |
 | `tasks.status_keywords` | object | (see above) | Status keyword groups by category |
+
+## Tag Presets
+
+Top-level `tags.presets` defines templates for `ragtag create --preset`.
+There are no built-in presets.
+
+```yaml
+tags:
+  presets:
+    - nickname: bug
+      value: '@issue(priority=1, status="new")'
+    - nickname: meeting
+      value: '@note(kind="meeting")'
+```
+
+A selector may match either `nickname` or the tag name contained in `value`.
+Lookup trims surrounding whitespace, accepts one optional leading ASCII `@`,
+and uses Rust's best-effort lowercase conversion. This is case-insensitive for
+ordinary English nicknames, but does not guarantee full Unicode caseless or
+normalization equivalence.
+For example, `ragtag create --preset BUG`, `--preset issue`, and
+`--preset @issue` select the first entry above.
+
+Duplicate nicknames and tag names are allowed in configuration.
+If a selector matches more than one preset through either field, creation
+fails with an ambiguity error listing all matching `tags.presets[N]` indices
+in config order.
+
+Each nickname must be nonblank and terminal-safe.
+Each value must be exactly one complete tag accepted by the normal parser.
+Preset values may contain positional and named attributes, up to the normal
+256-attribute limit.
+Creatable values must also be safely representable: floats must be finite, and
+strings cannot contain control characters or Unicode line separators.
+
+Repeated `--attribute name=value` options override the selected preset from
+left to right before `--interactive` prompts run.
+The last explicit value for a name wins, while an interactive replacement has
+final precedence.
+See the [`create` CLI contract](cli-reference.md#create) and
+[tag value grammar](tag-syntax.md#value-types).
+
+## Effective Configuration Output
+
+`ragtag config dump` is the supported discovery interface for scripts and
+editor integrations.
+It serializes all recognized core fields and resolved task-extension fields,
+including defaults not written in the source YAML.
+Configured values replace defaults, unknown extension sections are omitted,
+and alias argument templates remain unexpanded.
+
+The default `flat` format uses sorted dot/bracket paths and JSON scalar values.
+Because sorting is lexical, consumers must parse indices numerically when
+reconstructing sequences with ten or more entries.
+`--format yaml` emits the same effective value tree with recursively sorted
+mapping keys.
+Both formats preserve sequence order, include empty collections, redact every
+environment-derived string as `<environment-derived>`, and end with exactly
+one newline.
 
 ## Ignore Patterns
 

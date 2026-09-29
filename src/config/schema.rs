@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::path::PathBuf;
 
 /// The maximum number of ignore patterns allowed.
@@ -202,6 +203,28 @@ impl Default for FileConfig {
     }
 }
 
+/// Configuration for generic tag creation.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct TagsConfig {
+    /// Ordered user-defined tag presets.
+    pub presets: Vec<TagPreset>,
+}
+
+/// A named generic-tag template.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TagPreset {
+    /// User-facing selector for the preset.
+    pub nickname: String,
+    /// One complete tag expression.
+    pub value: String,
+}
+
+/// Builds the best-effort lowercase key used for preset lookup.
+pub(crate) fn lowercase_tag_lookup_key(value: &str) -> String {
+    value.to_lowercase()
+}
+
 impl FileConfig {
     /// Validates static file-creation configuration.
     pub fn validate(&self) -> Result<(), crate::error::RagtagError> {
@@ -249,6 +272,8 @@ pub struct Config {
     pub files: FileConfig,
     /// User-defined command aliases. Empty by default (no default aliases).
     pub aliases: Vec<Alias>,
+    /// Generic tag creation configuration.
+    pub tags: TagsConfig,
     /// Extension configuration sections (raw YAML values).
     /// Keys are extension config section names in the YAML file (e.g., "tasks" for the task extension).
     #[serde(flatten)]
@@ -267,6 +292,7 @@ impl std::fmt::Debug for Config {
             .field("output", &"<redacted>")
             .field("files", &"<redacted>")
             .field("aliases", &"<redacted>")
+            .field("tags", &"<redacted>")
             .field("extension_configs", &"<redacted>")
             .finish()
     }
@@ -283,6 +309,7 @@ impl Default for Config {
             output: OutputConfig::default(),
             files: FileConfig::default(),
             aliases: Vec::new(),
+            tags: TagsConfig::default(),
             extension_configs: HashMap::new(),
         }
     }
@@ -317,6 +344,36 @@ impl Config {
             )));
         }
         self.files.validate()?;
+        self.validate_tag_presets()?;
+        Ok(())
+    }
+
+    /// Validates generic tag presets without exposing their configured values.
+    fn validate_tag_presets(&self) -> Result<(), crate::error::RagtagError> {
+        for (index, preset) in self.tags.presets.iter().enumerate() {
+            let nickname = preset.nickname.trim();
+            let selector = nickname.strip_prefix('@').unwrap_or(nickname);
+            if selector.is_empty()
+                || lowercase_tag_lookup_key(selector).is_empty()
+                || crate::parser::contains_forbidden_created_text(&preset.nickname)
+            {
+                return Err(crate::error::RagtagError::InvalidConfig(format!(
+                    "tags.presets[{index}].nickname must be a nonempty terminal-safe selector"
+                )));
+            }
+            let tag =
+                crate::parser::parse_complete_tag(&preset.value, Path::new("<config-tag-preset>"))
+                    .map_err(|_| {
+                        crate::error::RagtagError::InvalidConfig(format!(
+                            "tags.presets[{index}].value must be exactly one complete tag"
+                        ))
+                    })?;
+            crate::parser::validate_creatable_tag(&tag).map_err(|_| {
+                crate::error::RagtagError::InvalidConfig(format!(
+                    "tags.presets[{index}].value contains a value that cannot be created safely"
+                ))
+            })?;
+        }
         Ok(())
     }
 
@@ -408,6 +465,7 @@ mod tests {
         assert_eq!(config.max_file_size, 10_485_760);
         assert_eq!(config.output.color, ColorMode::Auto);
         assert_eq!(config.files, FileConfig::default());
+        assert!(config.tags.presets.is_empty());
     }
 
     #[test]
@@ -550,11 +608,38 @@ tasks:
         assert!(err.to_string().contains("max_file_size"));
     }
 
+    #[test]
+    fn tag_presets_deserialize_serialize_and_validate() {
+        let config: Config = serde_yml::from_str(
+            "tags:\n  presets:\n    - nickname: Bug\n      value: '@issue(priority=1)'\n",
+        )
+        .unwrap();
+        assert_eq!(config.tags.presets[0].nickname, "Bug");
+        assert!(config.validate().is_ok());
+        let serialized = serde_yml::to_string(&config).unwrap();
+        assert!(serialized.contains("tags:"));
+        assert!(serialized.contains("presets:"));
+    }
+
+    #[test]
+    fn tag_preset_validation_rejects_bad_selectors_tags_and_values() {
+        for yaml in [
+            "tags:\n  presets:\n    - nickname: '   '\n      value: '@ok'\n",
+            "tags:\n  presets:\n    - nickname: '@'\n      value: '@ok'\n",
+            "tags:\n  presets:\n    - nickname: \"bad\\tname\"\n      value: '@ok'\n",
+            "tags:\n  presets:\n    - nickname: bad\n      value: '@ok trailing'\n",
+            "tags:\n  presets:\n    - nickname: bad\n      value: '@ok(value=1.0e999)'\n",
+        ] {
+            let config: Config = serde_yml::from_str(yaml).unwrap();
+            assert!(config.validate().is_err(), "unexpected valid YAML: {yaml}");
+        }
+    }
+
     // === Aliases ===
 
     /// Ordered real command names for alias-collision testing.
     fn real_commands() -> Vec<String> {
-        ["config", "summary", "query", "file", "task"]
+        ["config", "create", "summary", "query", "file", "task"]
             .into_iter()
             .map(str::to_string)
             .collect()

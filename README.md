@@ -65,13 +65,23 @@ cargo build --release
     ragtag query task --filter status=active
     ```
 
-4. **List all tasks:**
+4. **Create a generic tag:**
+
+    ```bash
+    ragtag create --name note --attribute 'title="Release notes"' --format oneline
+    ragtag create --preset bug --attribute priority=0
+    ```
+
+    `--preset` selects a configured `tags.presets` entry by nickname or contained tag name.
+    Selection is case-insensitive; duplicate matches produce an ambiguity error.
+
+5. **List all tasks:**
 
     ```bash
     ragtag task list
     ```
 
-5. **Create a new task:**
+6. **Create a new task:**
 
     ```bash
     ragtag task create --title "Write docs" --type item --worktime-estimate 2 --worktime-units hours
@@ -83,7 +93,7 @@ cargo build --release
     This prints an `@task(...)` string to stdout for you to copy into a note file.
     Integrate this with other tools to generate the `@task(...)` string and drop it straight into your other notes.
 
-6. **Create a new tagged file:**
+7. **Create a new tagged file:**
 
     ```bash
     ragtag file touch --tag project --tag '@task(status=new)'
@@ -142,6 +152,42 @@ ragtag config get max_depth
 ragtag config get tasks.tag_name
 ragtag config get tasks.status_keywords.done
 ```
+
+### `ragtag config dump [--format flat|yaml]`
+
+Prints the complete effective configuration for scripts and editor integrations.
+The default `flat` format is a deterministic, lexically sorted list of paths with JSON scalar values; `--format yaml` prints the same recursively key-sorted value tree as YAML.
+Both formats include built-in and task-extension defaults plus configured overrides.
+Environment-derived strings are replaced with `<environment-derived>`, while deferred alias argument templates remain unexpanded.
+
+```bash
+ragtag config dump
+ragtag config dump --format yaml
+```
+
+### `ragtag create (--name <NAME> | --preset <SELECTOR>)`
+
+Creates one generic tag and writes it to stdout without modifying files.
+Choose exactly one source, repeat `--attribute name=value` for ordered overrides, add `--interactive` to edit every resulting value, and select `--format multiline|oneline` (default: `multiline`).
+Attributes and interactive replacements use the normal [tag value grammar](docs/tag-syntax.md#value-types).
+Explicit attributes are applied left to right before prompting; replacing a named attribute keeps its position, removes later duplicates of that name, and the last explicit value wins.
+
+```bash
+ragtag create --name note --attribute 'title="Release notes"'
+ragtag create --preset bug --attribute priority=0 --interactive --format oneline
+```
+
+Configure presets under top-level `tags.presets`:
+
+```yaml
+tags:
+  presets:
+    - nickname: bug
+      value: '@issue(priority=1, status="new")'
+```
+
+Preset nickname and contained tag-name lookup uses best-effort lowercase comparison, suitable for ordinary English nicknames; a leading `@` on the selector is optional.
+If multiple presets match through either field, creation fails with the matching `tags.presets[N]` indices.
 
 ### `ragtag file touch [--path <FILE>] [--tag <TAG>]... [--edit]`
 
