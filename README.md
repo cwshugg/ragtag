@@ -1,3 +1,7 @@
+<div style="text-align: center">
+    <img src="https://shugg.dev/images/ragtag/ragtag_icon_256.png" width=256>
+</div>
+
 # Ragtag
 
 A CLI tool for parsing, querying, and managing `@tag(attr=value)` annotations embedded in plain text files.
