@@ -230,6 +230,17 @@ fn dispatch(
                 println!("{value}");
                 Ok(())
             }
+            Some(("dump", dump_matches)) => {
+                let format = match dump_matches.get_one::<String>("format").map(String::as_str) {
+                    Some("yaml") => commands::config::DumpFormat::Yaml,
+                    _ => commands::config::DumpFormat::Flat,
+                };
+                let value = commands::config::run_dump(app_config, format, |value| {
+                    loaded_config.is_environment_derived_value(value)
+                })?;
+                std::io::Write::write_all(&mut std::io::stdout(), value.as_bytes())
+                    .map_err(RagtagError::Io)
+            }
             _ => {
                 let _ = cli::build_real_cli(registry)
                     .find_subcommand_mut("config")
@@ -239,6 +250,11 @@ fn dispatch(
                 Ok(())
             }
         },
+        Some(("create", create_matches)) => {
+            let mut stdout = std::io::stdout();
+            let mut stderr = std::io::stderr();
+            commands::create::run(create_matches, app_config, &mut stdout, &mut stderr)
+        }
         Some(("summary", sub_m)) => {
             let mut stdout = std::io::stdout();
             commands::summary::run(sub_m, app_config, registry, &color_mode, &mut stdout)

@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::path::PathBuf;
 
 /// The maximum number of ignore patterns allowed.
@@ -202,6 +203,23 @@ impl Default for FileConfig {
     }
 }
 
+/// Configuration for generic tag creation.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct TagsConfig {
+    /// Ordered user-defined tag presets.
+    pub presets: Vec<TagPreset>,
+}
+
+/// A named generic-tag template.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TagPreset {
+    /// User-facing selector for the preset.
+    pub nickname: String,
+    /// One complete tag expression.
+    pub value: String,
+}
+
 impl FileConfig {
     /// Validates static file-creation configuration.
     pub fn validate(&self) -> Result<(), crate::error::RagtagError> {
@@ -249,10 +267,12 @@ pub struct Config {
     pub files: FileConfig,
     /// User-defined command aliases. Empty by default (no default aliases).
     pub aliases: Vec<Alias>,
+    /// Generic tag creation configuration.
+    pub tags: TagsConfig,
     /// Extension configuration sections (raw YAML values).
     /// Keys are extension config section names in the YAML file (e.g., "tasks" for the task extension).
     #[serde(flatten)]
-    pub extension_configs: HashMap<String, serde_yml::Value>,
+    pub extension_configs: HashMap<String, yaml_serde::Value>,
 }
 
 impl std::fmt::Debug for Config {
@@ -267,6 +287,7 @@ impl std::fmt::Debug for Config {
             .field("output", &"<redacted>")
             .field("files", &"<redacted>")
             .field("aliases", &"<redacted>")
+            .field("tags", &"<redacted>")
             .field("extension_configs", &"<redacted>")
             .finish()
     }
@@ -283,6 +304,7 @@ impl Default for Config {
             output: OutputConfig::default(),
             files: FileConfig::default(),
             aliases: Vec::new(),
+            tags: TagsConfig::default(),
             extension_configs: HashMap::new(),
         }
     }
@@ -317,6 +339,35 @@ impl Config {
             )));
         }
         self.files.validate()?;
+        self.validate_tag_presets()?;
+        Ok(())
+    }
+
+    /// Validates generic tag presets without exposing their configured values.
+    fn validate_tag_presets(&self) -> Result<(), crate::error::RagtagError> {
+        for (index, preset) in self.tags.presets.iter().enumerate() {
+            let nickname = preset.nickname.trim();
+            let selector = nickname.strip_prefix('@').unwrap_or(nickname);
+            if selector.is_empty()
+                || crate::parser::contains_forbidden_created_text(&preset.nickname)
+            {
+                return Err(crate::error::RagtagError::InvalidConfig(format!(
+                    "tags.presets[{index}].nickname must be a nonempty terminal-safe selector"
+                )));
+            }
+            let tag =
+                crate::parser::parse_complete_tag(&preset.value, Path::new("<config-tag-preset>"))
+                    .map_err(|_| {
+                        crate::error::RagtagError::InvalidConfig(format!(
+                            "tags.presets[{index}].value must be exactly one complete tag"
+                        ))
+                    })?;
+            crate::parser::validate_creatable_tag(&tag).map_err(|_| {
+                crate::error::RagtagError::InvalidConfig(format!(
+                    "tags.presets[{index}].value contains a value that cannot be created safely"
+                ))
+            })?;
+        }
         Ok(())
     }
 
@@ -408,6 +459,7 @@ mod tests {
         assert_eq!(config.max_file_size, 10_485_760);
         assert_eq!(config.output.color, ColorMode::Auto);
         assert_eq!(config.files, FileConfig::default());
+        assert!(config.tags.presets.is_empty());
     }
 
     #[test]
@@ -426,7 +478,7 @@ files:
   default_directory: "notes"
   filename_format: "%Y%m%d-%3f.txt"
 "#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(config.ignore_patterns.len(), 2);
         assert!(!config.respect_gitignore);
         assert!(!config.skip_hidden);
@@ -440,7 +492,7 @@ files:
 
     #[test]
     fn test_empty_yaml() {
-        let config: Config = serde_yml::from_str("{}").unwrap();
+        let config: Config = yaml_serde::from_str("{}").unwrap();
         assert!(config.respect_gitignore);
     }
 
@@ -449,7 +501,7 @@ files:
         let yaml = r#"
 skip_hidden: false
 "#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = yaml_serde::from_str(yaml).unwrap();
         assert!(!config.skip_hidden);
         assert!(config.respect_gitignore); // default
     }
@@ -457,21 +509,21 @@ skip_hidden: false
     #[test]
     fn test_color_mode_auto() {
         let yaml = r#"output: { color: "auto" }"#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(config.output.color, ColorMode::Auto);
     }
 
     #[test]
     fn test_color_mode_always() {
         let yaml = r#"output: { color: "always" }"#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(config.output.color, ColorMode::Always);
     }
 
     #[test]
     fn test_color_mode_invalid() {
         let yaml = r#"output: { color: "rainbow" }"#;
-        let result: Result<Config, _> = serde_yml::from_str(yaml);
+        let result: Result<Config, _> = yaml_serde::from_str(yaml);
         assert!(result.is_err());
     }
 
@@ -482,7 +534,7 @@ tasks:
   tag_name: "todo"
   default_owner: "alice"
 "#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = yaml_serde::from_str(yaml).unwrap();
         assert!(config.extension_configs.contains_key("tasks"));
     }
 
@@ -550,11 +602,38 @@ tasks:
         assert!(err.to_string().contains("max_file_size"));
     }
 
+    #[test]
+    fn tag_presets_deserialize_serialize_and_validate() {
+        let config: Config = yaml_serde::from_str(
+            "tags:\n  presets:\n    - nickname: Bug\n      value: '@issue(priority=1)'\n",
+        )
+        .unwrap();
+        assert_eq!(config.tags.presets[0].nickname, "Bug");
+        assert!(config.validate().is_ok());
+        let serialized = yaml_serde::to_string(&config).unwrap();
+        assert!(serialized.contains("tags:"));
+        assert!(serialized.contains("presets:"));
+    }
+
+    #[test]
+    fn tag_preset_validation_rejects_bad_selectors_tags_and_values() {
+        for yaml in [
+            "tags:\n  presets:\n    - nickname: '   '\n      value: '@ok'\n",
+            "tags:\n  presets:\n    - nickname: '@'\n      value: '@ok'\n",
+            "tags:\n  presets:\n    - nickname: \"bad\\tname\"\n      value: '@ok'\n",
+            "tags:\n  presets:\n    - nickname: bad\n      value: '@ok trailing'\n",
+            "tags:\n  presets:\n    - nickname: bad\n      value: '@ok(value=1.0e999)'\n",
+        ] {
+            let config: Config = yaml_serde::from_str(yaml).unwrap();
+            assert!(config.validate().is_err(), "unexpected valid YAML: {yaml}");
+        }
+    }
+
     // === Aliases ===
 
     /// Ordered real command names for alias-collision testing.
     fn real_commands() -> Vec<String> {
-        ["config", "summary", "query", "file", "task"]
+        ["config", "create", "summary", "query", "file", "task"]
             .into_iter()
             .map(str::to_string)
             .collect()
@@ -573,7 +652,7 @@ tasks:
 
     #[test]
     fn aliases_accept_legacy_and_ordered_multi_name_forms() {
-        let config: Config = serde_yml::from_str(
+        let config: Config = yaml_serde::from_str(
             "aliases:\n  - name: legacy\n    arguments: \"task summary\"\n  - names: [active, a]\n    arguments: \"query task --filter 'status=active'\"\n",
         )
         .unwrap();
@@ -589,14 +668,14 @@ tasks:
 
     #[test]
     fn aliases_ignore_unknown_metadata_fields() {
-        let alias: Alias = serde_yml::from_str(
+        let alias: Alias = yaml_serde::from_str(
             "name: legacy\narguments: summary\ndescription: handy\nfuture_metadata:\n  category: reporting\n",
         )
         .unwrap();
         assert_eq!(alias.names, ["legacy"]);
         assert_eq!(alias.arguments, ["summary"]);
 
-        let canonical = serde_yml::to_string(&alias).unwrap();
+        let canonical = yaml_serde::to_string(&alias).unwrap();
         assert!(!canonical.contains("description"));
         assert!(!canonical.contains("future_metadata"));
     }
@@ -610,17 +689,17 @@ tasks:
             ],
             ..Default::default()
         };
-        let yaml = serde_yml::to_string(&config).unwrap();
+        let yaml = yaml_serde::to_string(&config).unwrap();
         assert!(yaml.contains("- name: one"));
         assert!(yaml.contains("- names:"));
         assert!(yaml.contains("  - many"));
         assert!(yaml.contains("  - m"));
-        let restored: Config = serde_yml::from_str(&yaml).unwrap();
+        let restored: Config = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(restored.aliases, config.aliases);
 
         let one_names: Alias =
-            serde_yml::from_str("names: [single]\narguments: summary\n").unwrap();
-        let canonical = serde_yml::to_string(&one_names).unwrap();
+            yaml_serde::from_str("names: [single]\narguments: summary\n").unwrap();
+        let canonical = yaml_serde::to_string(&one_names).unwrap();
         assert!(canonical.contains("name: single"));
         assert!(!canonical.contains("names:"));
     }
@@ -636,11 +715,11 @@ tasks:
             "name: a\narguments: \"   \"\n",
             "name: a\narguments: 'query \"unterminated'\n",
         ] {
-            assert!(serde_yml::from_str::<Alias>(yaml).is_err(), "{yaml}");
+            assert!(yaml_serde::from_str::<Alias>(yaml).is_err(), "{yaml}");
         }
 
         let deferred: Alias =
-            serde_yml::from_str("name: a\narguments: 'query \"$RUNTIME\"'\n").unwrap();
+            yaml_serde::from_str("name: a\narguments: 'query \"$RUNTIME\"'\n").unwrap();
         assert_eq!(deferred.arguments, ["query", "$RUNTIME"]);
     }
 

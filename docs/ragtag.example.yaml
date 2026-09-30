@@ -111,6 +111,25 @@ aliases: []
   #   # The variable's complete value remains in this configured filter token.
   #   arguments: "query task --filter owner=$RAGTAG_OWNER"
 
+# ---------------------------------------------------------------------------
+# Generic Tag Presets
+# ---------------------------------------------------------------------------
+#
+# Used by `ragtag create --preset`. Selection matches either `nickname` or
+# the tag name inside `value`, using best-effort lowercase comparison suitable
+# for ordinary English nicknames. A leading `@` on the selector is optional.
+# Duplicate matches are reported as an ambiguity instead of choosing one.
+#
+# Repeated `--attribute name=value` options override preset fields from left
+# to right. `--interactive` then prompts for every resulting value, so an
+# entered interactive value has final precedence.
+tags:
+  presets:
+    - nickname: "bug"
+      value: '@issue(priority=1, status="new")'
+    - nickname: "meeting"
+      value: '@note(kind="meeting")'
+
 
 # ---------------------------------------------------------------------------
 # Task Extension

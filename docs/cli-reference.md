@@ -293,6 +293,158 @@ with `name`, while a definition with multiple peer names is printed with
 ordered `names`. Each `arguments` value remains one shell-quoted string; it is
 never emitted as a token array.
 
+#### `config dump`
+
+Print the complete recognized effective configuration.
+
+```text
+ragtag config dump [--format <flat|yaml>]
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--format <flat|yaml>` | `flat` | Select deterministic flat assignments or YAML |
+
+The effective tree contains every core field, including `tags.presets`, plus
+the resolved `tasks` extension with defaults applied.
+Configured values override defaults.
+Unknown flattened extension sections are omitted because they have no
+registered runtime consumer.
+Alias arguments remain canonical deferred templates rather than resolved
+environment values.
+
+The default flat format emits one assignment per leaf.
+Mapping paths use dots, sequence entries use zero-based bracket indices,
+and empty lists or mappings emit `[]` or `{}`.
+Right-hand scalar values use compact JSON spelling, including quoted and
+escaped strings.
+Complete paths are sorted lexically, so consumers must parse numeric indices
+rather than assuming `[10]` follows `[9]`.
+Output has exactly one trailing newline.
+
+```text
+aliases = []
+tags.presets[0].nickname = "bug"
+tags.presets[0].value = "@issue(priority=1)"
+tasks.default_owner = "me"
+```
+
+`--format yaml` emits the same tree as one block-style YAML document.
+Mapping keys are recursively sorted, sequence order is retained, empty
+collections remain visible, and the document has exactly one trailing newline.
+
+In either format, every string derived from config environment interpolation
+is replaced by the exact sentinel `<environment-derived>`.
+Redaction applies independently to nested fields, including each preset
+nickname and value; the resolved secret is never printed.
+
+**Examples:**
+
+```bash
+ragtag config dump --format yaml
+```
+
+### `create`
+
+Create one generic tag without modifying a file.
+
+```text
+ragtag create (--name <NAME_OF_NEW_TAG> | --preset <NICKNAME_OR_TAG_NAME>)
+              [--attribute <ATTR_NAME=ATTR_VALUE>]...
+              [-i|--interactive]
+              [--format <multiline|oneline|json>]
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--name <NAME>` | — | Create this tag name; omit the leading `@` |
+| `--preset <SELECTOR>` | — | Select a configured preset by nickname or contained tag name |
+| `--attribute <NAME=VALUE>` | — | Apply one named attribute override; repeatable |
+| `-i`, `--interactive` | disabled | Prompt to retain or replace every resulting attribute |
+| `--format <multiline|oneline|json>` | `multiline` | Select tag output layout or the create JSON boundary |
+
+Exactly one of `--name` and `--preset` is always required.
+`--format json` conflicts with `--interactive`.
+With `multiline` or `oneline`, successful output is one complete tag followed
+by one newline on stdout; prompts and validation diagnostics use stderr.
+
+Each `--attribute` is parsed as one complete named attribute with the existing
+[tag grammar](tag-syntax.md#attributes), not by splitting on `=`.
+Occurrences are applied from left to right before interactive editing.
+An existing named attribute is replaced in its first position and later
+duplicates of that name are removed; a missing name is appended.
+Consequently, the last explicit override for a name wins without moving it.
+Positional and unrelated attributes retain their order.
+Unchanged preset values retain their exact validated value expression,
+including bare spelling, numeric prefix or case, delimiter choice, and
+backslash escapes.
+An explicit override retains its own value expression and changes only the
+target attribute.
+
+Interactive mode visits every resulting attribute in order, including
+positional attributes.
+The prompt displays the current raw expression.
+Enter preserves that complete expression unchanged.
+Nonempty input is raw string text, not a ready-made value expression: ragtag
+escapes it and wraps it with the current expression's quote delimiter.
+Delimiter-less bare and numeric values use double quotes when replaced.
+The sole exception is a complete, valid numeric literal, which remains
+unquoted and follows the existing numeric-value validation rules.
+Interactive replacements therefore take precedence over explicit overrides,
+which take precedence over preset values.
+Preserved expressions are not escaped again.
+Empty strings require a complete quoted expression (`""`, `''`, or two
+backticks); `name=` is invalid.
+`multiline` and `oneline` change only layout, never value spelling.
+
+Preset selection ignores surrounding whitespace and accepts one optional
+leading ASCII `@`.
+Nickname and contained tag-name comparisons use Rust's best-effort lowercase
+conversion. This provides case-insensitive matching for ordinary English
+nicknames, but does not promise full Unicode caseless or normalization
+equivalence.
+If multiple presets match through nicknames, tag names, or both categories,
+creation fails and lists every matching `tags.presets[N]` index in config
+order.
+
+**Output:**
+
+```text
+$ ragtag create --name note --attribute 'title="Release notes"' --format oneline
+@note(title="Release notes")
+```
+
+Invalid names, incomplete attributes or values, unsafe strings, non-finite
+numbers, parser limits, and ambiguous or missing presets fail before any tag
+is written.
+
+#### Create JSON
+
+`--format json` is an output-only projection for editor prefill.
+It reads no stdin and reuses ordinary preset resolution and ordered `--attribute` upserts.
+Success writes one compact JSON document followed by a newline:
+
+```json
+{
+  "name": "issue",
+  "attributes": [
+    {
+      "name": "priority",
+      "value": "0X2A",
+      "raw": "0X2A"
+    }
+  ]
+}
+```
+
+The top level contains only string `name` and ordered `attributes`.
+Each attribute contains only string `name`, decoded `value`, and its complete validated `raw` value expression.
+Before writing stdout, ragtag rejects resolved positional attributes and duplicate named attributes because `RagtagCreate` supports unique named attributes only.
+Every failure writes its diagnostic to stderr and writes nothing to stdout.
+Use ordinary `--format oneline` or `--format multiline` with complete repeated `--attribute` arguments to render a tag.
+
+See [Configuration Reference → Tag Presets](configuration.md#tag-presets).
+
 ### `file touch`
 
 Create exactly one new plain text file.

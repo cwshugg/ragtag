@@ -131,6 +131,10 @@ runtime errors do not echo resolved content. `ragtag config get` prints
 `<environment-derived>` for any string field produced by interpolation,
 including undefined or defined-empty references. Alias inspection prints the
 canonical unexpanded argument template.
+`ragtag config dump` applies the same redaction recursively to its complete
+effective tree, including each `tags.presets` nickname and value.
+Each environment-derived field is replaced independently, so a partially
+redacted preset can contain one sentinel and one literal field.
 
 Ragtag does not interpolate command-line arguments. The invoking shell is
 responsible for expansion there. `RAGTAG_CONFIG` and `RAGTAG_PATH` retain their
@@ -180,6 +184,10 @@ files:
 
   # UTC chrono strftime pattern used for the generated filename.
   filename_format: "%Y-%m-%d_%H-%M-%S.md"
+
+# Generic tag presets used by `ragtag create --preset`.
+tags:
+  presets: []
 
 # Task extension configuration.
 tasks:
@@ -255,6 +263,14 @@ tasks:
 | --- | --- | --- | --- |
 | `output.color` | string | `"auto"` | Color mode: `"auto"`, `"always"`, or `"never"` |
 
+### Tag Preset Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `tags.presets` | list of objects | `[]` | Ordered generic tag templates |
+| `tags.presets[].nickname` | string | (required) | Nonblank human-facing preset selector |
+| `tags.presets[].value` | string | (required) | Exactly one complete parser-valid tag |
+
 ### Aliases
 
 | Option | Type | Default | Description |
@@ -274,6 +290,38 @@ tasks:
 | `tasks.default_status` | string | `"new"` | Default status for new tasks |
 | `tasks.exclude_status_categories` | list of strings | `["done", "abandoned"]` | Status categories to exclude from `task list` and `task summary` output by default |
 | `tasks.status_keywords` | object | (see above) | Status keyword groups by category |
+
+## Tag Presets
+
+Top-level `tags.presets` defines templates for `ragtag create --preset`.
+There are no built-in presets.
+
+```yaml
+tags:
+  presets:
+    - nickname: review
+      value: '@code-review(description="", url=``)'
+    - nickname: meeting
+      value: '@note(kind="meeting")'
+```
+
+Each nickname must be nonblank and terminal-safe.
+Each value must be exactly one complete tag accepted by the normal parser.
+Preset values may contain positional and named attributes, up to the normal
+256-attribute limit.
+Creatable values must also be safely representable: floats must be finite, and
+strings cannot contain control characters or Unicode line separators.
+`ragtag create` preserves each configured value expression, including the
+delimiter and escapes.
+See the [`create` CLI contract](cli-reference.md#create) for selection,
+precedence, formats, and ambiguity, and the [tag value
+grammar](tag-syntax.md#value-types) for accepted expressions.
+
+## Effective Configuration Output
+
+Use [`ragtag config dump`](cli-reference.md#config-dump) as the supported
+effective-configuration discovery interface for scripts and editor
+integrations.
 
 ## Ignore Patterns
 

@@ -85,7 +85,7 @@ pub trait TagExtension {
     /// YAML config section key (e.g., "tasks"). `None` if no config needed.
     fn config_key(&self) -> Option<&str>;
     /// Initialize with config data.
-    fn init(&mut self, config_value: Option<&serde_yml::Value>) -> Result<(), RagtagError>;
+    fn init(&mut self, config_value: Option<&yaml_serde::Value>) -> Result<(), RagtagError>;
 
     /// Validate a tag of this extension's type.
     fn validate_tag(&self, tag: &Tag) -> Vec<ValidationMessage>;
@@ -210,7 +210,7 @@ mod tests {
         fn config_key(&self) -> Option<&str> {
             None
         }
-        fn init(&mut self, _: Option<&serde_yml::Value>) -> Result<(), RagtagError> {
+        fn init(&mut self, _: Option<&yaml_serde::Value>) -> Result<(), RagtagError> {
             Ok(())
         }
         fn validate_tag(&self, _: &Tag) -> Vec<ValidationMessage> {

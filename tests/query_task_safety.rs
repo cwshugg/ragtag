@@ -56,7 +56,7 @@ fn task_queries_escape_human_fields_while_jsonl_preserves_data() {
     let hostile = "line\ncarriage\rCSI\x1b[2JOSC\x1b]52;c;payload\x07bidi\u{202e}control\u{85}";
     let file = dir.path().join(format!("{hostile}.md"));
     let config = dir.path().join("ragtag.yaml");
-    let yaml = serde_yml::to_string(&serde_json::json!({
+    let yaml = yaml_serde::to_string(&serde_json::json!({
         "tasks": {
             "default_status": hostile,
             "status_keywords": {"active": [hostile]},

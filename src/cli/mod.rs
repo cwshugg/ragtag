@@ -5,7 +5,7 @@
 //! functions for resolving CLI arguments with environment variable fallbacks.
 
 use crate::extensions::ExtensionRegistry;
-use clap::{Arg, ArgMatches, Command};
+use clap::{Arg, ArgGroup, ArgMatches, Command};
 use std::ffi::{OsStr, OsString};
 
 pub mod aliases;
@@ -243,6 +243,59 @@ pub fn build_real_cli(registry: &ExtensionRegistry) -> Command {
                                 .required(true)
                                 .index(1),
                         ),
+                )
+                .subcommand(
+                    Command::new("dump")
+                        .about("Print the complete effective configuration")
+                        .arg(
+                            Arg::new("format")
+                                .long("format")
+                                .value_name("FORMAT")
+                                .value_parser(["flat", "yaml"])
+                                .default_value("flat"),
+                        ),
+                ),
+        )
+        .subcommand(
+            Command::new("create")
+                .about("Create a generic tag")
+                .group(
+                    ArgGroup::new("source")
+                        .args(["name", "preset"])
+                        .required(true)
+                        .multiple(false),
+                )
+                .arg(
+                    Arg::new("name")
+                        .long("name")
+                        .value_name("NAME_OF_NEW_TAG")
+                        .num_args(1),
+                )
+                .arg(
+                    Arg::new("preset")
+                        .long("preset")
+                        .value_name("NICKNAME_OR_TAG_NAME")
+                        .num_args(1),
+                )
+                .arg(
+                    Arg::new("attribute")
+                        .long("attribute")
+                        .value_name("ATTR_NAME=ATTR_VALUE")
+                        .num_args(1)
+                        .action(clap::ArgAction::Append),
+                )
+                .arg(
+                    Arg::new("interactive")
+                        .short('i')
+                        .long("interactive")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .value_name("FORMAT")
+                        .value_parser(["multiline", "oneline", "json"])
+                        .default_value("multiline"),
                 ),
         )
         .subcommand(
@@ -492,7 +545,10 @@ mod tests {
     fn test_real_command_names_matches_built_tree_including_help() {
         let registry = ExtensionRegistry::new();
         let names = real_command_names(&registry);
-        assert_eq!(names, ["config", "file", "summary", "query", "help"]);
+        assert_eq!(
+            names,
+            ["config", "create", "file", "summary", "query", "help"]
+        );
     }
 
     #[test]

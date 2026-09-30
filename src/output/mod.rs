@@ -4,6 +4,7 @@
 //! and basic formatting utilities.
 
 pub mod format;
+pub(crate) mod tag;
 
 use crate::config::ColorMode;
 

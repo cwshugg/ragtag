@@ -65,13 +65,23 @@ cargo build --release
     ragtag query task --filter status=active
     ```
 
-4. **List all tasks:**
+4. **Create a generic tag:**
+
+    ```bash
+    ragtag create --name note --attribute 'title="Release notes"' --format oneline
+    ragtag create --preset bug --attribute priority=0
+    ```
+
+    `--preset` selects a configured `tags.presets` entry by nickname or contained tag name.
+    Selection is case-insensitive; duplicate matches produce an ambiguity error.
+
+5. **List all tasks:**
 
     ```bash
     ragtag task list
     ```
 
-5. **Create a new task:**
+6. **Create a new task:**
 
     ```bash
     ragtag task create --title "Write docs" --type item --worktime-estimate 2 --worktime-units hours
@@ -83,7 +93,7 @@ cargo build --release
     This prints an `@task(...)` string to stdout for you to copy into a note file.
     Integrate this with other tools to generate the `@task(...)` string and drop it straight into your other notes.
 
-6. **Create a new tagged file:**
+7. **Create a new tagged file:**
 
     ```bash
     ragtag file touch --tag project --tag '@task(status=new)'
@@ -141,6 +151,22 @@ Prints the value of a config field using dot-notation. Useful for scripts and ed
 ragtag config get max_depth
 ragtag config get tasks.tag_name
 ragtag config get tasks.status_keywords.done
+```
+
+### `ragtag config dump [--format flat|yaml]`
+
+Prints the complete effective configuration for scripts and editor integrations; see the [CLI reference](docs/cli-reference.md#config-dump) for formats, ordering, and redaction.
+
+```bash
+ragtag config dump --format yaml
+```
+
+### `ragtag create (--name <NAME> | --preset <SELECTOR>)`
+
+Creates one generic tag from a name or configured preset without modifying files; see the [CLI](docs/cli-reference.md#create) and [configuration](docs/configuration.md#tag-presets) references.
+
+```bash
+ragtag create --preset review --attribute 'url=``' --format oneline
 ```
 
 ### `ragtag file touch [--path <FILE>] [--tag <TAG>]... [--edit]`

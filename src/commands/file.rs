@@ -13,9 +13,6 @@ use crate::config::{Config, FileConfig};
 use crate::error::RagtagError;
 use crate::parser;
 
-/// Synthetic source name used while validating individual CLI tags.
-const TAG_VALIDATION_SOURCE: &str = "<file-touch-tag>";
-
 /// Parsed editor executable and its configured initial arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PreparedEditor {
@@ -134,9 +131,7 @@ fn normalize_tags<'a>(
         } else {
             format!("@{trimmed}")
         };
-        let parsed = parser::scan_file(&normalized, Path::new(TAG_VALIDATION_SOURCE));
-        let valid = parsed.len() == 1 && parsed[0].raw_span == (0..normalized.len());
-        if !valid {
+        if parser::parse_complete_tag(&normalized, Path::new("<file-touch-tag>")).is_err() {
             return Err(RagtagError::InvalidTag {
                 input: original.to_string(),
                 reason: "expected exactly one complete tag expression".to_string(),

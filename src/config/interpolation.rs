@@ -1,7 +1,7 @@
 //! Single-pass environment interpolation for parsed configuration strings.
 
-use serde_yml::Value;
 use std::collections::HashSet;
+use yaml_serde::Value;
 
 /// Values that originated from environment interpolation.
 #[derive(Default)]
@@ -309,7 +309,7 @@ aliases:
 custom:
   arguments: "$VALUE"
 "#;
-        let mut value: Value = serde_yml::from_str(yaml).unwrap();
+        let mut value: Value = yaml_serde::from_str(yaml).unwrap();
         let values = HashMap::from([
             ("KEY", "changed-key"),
             ("VALUE", "resolved"),
