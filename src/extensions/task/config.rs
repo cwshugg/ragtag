@@ -129,8 +129,8 @@ impl TaskConfig {
     }
 
     /// Deserializes from a raw YAML value.
-    pub fn from_config_value(val: &serde_yml::Value) -> Result<Self, RagtagError> {
-        serde_yml::from_value(val.clone()).map_err(|_| RagtagError::ExtensionError {
+    pub fn from_config_value(val: &yaml_serde::Value) -> Result<Self, RagtagError> {
+        yaml_serde::from_value(val.clone()).map_err(|_| RagtagError::ExtensionError {
             extension_name: "Task Manager".to_string(),
             message:
                 "invalid task configuration; review tasks field names and expected value types"
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn test_deserialization_errors_do_not_include_values() {
         const SECRET: &str = "sentinel-deserialization-secret";
-        let yaml = serde_yml::from_str::<serde_yml::Value>(&format!(
+        let yaml = yaml_serde::from_str::<yaml_serde::Value>(&format!(
             "exclude_status_categories: {SECRET}\n"
         ))
         .unwrap();
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_from_config_value() {
-        let yaml = serde_yml::from_str::<serde_yml::Value>(
+        let yaml = yaml_serde::from_str::<yaml_serde::Value>(
             r#"
 tag_name: "todo"
 default_owner: "alice"

@@ -5,6 +5,7 @@ use std::path::Path;
 
 use predicates::prelude::*;
 use ragtag::models::TagAttribute;
+use serde_json::{json, Value};
 
 mod support;
 use support::{assert_output_equivalent, ragtag};
@@ -38,18 +39,184 @@ fn assert_tag_semantics(actual: &str, expected: &str) {
     assert_eq!(parse(actual), parse(expected));
 }
 
+/// Resolves one named-only create JSON projection.
+fn resolve_create_json(arguments: &[&str]) -> Value {
+    let output = ragtag()
+        .args(arguments)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
 #[test]
 fn create_requires_exactly_one_source() {
     ragtag()
         .arg("create")
         .assert()
         .code(2)
+        .stderr(
+            predicate::str::contains("required arguments were not provided")
+                .and(predicate::str::contains(
+                    "--name <NAME_OF_NEW_TAG>|--preset <NICKNAME_OR_TAG_NAME>",
+                ))
+                .and(predicate::str::contains(
+                    "Usage: ragtag create <--name <NAME_OF_NEW_TAG>|--preset <NICKNAME_OR_TAG_NAME>>",
+                )),
+        )
         .stdout(predicate::str::is_empty());
     ragtag()
         .args(["create", "--name", "note", "--preset", "note"])
         .assert()
         .code(2)
         .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn create_json_preserves_source_requirements_and_conflicts_with_interactive() {
+    ragtag()
+        .args(["create", "--format", "json"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty());
+    ragtag()
+        .args([
+            "create", "--name", "note", "--preset", "note", "--format", "json",
+        ])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty());
+    ragtag()
+        .args(["create", "--format", "json", "--interactive"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty());
+    ragtag()
+        .args(["create", "--format", "unknown"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty());
+    for arguments in [
+        vec!["create", "--format", "invalid"],
+        vec!["create", "--format"],
+        vec!["create", "--format", "oneline", "--format", "multiline"],
+    ] {
+        ragtag()
+            .args(arguments)
+            .assert()
+            .code(2)
+            .stdout(predicate::str::is_empty());
+    }
+}
+
+#[test]
+fn create_json_is_output_only_and_preserves_order_values_and_raw_lexemes() {
+    let (_directory, config) = config_file(
+        r#"
+tags:
+  presets:
+    - nickname: styled
+      value: '@issue(title="one", hex=0X2A, title=`duplicate`, empty="")'
+"#,
+    );
+    let arguments = [
+        "--config",
+        config.to_str().unwrap(),
+        "create",
+        "--preset",
+        "styled",
+        "--attribute",
+        "title=`two`",
+        "--attribute",
+        "extra='text'",
+    ];
+    let output = ragtag()
+        .args(arguments)
+        .args(["--format", "json"])
+        .write_stdin(r#"{"ignored":"input"}"#)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        response,
+        json!({
+            "name":"issue",
+            "attributes":[
+                {"name":"title","value":"two","raw":"`two`"},
+                {"name":"hex","value":"0X2A","raw":"0X2A"},
+                {"name":"empty","value":"","raw":"\"\""},
+                {"name":"extra","value":"text","raw":"'text'"}
+            ]
+        })
+    );
+}
+
+#[test]
+fn create_json_rejects_positional_and_duplicate_resolved_attributes_before_stdout() {
+    for (value, diagnostic) in [
+        (
+            "@issue('position', title=one)",
+            "RagtagCreate supports unique named attributes only",
+        ),
+        (
+            "@issue(title=one, title=two)",
+            "duplicate resolved attribute name \"title\"",
+        ),
+    ] {
+        let (_directory, config) = config_file(&format!(
+            r#"
+tags:
+  presets:
+    - nickname: issue
+      value: "{value}"
+"#
+        ));
+        ragtag()
+            .args([
+                "--config",
+                config.to_str().unwrap(),
+                "create",
+                "--preset",
+                "issue",
+                "--format=json",
+            ])
+            .assert()
+            .failure()
+            .stdout(predicate::str::is_empty())
+            .stderr(predicate::str::contains(diagnostic));
+    }
+}
+
+#[test]
+fn create_json_honors_attribute_free_and_leading_hyphen_grammar() {
+    assert_eq!(
+        resolve_create_json(&["create", "--name=-note"]),
+        json!({"name":"-note","attributes":[]})
+    );
+    ragtag()
+        .args(["create", "--name", "-note"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty());
+    ragtag()
+        .args(["create", "--preset", "-foo"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty());
+    ragtag()
+        .args([
+            "create",
+            "--name=note",
+            "--attribute=priority=-1",
+            "--format=oneline",
+        ])
+        .assert()
+        .success()
+        .stdout("@note(priority=-1)\n");
 }
 
 #[test]
@@ -698,7 +865,7 @@ tags:
         .unwrap();
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
-    let value: serde_yml::Value = serde_yml::from_str(&text).unwrap();
+    let value: yaml_serde::Value = yaml_serde::from_str(&text).unwrap();
     assert_eq!(
         value["tags"]["presets"][0]["nickname"].as_str(),
         Some("<environment-derived>")

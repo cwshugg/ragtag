@@ -294,7 +294,7 @@ pub fn build_real_cli(registry: &ExtensionRegistry) -> Command {
                     Arg::new("format")
                         .long("format")
                         .value_name("FORMAT")
-                        .value_parser(["multiline", "oneline"])
+                        .value_parser(["multiline", "oneline", "json"])
                         .default_value("multiline"),
                 ),
         )

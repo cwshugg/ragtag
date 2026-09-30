@@ -21,11 +21,11 @@ pub enum DumpFormat {
 fn build_effective_config_value<F>(
     config: &Config,
     mut is_environment_derived: F,
-) -> Result<serde_yml::Value, RagtagError>
+) -> Result<yaml_serde::Value, RagtagError>
 where
     F: FnMut(&str) -> bool,
 {
-    let mut root = serde_yml::to_value(config)
+    let mut root = yaml_serde::to_value(config)
         .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize config: {e}")))?;
 
     // Resolve extension defaults and discard unregistered flattened sections.
@@ -35,14 +35,14 @@ where
         .map(TaskConfig::from_config_value)
         .transpose()?
         .unwrap_or_default();
-    let resolved_tasks = serde_yml::to_value(&task_config)
+    let resolved_tasks = yaml_serde::to_value(&task_config)
         .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize task config: {e}")))?;
-    if let serde_yml::Value::Mapping(ref mut map) = root {
+    if let yaml_serde::Value::Mapping(ref mut map) = root {
         for extension_key in config.extension_configs.keys() {
-            map.remove(serde_yml::Value::String(extension_key.clone()));
+            map.remove(yaml_serde::Value::String(extension_key.clone()));
         }
         map.insert(
-            serde_yml::Value::String(TASKS_CONFIG_KEY.to_string()),
+            yaml_serde::Value::String(TASKS_CONFIG_KEY.to_string()),
             resolved_tasks,
         );
     }
@@ -51,25 +51,25 @@ where
 }
 
 /// Replaces every environment-derived string in an effective value tree.
-fn redact_value<F>(value: &mut serde_yml::Value, is_environment_derived: &mut F)
+fn redact_value<F>(value: &mut yaml_serde::Value, is_environment_derived: &mut F)
 where
     F: FnMut(&str) -> bool,
 {
     match value {
-        serde_yml::Value::String(text) if is_environment_derived(text) => {
+        yaml_serde::Value::String(text) if is_environment_derived(text) => {
             *text = "<environment-derived>".to_string();
         }
-        serde_yml::Value::Sequence(sequence) => {
+        yaml_serde::Value::Sequence(sequence) => {
             for child in sequence {
                 redact_value(child, is_environment_derived);
             }
         }
-        serde_yml::Value::Mapping(mapping) => {
+        yaml_serde::Value::Mapping(mapping) => {
             for child in mapping.values_mut() {
                 redact_value(child, is_environment_derived);
             }
         }
-        serde_yml::Value::Tagged(tagged) => {
+        yaml_serde::Value::Tagged(tagged) => {
             redact_value(&mut tagged.value, is_environment_derived);
         }
         _ => {}
@@ -78,7 +78,7 @@ where
 
 /// Runs the `config get` command.
 ///
-/// Serializes the resolved config to a `serde_yml::Value` tree,
+/// Serializes the resolved config to a `yaml_serde::Value` tree,
 /// merges resolved extension configs (with defaults applied),
 /// then traverses the tree using dot-notation segments from `key`.
 ///
@@ -109,8 +109,8 @@ where
 
     for (i, segment) in segments.iter().enumerate() {
         match current {
-            serde_yml::Value::Mapping(map) => {
-                let key_val = serde_yml::Value::String((*segment).to_string());
+            yaml_serde::Value::Mapping(map) => {
+                let key_val = yaml_serde::Value::String((*segment).to_string());
                 match map.get(&key_val) {
                     Some(val) => current = val,
                     None => {
@@ -150,19 +150,19 @@ where
 }
 
 /// Renders deterministic path assignments with JSON-compatible right sides.
-fn render_flat(root: &serde_yml::Value) -> Result<String, RagtagError> {
+fn render_flat(root: &yaml_serde::Value) -> Result<String, RagtagError> {
     fn visit(
-        value: &serde_yml::Value,
+        value: &yaml_serde::Value,
         path: &str,
         lines: &mut Vec<String>,
     ) -> Result<(), RagtagError> {
         match value {
-            serde_yml::Value::Mapping(mapping) if mapping.is_empty() => {
+            yaml_serde::Value::Mapping(mapping) if mapping.is_empty() => {
                 lines.push(format!("{path} = {{}}"));
             }
-            serde_yml::Value::Mapping(mapping) => {
+            yaml_serde::Value::Mapping(mapping) => {
                 for (key, child) in mapping {
-                    let serde_yml::Value::String(key) = key else {
+                    let yaml_serde::Value::String(key) = key else {
                         return Err(RagtagError::InvalidConfig(
                             "effective configuration contains a non-string key".to_string(),
                         ));
@@ -175,15 +175,15 @@ fn render_flat(root: &serde_yml::Value) -> Result<String, RagtagError> {
                     visit(child, &child_path, lines)?;
                 }
             }
-            serde_yml::Value::Sequence(sequence) if sequence.is_empty() => {
+            yaml_serde::Value::Sequence(sequence) if sequence.is_empty() => {
                 lines.push(format!("{path} = []"));
             }
-            serde_yml::Value::Sequence(sequence) => {
+            yaml_serde::Value::Sequence(sequence) => {
                 for (index, child) in sequence.iter().enumerate() {
                     visit(child, &format!("{path}[{index}]"), lines)?;
                 }
             }
-            serde_yml::Value::Tagged(tagged) => visit(&tagged.value, path, lines)?,
+            yaml_serde::Value::Tagged(tagged) => visit(&tagged.value, path, lines)?,
             scalar => {
                 let json = serde_json::to_string(scalar).map_err(|error| {
                     RagtagError::InvalidConfig(format!(
@@ -203,73 +203,73 @@ fn render_flat(root: &serde_yml::Value) -> Result<String, RagtagError> {
 }
 
 /// Recursively sorts mappings before deterministic YAML serialization.
-fn sort_mappings(value: serde_yml::Value) -> Result<serde_yml::Value, RagtagError> {
+fn sort_mappings(value: yaml_serde::Value) -> Result<yaml_serde::Value, RagtagError> {
     Ok(match value {
-        serde_yml::Value::Mapping(mapping) => {
+        yaml_serde::Value::Mapping(mapping) => {
             let mut entries = mapping
                 .into_iter()
                 .map(|(key, value)| match key {
-                    serde_yml::Value::String(key) => Ok((key, sort_mappings(value)?)),
+                    yaml_serde::Value::String(key) => Ok((key, sort_mappings(value)?)),
                     _ => Err(RagtagError::InvalidConfig(
                         "effective configuration contains a non-string key".to_string(),
                     )),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             entries.sort_by(|left, right| left.0.cmp(&right.0));
-            let mut sorted = serde_yml::Mapping::new();
+            let mut sorted = yaml_serde::Mapping::new();
             for (key, value) in entries {
-                sorted.insert(serde_yml::Value::String(key), value);
+                sorted.insert(yaml_serde::Value::String(key), value);
             }
-            serde_yml::Value::Mapping(sorted)
+            yaml_serde::Value::Mapping(sorted)
         }
-        serde_yml::Value::Sequence(sequence) => serde_yml::Value::Sequence(
+        yaml_serde::Value::Sequence(sequence) => yaml_serde::Value::Sequence(
             sequence
                 .into_iter()
                 .map(sort_mappings)
                 .collect::<Result<Vec<_>, _>>()?,
         ),
-        serde_yml::Value::Tagged(mut tagged) => {
+        yaml_serde::Value::Tagged(mut tagged) => {
             tagged.value = sort_mappings(tagged.value)?;
-            serde_yml::Value::Tagged(tagged)
+            yaml_serde::Value::Tagged(tagged)
         }
         scalar => scalar,
     })
 }
 
 /// Renders one sorted YAML document with exactly one trailing newline.
-fn render_yaml(root: serde_yml::Value) -> Result<String, RagtagError> {
+fn render_yaml(root: yaml_serde::Value) -> Result<String, RagtagError> {
     let sorted = sort_mappings(root)?;
-    let rendered = serde_yml::to_string(&sorted)
+    let rendered = yaml_serde::to_string(&sorted)
         .map_err(|e| RagtagError::InvalidConfig(format!("failed to serialize config: {e}")))?;
     Ok(format!("{}\n", rendered.trim_end_matches('\n')))
 }
 
-/// Formats a `serde_yml::Value` for human-readable output.
+/// Formats a `yaml_serde::Value` for human-readable output.
 ///
 /// Strings are printed without quotes, numbers and booleans as-is,
 /// sequences in JSON-like bracket notation, and mappings in braces.
-fn format_value(val: &serde_yml::Value) -> String {
+fn format_value(val: &yaml_serde::Value) -> String {
     match val {
-        serde_yml::Value::Null => "null".to_string(),
-        serde_yml::Value::Bool(b) => b.to_string(),
-        serde_yml::Value::Number(n) => n.to_string(),
-        serde_yml::Value::String(s) => s.clone(),
-        serde_yml::Value::Sequence(seq) => {
+        yaml_serde::Value::Null => "null".to_string(),
+        yaml_serde::Value::Bool(b) => b.to_string(),
+        yaml_serde::Value::Number(n) => n.to_string(),
+        yaml_serde::Value::String(s) => s.clone(),
+        yaml_serde::Value::Sequence(seq) => {
             let items: Vec<String> = seq
                 .iter()
                 .map(|v| match v {
-                    serde_yml::Value::String(s) => format!("\"{s}\""),
+                    yaml_serde::Value::String(s) => format!("\"{s}\""),
                     other => format_value(other),
                 })
                 .collect();
             format!("[{}]", items.join(", "))
         }
-        serde_yml::Value::Mapping(map) => {
+        yaml_serde::Value::Mapping(map) => {
             let items: Vec<String> = map
                 .iter()
                 .map(|(k, v)| {
                     let key_str = match k {
-                        serde_yml::Value::String(key) => key.clone(),
+                        yaml_serde::Value::String(key) => key.clone(),
                         other => format_value(other),
                     };
                     let val_str = format_value(v);
@@ -278,7 +278,7 @@ fn format_value(val: &serde_yml::Value) -> String {
                 .collect();
             format!("{{{}}}", items.join(", "))
         }
-        serde_yml::Value::Tagged(tagged) => format_value(&tagged.value),
+        yaml_serde::Value::Tagged(tagged) => format_value(&tagged.value),
     }
 }
 
@@ -334,7 +334,7 @@ mod tests {
             "%Y-%m-%d_%H-%M-%S.md"
         );
 
-        let config: Config = serde_yml::from_str(
+        let config: Config = yaml_serde::from_str(
             "files:\n  default_directory: notes\n  filename_format: \"%Y%m%d-%3f.txt\"\n",
         )
         .unwrap();
@@ -433,7 +433,7 @@ mod tests {
         let mut config = default_config();
         config.extension_configs.insert(
             "custom_thing".to_string(),
-            serde_yml::Value::Mapping(serde_yml::Mapping::new()),
+            yaml_serde::Value::Mapping(yaml_serde::Mapping::new()),
         );
         let result = get("custom_thing", &config);
         assert!(result.is_err());
@@ -448,7 +448,7 @@ tasks:
   tag_name: "todo"
   default_owner: "alice"
 "#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(get("tasks.tag_name", &config).unwrap(), "todo");
         assert_eq!(get("tasks.default_owner", &config).unwrap(), "alice");
         // Defaults should still apply for unspecified fields.
@@ -461,7 +461,7 @@ tasks:
     #[test]
     fn test_get_applies_value_provenance() {
         let config: Config =
-            serde_yml::from_str("tasks:\n  default_owner: environment-secret\n").unwrap();
+            yaml_serde::from_str("tasks:\n  default_owner: environment-secret\n").unwrap();
 
         assert_eq!(
             run_get("tasks.default_owner", &config, |_| false).unwrap(),
@@ -515,7 +515,7 @@ tasks:
 
     #[test]
     fn dump_redacts_nested_core_preset_and_task_strings() {
-        let config: Config = serde_yml::from_str(
+        let config: Config = yaml_serde::from_str(
             "ignore_patterns: [secret]\ntags:\n  presets:\n    - nickname: secret\n      value: '@safe'\ntasks:\n  default_owner: secret\n",
         )
         .unwrap();
@@ -528,8 +528,11 @@ tasks:
     fn dump_yaml_and_flat_represent_the_same_effective_tree() {
         let config = default_config();
         let yaml = run_dump(&config, DumpFormat::Yaml, |_| false).unwrap();
-        let value: serde_yml::Value = serde_yml::from_str(&yaml).unwrap();
-        assert_eq!(value["tags"]["presets"], serde_yml::Value::Sequence(vec![]));
+        let value: yaml_serde::Value = yaml_serde::from_str(&yaml).unwrap();
+        assert_eq!(
+            value["tags"]["presets"],
+            yaml_serde::Value::Sequence(vec![])
+        );
         assert_eq!(value["tasks"]["default_owner"].as_str(), Some("me"));
         assert!(yaml.ends_with('\n'));
         assert!(!yaml.ends_with("\n\n"));
@@ -540,7 +543,7 @@ tasks:
         let mut config = default_config();
         config.extension_configs.insert(
             TASKS_CONFIG_KEY.to_string(),
-            serde_yml::Value::String("invalid".to_string()),
+            yaml_serde::Value::String("invalid".to_string()),
         );
         assert!(run_dump(&config, DumpFormat::Flat, |_| false).is_err());
     }

@@ -1,7 +1,10 @@
 //! Generic tag creation from names, presets, overrides, and interactive edits.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
+
+use serde::Serialize;
 
 use crate::config::{Config, TagPreset};
 use crate::error::RagtagError;
@@ -31,6 +34,21 @@ struct CreateTag {
     attributes: Vec<StyledAttribute>,
 }
 
+/// Resolved state exposed by the create JSON format.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CreateJson {
+    name: String,
+    attributes: Vec<CreateJsonAttribute>,
+}
+
+/// Attribute shape exposed by the create JSON format.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CreateJsonAttribute {
+    name: String,
+    value: String,
+    raw: String,
+}
+
 /// Runs generic tag creation and writes exactly one successful record.
 pub fn run(
     matches: &clap::ArgMatches,
@@ -38,6 +56,27 @@ pub fn run(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<(), RagtagError> {
+    let json = matches
+        .get_one::<String>("format")
+        .is_some_and(|v| v == "json");
+    if json && matches.get_flag("interactive") {
+        return Err(RagtagError::Create(
+            "--format json conflicts with --interactive".into(),
+        ));
+    }
+    let mut tag = resolve_create_tag(matches, config)?;
+    if json {
+        write_json(stdout, &create_json(&tag)?)
+    } else {
+        run_ordinary(matches, stderr, stdout, &mut tag)
+    }
+}
+
+/// Resolves the required source and applies explicit attributes in CLI order.
+fn resolve_create_tag(
+    matches: &clap::ArgMatches,
+    config: &Config,
+) -> Result<CreateTag, RagtagError> {
     let mut tag = if let Some(name) = matches.get_one::<String>("name") {
         if name.starts_with('@') {
             return Err(invalid_tag_name());
@@ -82,15 +121,32 @@ pub fn run(
         )?;
     }
 
-    if matches.get_flag("interactive") && !prompt_attributes(&mut tag, stderr)? {
+    Ok(tag)
+}
+
+/// Runs the unchanged human-facing create workflow after source resolution.
+fn run_ordinary(
+    matches: &clap::ArgMatches,
+    stderr: &mut dyn Write,
+    stdout: &mut dyn Write,
+    tag: &mut CreateTag,
+) -> Result<(), RagtagError> {
+    if matches.get_flag("interactive") && !prompt_attributes(tag, stderr)? {
         return Ok(());
     }
     let format = match matches.get_one::<String>("format").map(String::as_str) {
         Some("oneline") => TagFormat::Oneline,
         _ => TagFormat::Multiline,
     };
-    let rendered = render_tag(&tag, format)?;
+    let rendered = render_tag(tag, format)?;
     writeln!(stdout, "{rendered}").map_err(RagtagError::Io)
+}
+
+/// Serializes a complete response before writing, preventing partial JSON.
+fn write_json<T: Serialize>(stdout: &mut dyn Write, value: &T) -> Result<(), RagtagError> {
+    let json = serde_json::to_string(value)
+        .map_err(|error| RagtagError::InvalidInput(format!("failed to encode JSON: {error}")))?;
+    writeln!(stdout, "{json}").map_err(RagtagError::Io)
 }
 
 /// Constructs the stable invalid-name diagnostic.
@@ -164,6 +220,40 @@ fn resolve_preset(selector: &str, presets: &[TagPreset]) -> Result<CreateTag, Ra
                 .join(", ")
         ))),
     }
+}
+
+/// Converts resolved create state into the named-only JSON projection.
+fn create_json(tag: &CreateTag) -> Result<CreateJson, RagtagError> {
+    let name = tag.name.clone();
+    let mut names = HashSet::with_capacity(tag.attributes.len());
+    let mut attributes = Vec::with_capacity(tag.attributes.len());
+    for attribute in &tag.attributes {
+        let AttributeKind::Named { name, .. } = &attribute.semantic.kind else {
+            return Err(RagtagError::Create(
+                "RagtagCreate supports unique named attributes only; resolved tag contains a positional attribute"
+                    .into(),
+            ));
+        };
+        if !names.insert(name.as_str()) {
+            return Err(RagtagError::Create(format!(
+                "RagtagCreate supports unique named attributes only; duplicate resolved attribute name {name:?}"
+            )));
+        }
+        let raw = match &attribute.raw_value {
+            Some(raw) => raw.clone(),
+            None => format_value(attribute_value(&attribute.semantic))?,
+        };
+        let value = match attribute_value(&attribute.semantic) {
+            AttributeValue::Str(value) => value.clone(),
+            AttributeValue::Integer { .. } | AttributeValue::Float(_) => raw.clone(),
+        };
+        attributes.push(CreateJsonAttribute {
+            name: name.clone(),
+            value,
+            raw,
+        });
+    }
+    Ok(CreateJson { name, attributes })
 }
 
 /// Applies replacement-and-deduplication semantics to one named attribute.
@@ -507,5 +597,60 @@ mod tests {
             }
         )
         .is_err());
+    }
+
+    #[test]
+    fn create_json_preserves_semantic_values_and_lexical_spelling() {
+        let tag = resolve_preset(
+            "styled",
+            &[preset(
+                "styled",
+                "@tag(named=`value`, integer=0X2A, float=1.0e3)",
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            create_json(&tag).unwrap(),
+            CreateJson {
+                name: "tag".into(),
+                attributes: vec![
+                    CreateJsonAttribute {
+                        name: "named".into(),
+                        value: "value".into(),
+                        raw: "`value`".into(),
+                    },
+                    CreateJsonAttribute {
+                        name: "integer".into(),
+                        value: "0X2A".into(),
+                        raw: "0X2A".into(),
+                    },
+                    CreateJsonAttribute {
+                        name: "float".into(),
+                        value: "1.0e3".into(),
+                        raw: "1.0e3".into(),
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn create_json_rejects_positional_and_duplicate_attributes() {
+        let positional =
+            resolve_preset("positional", &[preset("positional", "@tag('value')")]).unwrap();
+        assert!(create_json(&positional)
+            .unwrap_err()
+            .to_string()
+            .contains("RagtagCreate supports unique named attributes only"));
+
+        let duplicate = resolve_preset(
+            "duplicate",
+            &[preset("duplicate", "@tag(name=one, name=two)")],
+        )
+        .unwrap();
+        assert!(create_json(&duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate resolved attribute name \"name\""));
     }
 }

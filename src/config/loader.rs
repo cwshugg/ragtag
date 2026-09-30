@@ -22,7 +22,7 @@ pub const MAX_CONFIG_FILE_SIZE: u64 = 1024 * 1024;
 /// Failure while parsing raw or environment-expanded configuration.
 #[derive(Debug)]
 enum ConfigParseFailure {
-    Raw(serde_yml::Error),
+    Raw(yaml_serde::Error),
     EnvironmentDerived,
 }
 
@@ -34,10 +34,10 @@ fn parse_config_with<F>(
 where
     F: FnMut(&str) -> Option<String>,
 {
-    let mut value: serde_yml::Value =
-        serde_yml::from_str(content).map_err(ConfigParseFailure::Raw)?;
+    let mut value: yaml_serde::Value =
+        yaml_serde::from_str(content).map_err(ConfigParseFailure::Raw)?;
     let provenance = interpolate_config_value_with(&mut value, lookup);
-    match serde_yml::from_value(value) {
+    match yaml_serde::from_value(value) {
         Ok(config) => Ok((config, provenance)),
         Err(source) if provenance.is_empty() => Err(ConfigParseFailure::Raw(source)),
         Err(_) => Err(ConfigParseFailure::EnvironmentDerived),
@@ -473,19 +473,19 @@ custom_extension:
             .as_mapping()
             .unwrap();
         assert_eq!(
-            tasks.get(serde_yml::Value::String("tag_name".to_string())),
-            Some(&serde_yml::Value::String("todo".to_string()))
+            tasks.get(yaml_serde::Value::String("tag_name".to_string())),
+            Some(&yaml_serde::Value::String("todo".to_string()))
         );
         let active = tasks
-            .get(serde_yml::Value::String("status_keywords".to_string()))
+            .get(yaml_serde::Value::String("status_keywords".to_string()))
             .unwrap()
             .as_mapping()
             .unwrap()
-            .get(serde_yml::Value::String("active".to_string()))
+            .get(yaml_serde::Value::String("active".to_string()))
             .unwrap()
             .as_sequence()
             .unwrap();
-        assert_eq!(active, &[serde_yml::Value::String("doing".to_string())]);
+        assert_eq!(active, &[yaml_serde::Value::String("doing".to_string())]);
         let custom = config
             .extension_configs
             .get("custom_extension")
@@ -493,13 +493,13 @@ custom_extension:
             .as_mapping()
             .unwrap();
         let nested = custom
-            .get(serde_yml::Value::String("nested".to_string()))
+            .get(yaml_serde::Value::String("nested".to_string()))
             .unwrap()
             .as_sequence()
             .unwrap();
         assert_eq!(
             nested,
-            &[serde_yml::Value::String("extension-value".to_string())]
+            &[yaml_serde::Value::String("extension-value".to_string())]
         );
     }
 

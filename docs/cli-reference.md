@@ -352,7 +352,7 @@ Create one generic tag without modifying a file.
 ragtag create (--name <NAME_OF_NEW_TAG> | --preset <NICKNAME_OR_TAG_NAME>)
               [--attribute <ATTR_NAME=ATTR_VALUE>]...
               [-i|--interactive]
-              [--format <multiline|oneline>]
+              [--format <multiline|oneline|json>]
 ```
 
 | Option | Default | Description |
@@ -361,11 +361,12 @@ ragtag create (--name <NAME_OF_NEW_TAG> | --preset <NICKNAME_OR_TAG_NAME>)
 | `--preset <SELECTOR>` | — | Select a configured preset by nickname or contained tag name |
 | `--attribute <NAME=VALUE>` | — | Apply one named attribute override; repeatable |
 | `-i`, `--interactive` | disabled | Prompt to retain or replace every resulting attribute |
-| `--format <multiline|oneline>` | `multiline` | Select output layout |
+| `--format <multiline|oneline|json>` | `multiline` | Select tag output layout or the create JSON boundary |
 
-Exactly one of `--name` and `--preset` is required.
-Successful output is one complete tag followed by one newline on stdout;
-prompts and validation diagnostics use stderr.
+Exactly one of `--name` and `--preset` is always required.
+`--format json` conflicts with `--interactive`.
+With `multiline` or `oneline`, successful output is one complete tag followed
+by one newline on stdout; prompts and validation diagnostics use stderr.
 
 Each `--attribute` is parsed as one complete named attribute with the existing
 [tag grammar](tag-syntax.md#attributes), not by splitting on `=`.
@@ -416,6 +417,31 @@ $ ragtag create --name note --attribute 'title="Release notes"' --format oneline
 Invalid names, incomplete attributes or values, unsafe strings, non-finite
 numbers, parser limits, and ambiguous or missing presets fail before any tag
 is written.
+
+#### Create JSON
+
+`--format json` is an output-only projection for editor prefill.
+It reads no stdin and reuses ordinary preset resolution and ordered `--attribute` upserts.
+Success writes one compact JSON document followed by a newline:
+
+```json
+{
+  "name": "issue",
+  "attributes": [
+    {
+      "name": "priority",
+      "value": "0X2A",
+      "raw": "0X2A"
+    }
+  ]
+}
+```
+
+The top level contains only string `name` and ordered `attributes`.
+Each attribute contains only string `name`, decoded `value`, and its complete validated `raw` value expression.
+Before writing stdout, ragtag rejects resolved positional attributes and duplicate named attributes because `RagtagCreate` supports unique named attributes only.
+Every failure writes its diagnostic to stderr and writes nothing to stdout.
+Use ordinary `--format oneline` or `--format multiline` with complete repeated `--attribute` arguments to render a tag.
 
 See [Configuration Reference → Tag Presets](configuration.md#tag-presets).
 

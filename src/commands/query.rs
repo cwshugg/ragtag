@@ -292,7 +292,7 @@ mod tests {
             None
         }
 
-        fn init(&mut self, _: Option<&serde_yml::Value>) -> Result<(), RagtagError> {
+        fn init(&mut self, _: Option<&yaml_serde::Value>) -> Result<(), RagtagError> {
             Ok(())
         }
 

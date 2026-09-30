@@ -57,7 +57,7 @@ impl TagExtension for TaskExtension {
         Some(TASKS_CONFIG_KEY)
     }
 
-    fn init(&mut self, config_value: Option<&serde_yml::Value>) -> Result<(), RagtagError> {
+    fn init(&mut self, config_value: Option<&yaml_serde::Value>) -> Result<(), RagtagError> {
         self.config = match config_value {
             Some(val) => config::TaskConfig::from_config_value(val)?,
             None => config::TaskConfig::default(),
